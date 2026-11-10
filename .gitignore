@@ -1,0 +1,40 @@
+# Local working instructions and memory
+AGENTS.md
+/.agents/
+/.agent/
+/.codex/
+/.claude/
+/CLAUDE.md
+/.basic-memory/
+/basic-memory/
+basic-memory.json
+
+# Pre-implementation discussion drafts
+/docs/pre-implementation/
+
+# Python, frontend dependencies, and generated output
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+node_modules/
+dist/
+build/
+*.egg-info/
+
+# Machine-specific settings and credentials
+.env
+.env.*
+!.env.example
+*.key
+*.p12
+*.pfx
+/.vscode/
+/.idea/
+.DS_Store
+Thumbs.db
