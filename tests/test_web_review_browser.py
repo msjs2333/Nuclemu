@@ -254,6 +254,37 @@ class WebReviewBrowserTests(unittest.TestCase):
         self.assertTrue(self.state()["readonly"])
         self.assertEqual(self.server.app.lab.analysis, expected)
 
+    def test_explicit_apparatus_device_click_reasserts_displayed_instrument(self):
+        peer = self.spectra()
+        product = self.state()['product']
+        for selector in ("[data-part='device-left']", '#component > button'):
+            with self.subTest(selector=selector):
+                self.page.locator("[data-page='setup']").click()
+                release = self.hold_poll(self.page, self.state())
+                peer.locator('#device').select_option('right')
+                expect(peer.locator('#device')).to_have_value('right')
+                with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
+                                               r.request.post_data_json.get('action') == 'device') as selected:
+                    self.page.locator(selector).click()
+                self.assertTrue(selected.value.ok)
+                self.assertEqual(selected.value.request.post_data_json['device'], 'left')
+                expect(self.page.locator('#device')).to_be_focused()
+                expect(self.page.locator('#device')).to_have_value('left')
+                release()
+                expect(peer.locator('#device')).to_have_value('left')
+                current = self.state()
+                self.assertEqual(current['device'], 'left')
+                self.assertEqual(current['readout']['centroid'], 1)
+                self.assertEqual(current['product'], product)
+        self.page.locator("[data-page='setup']").click()
+        self.page.route('**/api/action', lambda route: route.fulfill(
+            status=400, json={'error': 'device selection failed'}))
+        self.page.locator('#component > button').click()
+        expect(self.page.locator('#error')).to_contain_text('device selection failed')
+        expect(self.page.locator("[data-page='setup']")).to_have_attribute('aria-current', 'page')
+        expect(self.page.locator('#setup')).to_be_visible()
+        self.assertEqual(self.state()['product'], product)
+
     def test_counter_background_keeps_displayed_device_and_survives_archive(self):
         peer = self.peer()
         self.enter("records-test")

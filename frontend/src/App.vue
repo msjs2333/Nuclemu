@@ -62,7 +62,7 @@ const reason = computed(() => {
 })
 function toDevice(id: string) {
   void report(async () => {
-    if (id !== state.value?.device) await act('device', {device: id})
+    await act('device', {device: id})
     setPage('instrument')
     await nextTick()
     instruments.value?.focusDevice()
