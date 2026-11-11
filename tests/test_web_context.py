@@ -114,7 +114,7 @@ class WebContextTests(unittest.TestCase):
 
     def test_calibration_context_rejects_another_device_record_and_applicable_gain(self):
         self.spectra()
-        self.call("select", index=0)
+        self.call("select", device="left", index=0)
         context = deepcopy(self.app.lab.state()["calibration_context"])
         self.assertEqual(context, {"device": "left", "selected": 0, "settings": {"gain": 1}})
         calibration = Calibration("two", "left", 8, 0, 0, 7, 7, conditions=(("gain", 1),))
@@ -129,20 +129,20 @@ class WebContextTests(unittest.TestCase):
             self.assertEqual(self.app.lab.analysis, before)
             self.assertEqual(self.app.lab.time_s(), self.now)
             self.call("device", device="left")
-        self.call("select", index=1)
+        self.call("select", device="left", index=1)
         with self.assertRaisesRegex(ValueError, "刻度所用"):
             self.call("calibrate", points=[0, 0, 7, 7], calibration_context=context)
         self.assertEqual(self.app.lab.work.lab.calibrations, {})
 
     def test_historical_calibration_uses_its_record_conditions_not_current_gain(self):
         self.spectra()
-        self.call("select", index=0)
+        self.call("select", device="left", index=0)
         context = deepcopy(self.app.lab.state()["calibration_context"])
         self.assertEqual(self.app.lab.settings()["gain"], 2)
         state = self.call("calibrate", points=[0, 0, 7, 7], calibration_context=context)
         self.assertEqual(state["readout"]["energy_MeV"], 1)
         self.assertEqual(state["calibration"]["conditions"], (("gain", 1.0),))
-        state = self.call("select", index=1)
+        state = self.call("select", device="left", index=1)
         self.assertIsNone(state["calibration"])
 
     def test_analysis_device_rejects_stale_roi_without_changing_either_instrument(self):
@@ -150,10 +150,10 @@ class WebContextTests(unittest.TestCase):
         self.call("analysis", device="left", roi=[1, 2])
         self.call("device", device="right")
         before = deepcopy(self.app.lab.analysis)
-        with self.assertRaisesRegex(ValueError, "ROI 所用设备"):
+        with self.assertRaisesRegex(ValueError, "所用设备"):
             self.call("analysis", roi=[2, 3])
         self.assertEqual(self.app.lab.analysis, before)
-        with self.assertRaisesRegex(ValueError, "分析所用设备已改变"):
+        with self.assertRaisesRegex(ValueError, "所用设备已改变"):
             self.call("analysis", device="left", roi=[2, 3])
         self.assertEqual(self.app.lab.analysis, before)
         state = self.call("analysis", device="right", roi=[2, 3])

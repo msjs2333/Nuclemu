@@ -78,15 +78,19 @@ watch(() => props.calibration, c => {
 function applyCalibration() {
   const calibration = points.value.map(Number)
   const context = copyContext(formContext)
+  const session = props.session
   submitted = calibration
   emit('task', async () => {
-    try { await props.act('calibrate', {points: calibration, calibration_context: context}) }
+    try { await props.act('calibrate', {points: calibration, calibration_context: context}, session) }
     finally { if (submitted === calibration) submitted = null }
   })
 }
-function change(key: string, value: unknown, device = props.device.id) {
+function instrumentAction(name: string, fields: Record<string, unknown>, device = props.device.id) {
   const session = props.session
-  emit('task', () => props.act('analysis', {device, [key]: value}, session))
+  emit('task', () => props.act(name, {device, ...fields}, session))
+}
+function change(key: string, value: unknown, device = props.device.id) {
+  instrumentAction('analysis', {[key]: value}, device)
 }
 function checked(e: Event) { return (e.target as HTMLInputElement).checked }
 let drag: {first: number; device: string; channelAt: (clientX: number) => number} | null = null
@@ -121,7 +125,7 @@ function load(e: Event) {
 <template>
   <div id="spectrum">
     <Teleport defer to="#panel-display"><div class="menu-fields">
-      <label>当前谱 <select id="sample" :value="index ?? ''" @change="emit('task', () => act('select', {index: indexValue($event)}))">
+      <label>当前谱 <select id="sample" :value="index ?? ''" @change="instrumentAction('select', {index: indexValue($event)})">
         <option value="">跟随最新段</option><option v-for="(s, i) in segments" :key="i" :value="i">{{ segmentName(s, i) }}</option></select></label>
       <label>参考谱 <select id="reference" :value="analysis.reference ?? ''" @change="change('reference', indexValue($event))">
         <option value="">无参考谱</option><option v-for="(s, i) in segments" :key="i" :value="i">{{ segmentName(s, i) }}</option></select></label>

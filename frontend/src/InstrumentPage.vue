@@ -15,7 +15,11 @@ const instrument = computed(() => props.state.definition.devices.find(d => d.id 
 const index = computed(() => props.state.selected ?? props.state.product.segments.length - 1)
 const segment = computed(() => props.state.product.segments[index.value])
 function run(name: string, fields: Record<string, unknown> = {}) {
-  emit('task', () => props.act(name, fields))
+  const session = props.state.id
+  emit('task', () => props.act(name, fields, session))
+}
+function changeAnalysis(fields: Record<string, unknown>) {
+  run('analysis', {device: instrument.value.id, ...fields})
 }
 async function start() {
   if (mode.value === 'timed' && durationInput.value && !durationInput.value.validity.valid) {
@@ -52,7 +56,7 @@ async function start() {
       :readout="state.readout" :session="state.id" :act="act" @task="emit('task', $event)"/>
     <CounterPanel v-else-if="instrument.kind === 'counter'" :course="state.definition" :device="instrument" :segments="state.product.segments"
       :settings="state.settings" :running="state.running" :readonly="state.readonly"
-      :background="state.analysis.background" @background="run('analysis', {background: $event})" @configure="run('configure', {values: $event})"/>
+      :background="state.analysis.background" @background="changeAnalysis({background: $event})" @configure="run('configure', {values: $event})"/>
     <div v-else id="other">{{ segment ? instrument.label + '　' + segment.readings[instrument.id].join(' · ') : '等待读数' }}</div>
   </section>
 </template>

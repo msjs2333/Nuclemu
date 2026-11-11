@@ -255,12 +255,17 @@ class WebLab:
             raise ValueError("请先选择已采集的测量段。")
         return index
 
-    def change_analysis(self, data):
+    def _check_device_target(self, data):
+        """Bind instrument-local commands to the device shown by their caller."""
         w = self.work
         if "device" in data and data["device"] != w.device.id:
-            raise ValueError("分析所用设备已改变，请重新查看仪器后操作。")
-        if "roi" in data and "device" not in data and len(w.session.experiment.devices) > 1:
-            raise ValueError("请选择 ROI 所用设备后重新操作。")
+            raise ValueError("所用设备已改变，请重新查看仪器后操作。")
+        if "device" not in data and len(w.session.experiment.devices) > 1:
+            raise ValueError("请明确所用设备后重新操作。")
+
+    def change_analysis(self, data):
+        self._check_device_target(data)
+        w = self.work
         current = self.analysis[w.device.id]
         updates = {}
         for key in ("roi", "reference", "background", "energy_axis", "rate_axis"):
@@ -333,6 +338,7 @@ class WebLab:
                 self.bind(data["device"])
                 self.edits += 1
         elif action == "select":
+            self._check_device_target(data)
             index = self.index(data["index"])
             if index != w.lab.selected:
                 w.select(index)
