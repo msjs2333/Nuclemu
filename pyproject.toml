@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nuclemu"
+version = "0.0.1"
+description = "A Virtual Nuclear Physics Lab"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+
+[project.scripts]
+nuclemu = "nuclemu.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["nuclemu*"]
