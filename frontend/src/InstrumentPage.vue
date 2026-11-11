@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {computed, nextTick, ref} from 'vue'
-import {describe, exposure, fmt, inputValue, segmentName} from './display'
+import {fmt, inputValue} from './display'
 import CounterPanel from './CounterPanel.vue'
 import SpectrumPanel from './SpectrumPanel.vue'
 import type {Act, State} from './types'
@@ -14,7 +14,6 @@ defineExpose({focusDevice: () => selector.value?.focus()})
 const instrument = computed(() => props.state.definition.devices.find(d => d.id === props.state.device)!)
 const index = computed(() => props.state.selected ?? props.state.product.segments.length - 1)
 const segment = computed(() => props.state.product.segments[index.value])
-const settings = computed(() => instrument.value.kind === 'spectrum' ? props.state.spectrum_settings ?? segment.value?.settings ?? props.state.settings : props.state.settings)
 function run(name: string, fields: Record<string, unknown> = {}) {
   emit('task', () => props.act(name, fields))
 }
@@ -48,17 +47,11 @@ async function start() {
       <output id="remaining">{{ state.remaining_s == null ? '' : '剩余 ' + fmt(state.remaining_s) + ' s' }}</output>
       </form>
     </div>
-    <SpectrumPanel v-if="instrument.kind === 'spectrum'" :key="instrument.id" :device="instrument" :segments="state.product.segments"
+    <SpectrumPanel v-if="instrument.kind === 'spectrum'" :key="instrument.id" :course="state.definition" :device="instrument" :segments="state.product.segments"
       :index="state.selected" :analysis="state.analysis" :calibration="state.calibration" :readout="state.readout" :act="act" @task="emit('task', $event)"/>
     <CounterPanel v-else-if="instrument.kind === 'counter'" :course="state.definition" :device="instrument" :segments="state.product.segments"
-      :background="state.analysis.background" @background="run('analysis', {background: $event})"/>
+      :settings="state.settings" :running="state.running" :readonly="state.readonly"
+      :background="state.analysis.background" @background="run('analysis', {background: $event})" @configure="run('configure', {values: $event})"/>
     <div v-else id="other">{{ segment ? instrument.label + '　' + segment.readings[instrument.id].join(' · ') : '等待读数' }}</div>
-    <footer class="instrument-footer">
-      <p v-if="segment && instrument.kind === 'spectrum'" class="segment-meta">
-        <span>{{ segmentName(segment, index) }}</span>
-        <span>实际曝光 <b>{{ fmt(exposure(segment)) }} s</b></span>
-      </p>
-      <p id="conditions" class="instrument-conditions"><span>{{ instrument.kind === 'spectrum' && segment ? '所选谱工况' : '装置工况' }}</span>{{ describe(state.definition, settings) }}</p>
-    </footer>
   </section>
 </template>

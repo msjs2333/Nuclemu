@@ -45,19 +45,22 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
     def payload(self, status, data):
         self.respond(status, self.encode(data), "application/json; charset=utf-8")
 
-    def local_request(self):
+    def local_request(self, *, navigation=False):
         host = self.headers.get("Host", "")
         port = self.server.server_port
+        top_level = (navigation and self.headers.get("Sec-Fetch-Mode") == "navigate"
+                     and self.headers.get("Sec-Fetch-Dest") == "document")
         return (host in {f"127.0.0.1:{port}", f"localhost:{port}"} and
                 self.headers.get("Origin", "http://" + host) == "http://" + host and
-                self.headers.get("Sec-Fetch-Site") != "cross-site")
+                (self.headers.get("Sec-Fetch-Site") != "cross-site" or top_level))
 
     def do_GET(self):
-        if not self.local_request():
-            self.payload(403, {"error": "仅限本机工作台访问。"})
-            return
         url = urlsplit(self.path)
         route = unquote(url.path)
+        entry = route == "/" or route.startswith(("/lab/", "/experiment/"))
+        if not self.local_request(navigation=entry):
+            self.payload(403, {"error": "仅限本机工作台访问。"})
+            return
         if route.startswith("/api/"):
             try:
                 with self.server.app_lock:

@@ -3,13 +3,16 @@ import {computed, onMounted, onBeforeUnmount, ref, watch} from 'vue'
 import {drawConnections} from '/draw.js'
 import ApparatusFigure from './ApparatusFigure.vue'
 import {errorMessage} from './api'
+import {counterMode} from './counterMode'
 import type {Act, Course, Part} from './types'
 
 const props = defineProps<{course: Course; settings: Record<string, number>; readonly: boolean; act: Act}>()
 const emit = defineEmits<{device: [id: string]; notice: [message: string]}>()
 const selection = ref(props.course.components[0]?.id)
 const part = computed(() => props.course.components.find(p => p.id === selection.value))
-const params = computed(() => props.course.parameters.filter(p => part.value?.parameters.includes(p.key)))
+const mode = computed(() => counterMode(props.course))
+const modeSource = computed(() => mode.value?.source === part.value?.id ? mode.value : null)
+const params = computed(() => props.course.parameters.filter(p => part.value?.parameters.includes(p.key) && p.key !== modeSource.value?.parameter.key))
 const edits = ref<Record<string, number>>({})
 const error = ref('')
 const diagram = ref<HTMLElement>()
@@ -47,10 +50,9 @@ async function apply() {
           <ApparatusFigure :parts="[p]"/><span>{{ p.label }}</span>
         </button>
       </div>
-      <div id="connections" class="connections"><span v-for="edge in course.connections" :key="edge.source + '/' + edge.target + '/' + edge.label">
-        {{ partLabel(edge.source) }} {{ edge.kind === 'particle' ? '⇢' : '─→' }} {{ partLabel(edge.target) }} · {{ edge.label }}
-      </span></div></div>
+      </div>
       <aside id="component" v-if="part"><h2>{{ part.label }}</h2><p>{{ part.description }}</p>
+        <button v-if="modeSource" @click="emit('device', modeSource.device)">在计数器选择{{ modeSource.parameter.label }}</button>
         <form v-if="params.length" @submit.prevent="apply">
           <label v-for="p in params" :key="p.key">{{ p.label }}{{ p.unit ? ' / ' + p.unit : '' }}
             <select v-if="p.options?.length" :name="p.key" v-model.number="edits[p.key]" :disabled="readonly">
@@ -63,6 +65,12 @@ async function apply() {
         </form>
         <p v-if="error" class="notice" role="alert">{{ error }}</p>
         <button v-if="part.device" @click="emit('device', part.device)">打开{{ course.devices.find(d => d.id === part?.device)?.label }}</button>
+        <details v-if="course.connections.length" id="connections">
+          <summary>装置接线</summary>
+          <ul><li v-for="edge in course.connections" :key="edge.source + '/' + edge.target + '/' + edge.label">
+            {{ partLabel(edge.source) }} → {{ partLabel(edge.target) }} · {{ edge.label }}
+          </li></ul>
+        </details>
       </aside>
     </div>
   </section>

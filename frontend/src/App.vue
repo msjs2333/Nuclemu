@@ -7,7 +7,7 @@ import RecordsPage from './RecordsPage.vue'
 import CommandBar from './CommandBar.vue'
 import {fmt, inputValue} from './display'
 import {useSession} from './session'
-import type {Page} from './types'
+import type {Open, Page} from './types'
 
 const {state, catalog, page, confirming, recovered, message, error, act, report, open, askExit, cancelExit, finish, setPage} = useSession()
 const tabs: {id: Page; label: string}[] = [{id: 'setup', label: '实验装置'}, {id: 'instrument', label: '测量仪器'}, {id: 'records', label: '实验记录'}]
@@ -15,6 +15,7 @@ const dialog = ref<HTMLDialogElement>()
 const menu = ref<InstanceType<typeof CatalogPage>>()
 const instruments = ref<InstanceType<typeof InstrumentPage>>()
 const commands = ref<InstanceType<typeof CommandBar>>()
+const title = ref<HTMLHeadingElement>()
 const kind = computed(() => state.value?.definition.devices.find(d => d.id === state.value?.device)?.kind)
 const navIcons = {
   setup: 'M3 6h4v12H3z M10 9h4v6h-4z M17 4h4v16h-4z M7 12h3m4 0h3',
@@ -24,6 +25,12 @@ const navIcons = {
 function navigate(tab: Page) {
   commands.value?.close()
   setPage(tab)
+}
+async function openLab(args: Open) {
+  await open(args)
+  await nextTick()
+  if (page.value === 'instrument') instruments.value?.focusDevice()
+  else title.value?.focus()
 }
 function showRecords() {
   navigate('records')
@@ -79,11 +86,11 @@ function save() { void report(async () => {
   <header v-if="!state" class="mast"><div class="wrap brand"><span class="mark" aria-hidden="true">N</span><span>Nuclemu</span></div></header>
   <main :class="state ? 'workbench-wrap' : 'wrap'">
     <p id="error" role="alert" :hidden="!error || confirming">{{ error }}</p>
-    <CatalogPage v-if="catalog && !state" ref="menu" :catalog="catalog" @open="args => report(() => open(args))"/>
+    <CatalogPage v-if="catalog && !state" ref="menu" :catalog="catalog" @open="args => report(() => openLab(args))"/>
     <section v-if="state" id="workspace" class="lab-shell" :class="{'spectrum-workspace': page === 'instrument' && kind === 'spectrum'}" :key="state.id">
       <header class="lab-topbar">
-        <h1 id="lab-title">{{ state.definition.title }}</h1>
-        <CommandBar ref="commands" :analysis="page === 'instrument' && (kind === 'spectrum' || kind === 'counter')"
+        <h1 ref="title" id="lab-title" tabindex="-1">{{ state.definition.title }}</h1>
+        <CommandBar ref="commands" :analysis="page === 'instrument' && kind === 'spectrum'"
           :display="page === 'instrument' && kind === 'spectrum'">
           <template #file>
             <button id="save" @click="save">保存整场实验</button>

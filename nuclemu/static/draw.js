@@ -28,7 +28,7 @@ function connect(g, start, end, kind, detour) {
   const color=kind==="particle"?particle:accent;
   const y1=start.outY;
   const points=[[x1,y1]];
-  if(detour) {
+  if(detour && kind!=="particle") {
     const bend=Math.min(y1,end.y)-Math.max(start.left,end.left)*1.15;
     points.push([x1+dir*4,y1],[x1+dir*4,bend],[x2-dir*6,bend],[x2-dir*6,end.y]);
   } else if(kind!=="particle" && Math.abs(end.y-y1)>1) {
@@ -40,17 +40,18 @@ function connect(g, start, end, kind, detour) {
 }
 
 function routes(g, edges, positions, labels=false) {
+  const nodes = [...positions.values()];
   for(const edge of edges) {
     const src=positions.get(edge.source), dst=positions.get(edge.target);
     if(!src || !dst) continue;
-    const detour=[...positions.values()].some(p=>p.x>Math.min(src.x,dst.x) && p.x<Math.max(src.x,dst.x));
+    const detour=edge.kind!=="particle" && nodes.some(p=>p.x>Math.min(src.x,dst.x) && p.x<Math.max(src.x,dst.x));
     connect(g,src,dst,edge.kind,detour);
     if(labels && !detour && dst.x>src.x && edge.label) {
       const start=src.x+src.right, end=dst.x-dst.left;
       g.save();
-      g.font='12px "Segoe UI", "Microsoft YaHei UI", sans-serif';
+      g.font='13px "Nuclemu Lab Sans", "Noto Sans SC", "Microsoft YaHei", sans-serif';
       if(end-start>g.measureText(edge.label).width+8) {
-        g.fillStyle=edge.kind==="particle"?"#884529":"#365099";
+        g.fillStyle="#101010";
         g.textAlign="center"; g.fillText(edge.label,(start+end)/2,Math.min(src.outY,dst.y)-9);
       }
       g.restore();
@@ -59,7 +60,24 @@ function routes(g, edges, positions, labels=false) {
 }
 
 // Images, named fallback nodes and their connections use the same layout.
+const rigConnections = new WeakMap();
 export function drawConnections(canvas, connections) {
+  let state = rigConnections.get(canvas);
+  if (!state) {
+    state = {connections, frame: 0};
+    rigConnections.set(canvas, state);
+    canvas.addEventListener('rig-layout', () => drawConnections(canvas, state.connections));
+  }
+  state.connections = connections;
+  // Resize, image loading and the shared layout may request the same drawing.
+  // Read the final geometry once, after all figures have placed their images.
+  if (!state.frame) state.frame = requestAnimationFrame(() => {
+    state.frame = 0;
+    if (canvas.isConnected) paintConnections(canvas, state.connections);
+  });
+}
+
+function paintConnections(canvas, connections) {
   const surface = prepare(canvas);
   if (!surface) return;
   const origin = canvas.getBoundingClientRect();
@@ -71,8 +89,8 @@ export function drawConnections(canvas, connections) {
       x: rect.left - origin.left + half,
       y: rect.top - origin.top + rect.height * Number(node.dataset.beamY ?? .5),
       outY: rect.top - origin.top + rect.height * Number(node.dataset.outY ?? .5),
-      left: half - rect.width * Number(node.dataset.inX ?? 0) + 2,
-      right: rect.width * Number(node.dataset.outX ?? 1) - half + 2,
+      left: half - rect.width * Number(node.dataset.inX ?? 0),
+      right: rect.width * Number(node.dataset.outX ?? 1) - half,
     });
   }
   routes(surface.g, connections, positions, canvas.classList.contains("wiring"));
@@ -160,8 +178,8 @@ export function drawSpectrum(canvas,series,n,roi,energy,label,range,maximum) {
   const [first,last]=range;
   const x=i=>first===last?(left+right)/2:left+(right-left)*(i-first)/(last-first);
   const y=v=>bottom-(bottom-top)*v/high;
-  g.font='12px "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif';
-  g.textAlign="left";g.fillStyle="#414b60";g.fillText(label,left,16);
+  g.font='13px "Nuclemu Lab Sans", "Noto Sans SC", "Microsoft YaHei", sans-serif';
+  g.textAlign="left";g.fillStyle="#101010";g.fillText(label,left,16);
   const [lo,hi]=roi;
   if((lo>0 || hi<n-1) && hi>=first && lo<=last) {
     const start=x(Math.max(first,lo)), end=x(Math.min(last,hi));
@@ -169,7 +187,7 @@ export function drawSpectrum(canvas,series,n,roi,energy,label,range,maximum) {
     if(lo>=first) line(g,[[start,top],[start,bottom]],"#aab9eb",1);
     if(hi<=last) line(g,[[end,top],[end,bottom]],"#aab9eb",1);
   }
-  g.textAlign="right";g.fillStyle="#414b60";
+  g.textAlign="right";g.fillStyle="#101010";
   for(let i=0;i<=yTicks;i++) {
     const value=yStep*i, tickY=y(value);
     line(g,[[left,tickY],[right,tickY]],"#e2e6ef",1);
@@ -191,7 +209,7 @@ export function drawSpectrum(canvas,series,n,roi,energy,label,range,maximum) {
     for(let channel=first;channel<=last;channel++) g.lineTo(x(channel),y(item.counts[channel]/item.divisor));
     g.stroke();
   });
-  g.setLineDash([]);g.textAlign="center";g.fillStyle="#414b60";
+  g.setLineDash([]);g.textAlign="center";g.fillStyle="#101010";
   for(const tick of ticks){
     line(g,[[x(tick.channel),bottom],[x(tick.channel),bottom+4]],"#909aac");
     g.fillText(tick.label,x(tick.channel),bottom+18);

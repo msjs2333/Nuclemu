@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import {computed, onBeforeUnmount, onMounted, ref, watch} from 'vue'
 import {pointerChannels, drawSpectrum, spectrumExtent} from '/draw.js'
-import {exposure, fmt, indexValue, segmentName} from './display'
-import type {Act, Calibration, Device, Segment, Series, State} from './types'
+import {describe, exposure, fmt, indexValue, segmentName} from './display'
+import type {Act, Calibration, Course, Device, Segment, Series, State} from './types'
 
 const props = defineProps<{
-  device: Device; segments: Segment[]; index: number | null; analysis: State['analysis']
+  course: Course; device: Device; segments: Segment[]; index: number | null; analysis: State['analysis']
   calibration: Calibration | null; readout: State['readout']; act: Act
 }>()
 const emit = defineEmits<{task: [fn: () => Promise<void>]}>()
@@ -21,7 +21,7 @@ const incompatible = computed(() => !!(energyScale.value && reference.value && p
 const series = computed(() => {
   const lines: Series[] = []
   function add(segment: Segment | null | undefined, label: string) {
-    if (segment) lines.push({label: label + ' · ' + fmt(exposure(segment)) + ' s',
+    if (segment) lines.push({label: [label, describe(props.course, segment.settings), fmt(exposure(segment)) + ' s'].filter(Boolean).join(' · '),
       counts: segment.readings[props.device.id], divisor: props.analysis.rate_axis ? exposure(segment) : 1})
   }
   add(current.value, '当前谱')
@@ -48,7 +48,11 @@ function paint() {
     energyScale.value, props.analysis.rate_axis ? '每道计数率 / s⁻¹' : '每道计数', visibleRange.value, extent.value.maximum)
 }
 watch([series, energyScale, visibleRange, () => props.analysis.roi], paint, {flush: 'post'})
-onMounted(() => { observer = new ResizeObserver(paint); observer.observe(plot.value!); paint() })
+onMounted(() => {
+  observer = new ResizeObserver(paint)
+  observer.observe(plot.value!)
+  void document.fonts.ready.then(paint)
+})
 onBeforeUnmount(() => observer.disconnect())
 const first = ref(0), last = ref(0)
 watch(() => props.analysis.roi.join('/'), () => { [first.value, last.value] = props.analysis.roi }, {immediate: true})

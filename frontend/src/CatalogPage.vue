@@ -21,7 +21,16 @@ function focusExperiment(id: string) {
   button?.focus()
 }
 defineExpose({focusExperiment})
+function instruments(course: Course) {
+  const counts = new Map<string, number>()
+  for (const device of course.devices) counts.set(device.label, (counts.get(device.label) ?? 0) + 1)
+  return [...counts].map(([name, count]) => count === 1 ? name : name + '（' + count + ' 台）').join('、')
+}
 const stamp = new Intl.DateTimeFormat('zh-CN', {dateStyle: 'medium', timeStyle: 'medium'})
+const archives = computed(() => [
+  ...props.catalog.drafts.map(row => ({...row, draft: true})),
+  ...props.catalog.archives.map(row => ({...row, draft: false})),
+])
 const guide = ref<HTMLDialogElement>()
 const selected = ref<Course>()
 async function showGuide(course: Course) {
@@ -34,25 +43,29 @@ async function showGuide(course: Course) {
 <template>
   <section id="catalog">
     <div class="heading"><h1>实验目录</h1></div>
+    <p v-if="!catalog.experiments.length" class="catalog-empty">没有可用实验。</p>
     <div id="catalog-list"><section v-for="[group, courses] in groups" :key="group">
       <h2>{{ group }}</h2><div class="catalog-list">
       <article v-for="course in courses" :key="course.id" class="course">
         <div class="illustration"><ApparatusFigure :parts="course.components" :edges="course.connections"/></div>
-        <div class="course-body"><h2>{{ course.title }}</h2><p>{{ course.question }}</p>
-          <p class="subtle">{{ course.devices.map(d => d.label).join(' · ') }}</p>
-          <div class="course-actions"><button ref="entryButtons" class="primary" :data-experiment="course.id" @click="emit('open', {experiment: course.id})">进入实验 →</button>
+        <div class="course-body"><h3>{{ course.title }}</h3><p class="course-question">{{ course.question }}</p>
+          <p class="course-instruments">{{ instruments(course) }}</p>
+          <div class="course-actions"><button ref="entryButtons" class="primary" :data-experiment="course.id" @click="emit('open', {experiment: course.id})">进入实验</button>
             <button @click="showGuide(course)">查看资料</button></div>
         </div>
       </article>
     </div></section></div>
-    <section id="archives" v-if="catalog.drafts.length || catalog.archives.length">
+    <section id="archives">
       <h2>本机实验记录</h2>
-      <div v-for="draft in catalog.drafts" :key="draft.id" class="archive-row">
-        <span>{{ draft.title }} · 恢复至 {{ fmt(draft.time_s) }} s · {{ stamp.format(new Date(draft.updated)) }}</span><button @click="emit('open', {draft: draft.id})">打开草稿</button>
-      </div>
-      <div v-for="archive in catalog.archives" :key="archive.id" class="archive-row">
-        <span>{{ archive.title }} · {{ fmt(archive.time_s) }} s · {{ stamp.format(new Date(archive.updated)) }}</span><button @click="emit('open', {archive: archive.id})">查看实验</button>
-      </div>
+      <table v-if="archives.length" class="archive-table" aria-label="本机实验记录">
+        <thead><tr><th scope="col">实验</th><th scope="col">仿真时刻</th><th scope="col">保存时间</th><th scope="col">操作</th></tr></thead>
+        <tbody><tr v-for="row in archives" :key="row.id" class="archive-row">
+          <th scope="row">{{ row.title }}</th><td class="archive-duration" data-label="仿真时刻">{{ fmt(row.time_s) }} s</td>
+          <td class="archive-date" data-label="保存时间"><time :datetime="row.updated">{{ stamp.format(new Date(row.updated)) }}</time></td>
+          <td><button @click="emit('open', row.draft ? {draft: row.id} : {archive: row.id})">{{ row.draft ? '打开草稿' : '查看实验' }}</button></td>
+        </tr></tbody>
+      </table>
+      <p v-else class="archive-empty">还没有本机实验记录。</p>
     </section>
     <dialog id="guide" ref="guide" aria-labelledby="guide-title">
       <h2 id="guide-title">{{ selected?.title }}</h2>
