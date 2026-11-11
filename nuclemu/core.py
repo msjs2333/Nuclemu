@@ -245,6 +245,11 @@ class Session:
         return self._next_window is not None
 
     @property
+    def active_acquisition(self) -> int | None:
+        """The existing acquisition number while its gate is open."""
+        return self._acquisition if self.running else None
+
+    @property
     def remaining_s(self) -> float | None:
         """Physical seconds left on a timed gate."""
         return None if self._stop_at is None else float(self._stop_at - self._time)

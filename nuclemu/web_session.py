@@ -187,6 +187,7 @@ class WebLab:
         result = dict(id=self.id, experiment=w.current, definition=self.info,
                     seed=w.seed, settings=self.settings(), time_s=self.time_s(),
                     running=w.session.running, paused=w.paused, frozen=self.frozen,
+                    active_acquisition=w.session.active_acquisition,
                     confirmation_id=self.confirmation_id,
                     speed=w.speed, remaining_s=w.session.remaining_s, device=w.device.id,
                     selected=w.lab.selected, analysis=analysis,
@@ -297,6 +298,10 @@ class WebLab:
     def act(self, data):
         """Apply one action, settling its clock only after exit-round validation."""
         self.check_confirmation(data)
+        if data["action"] == "stop":
+            acquisition = data.get("acquisition")
+            if type(acquisition) is not int or acquisition != self.work.session.active_acquisition:
+                raise ValueError("采集轮次已改变或已结束，请重新查看采集门后操作。")
         self.sync()
         action, w = data["action"], self.work
         if self.frozen and action not in ("freeze", "continue", "suspend", "save", "discard"):

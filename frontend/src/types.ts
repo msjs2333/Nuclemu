@@ -36,6 +36,7 @@ export interface State {
   product: { segments: Segment[] }; calibration: Calibration | null
   product_cursor: string
   confirmation_id: number | null
+  active_acquisition: number | null
   calibration_context: CalibrationContext
   calibrated_devices: string[]
   draft_error?: string

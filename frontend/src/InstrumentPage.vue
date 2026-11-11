@@ -47,7 +47,7 @@ async function start() {
       <span v-if="instrument.kind === 'spectrum'" class="device-range">{{ fmt(instrument.channels) }} 道</span>
       <form id="acquisition" @submit.prevent="start">
       <button class="primary" id="start" :disabled="state.running || state.readonly">开始采集</button>
-      <button type="button" id="stop" :disabled="!state.running || state.readonly" @click="run('stop')">停止采集</button>
+      <button type="button" id="stop" :disabled="!state.running || state.readonly" @click="run('stop', {acquisition: state.active_acquisition})">停止采集</button>
       <output id="remaining">{{ state.remaining_s == null ? '' : '剩余 ' + fmt(state.remaining_s) + ' s' }}</output>
       </form>
     </div>

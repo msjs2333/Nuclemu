@@ -245,8 +245,8 @@ class WebReviewBrowserTests(unittest.TestCase):
         return peer
 
     def save_and_reopen_analysis(self):
-        expected = json.loads(json.dumps(self.server.app.lab.analysis))
         self.exit_dialog(self.page)
+        expected = json.loads(json.dumps(self.server.app.lab.analysis))
         self.page.locator("#save-exit").click()
         expect(self.page.locator("#catalog")).to_be_visible()
         self.page.get_by_role("button", name="查看实验", exact=True).click()

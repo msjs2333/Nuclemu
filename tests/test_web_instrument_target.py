@@ -131,7 +131,7 @@ class InstrumentTargetTests(unittest.TestCase):
         self.now += 5
         self.assertEqual(self.app.state()["remaining_s"], 1)
         self.call("pause", paused=False)
-        self.call("stop")
+        self.call("stop", acquisition=self.app.lab.work.session.active_acquisition)
         self.assertFalse(self.app.lab.work.session.running)
 
 
