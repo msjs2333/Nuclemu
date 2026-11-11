@@ -10,7 +10,11 @@ python -m nuclemu validate
 python -m nuclemu gui
 ```
 
-`list` 给出实验 ID、说明、参数键、单位、默认值、范围、整数要求及设备 `kind:id` 和道数。`validate` 加载并检查实验定义，不运行物理测量。`gui` 惰性加载图形界面并调用 `launch(paths=...)`，其他命令不导入 Tk。
+`list` 给出实验 ID、测量问题、操作指引、参数键、单位、默认值、范围、整数要求及设备 `kind:id` 和道数。装置部件列出用途、所控制的参数和绑定的设备实例；连接区分粒子路径 `particle` 与电信号 `signal`。例如 `alpha` 的铝箔架绑定 `foil_um`，硅探测器和多道谱仪都指向 `spectrum:mca`；`beta` 的源座绑定 `source_present`，箔架绑定 `foil_count`。`list alpha` 只显示该实验的详情。
+
+`list` 与浏览器目录共用 `catalog.describe(experiment)`，查看资料不建立 Session、不采样。没有显式装置定义的本地模块仍可加载：目录用设备生成仪器部件，并将参数集中列在控制部件中。`validate` 加载并检查实验定义，不运行物理测量。
+
+`gui` 惰性调用 `launch(paths=...)`，默认启动本机 Web 服务并打开默认浏览器中的实验工作台。额外模块目录照常传给工作台；停止服务使用启动命令所在终端的 `Ctrl+C`。`list`、`validate` 和 `run` 不启动 Web 服务或浏览器，不需要图形窗口。
 
 额外实验目录通过重复 `--path DIRECTORY` 指定，可放在子命令前或后。目录内非下划线开头的 `.py` 文件须导出公共 `Experiment` 类型的 `EXPERIMENT`。模块会执行 Python 代码，只加载自己信任的目录。重复实验 ID、无效定义及目录不存在均报错。
 
@@ -82,7 +86,7 @@ python -m nuclemu run alpha --seed 187 --step "2.25,foil_um=0" --step "1.25,foil
 
 `--output` 可重复，扩展名必须为 `.csv` 或 `.json`，目标父目录须已存在。输出不得指向 `--calibration` 的输入文件，包括相对路径和文件链接别名；发现冲突时，在采集、摘要和任何文件写出之前报错。默认导出全部设备；指定 `--device` 后只导出该设备。JSON 保留完整各段设置、整数计数、设备描述、种子和曝光边界；CSV 每段每道一行，包含设置、曝光及计数，载入刻度后另含 `energy_MeV`。摘要中的 ROI 和净率为派生读数，产品仍保存原始累计计数，供后续重新分析。
 
-CLI 与 GUI 共用 `discover(paths)`、`Experiment.parameters/devices`、`Session` 和 `MeasurementView(session).product()`。对齐时使用相同实验、种子、设备实例、参数变化顺序及每次开关门时刻；界面刷新可以拆分 `advance()`，不改变采集窗。CLI 每个 step 对应 GUI 一次定时采集；GUI 的刷新、ROI、刻度和导出同样只消费现有产品。以相同产品的整数计数和曝光比较，避免把随机读数与模型期望率直接当作相等性条件。
+CLI 与浏览器工作台共用 `discover(paths)`、`catalog.describe(experiment)`、`Experiment.parameters/devices`、`Session` 和 `MeasurementView(session).product()`。装置中看到的参数键对应 CLI 的 `--set` 或 `--step`，部件绑定的仪器实例对应 `--device KIND:ID`。对齐时使用相同实验、种子、设备实例、参数变化顺序及每次开关门时刻；界面刷新可以拆分 `advance()`，不改变采集窗。CLI 每个 step 对应工作台一次定时采集；工作台的刷新、ROI、刻度和导出同样只消费现有产品。以相同产品的整数计数和曝光比较，避免把随机读数与模型期望率直接当作相等性条件。
 
 运行入口验收：
 

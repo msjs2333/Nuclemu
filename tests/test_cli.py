@@ -10,7 +10,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from nuclemu.catalog import discover
+from nuclemu.catalog import describe, discover
 from nuclemu.core import Session
 from nuclemu.results import Calibration, MeasurementView
 
@@ -35,6 +35,29 @@ class CliTests(unittest.TestCase):
         for expected in ("alpha:", "beta:", "foil_um", "µm", "spectrum:mca", "counter:counter"):
             self.assertIn(expected, output)
         self.assertIn("valid alpha", self.ok("validate", "alpha"))
+
+    def test_list_matches_workbench_apparatus_and_bindings(self):
+        for name in ("alpha", "beta"):
+            with self.subTest(experiment=name):
+                definition = discover()[name]
+                entry = describe(definition)
+                output = self.ok("list", name)
+                self.assertIn(f"question: {entry['question']}", output)
+                for index, paragraph in enumerate(entry["guide"], 1):
+                    self.assertIn(f"guide {index}: {paragraph}", output)
+                devices = {d.id: d for d in definition.devices}
+                for part in entry["components"]:
+                    block = f"  component {part['kind']}:{part['id']}: {part['label']}\n"
+                    if part["description"]:
+                        block += f"    {part['description']}\n"
+                    if part["parameters"]:
+                        block += f"    parameters: {', '.join(part['parameters'])}\n"
+                    if part["device"] is not None:
+                        d = devices[part["device"]]
+                        block += f"    device: {d.kind}:{d.id}\n"
+                    self.assertIn(block, output)
+                for link in entry["connections"]:
+                    self.assertIn(f"connection {link['kind']}: {link['source']} -> {link['target']}; {link['label']}", output)
 
     def test_beta_background_then_sample_matches_session_and_csv(self):
         with TemporaryDirectory() as temporary:
@@ -147,11 +170,16 @@ class CliTests(unittest.TestCase):
         with TemporaryDirectory() as temporary:
             path = Path(temporary)
             (path / "lab.py").write_text(
-                "from nuclemu.core import Device, Experiment\n"
-                "EXPERIMENT = Experiment('local', 'Local lab', '', (), "
+                "from nuclemu.core import Device, Experiment, Parameter\n"
+                "EXPERIMENT = Experiment('local', 'Local lab', '', "
+                "(Parameter('gain', 'Gain', 'V', 1, 0, 2),), "
                 "(Device('left', 'counter', 'Left'), Device('right', 'counter', 'Right')), "
                 "lambda settings, start, end, rng: {'left': [7], 'right': [9]})\n", encoding="utf-8")
             self.assertIn("local:", self.ok("--path", temporary, "list"))
+            output = self.ok("list", "local", "--path", temporary)
+            self.assertIn("component controls:controls: 实验参数\n    parameters: gain", output)
+            self.assertIn("component instrument:device-left: Left\n    device: counter:left", output)
+            self.assertIn("component instrument:device-right: Right\n    device: counter:right", output)
             self.assertIn("valid local", self.ok("validate", "--path", temporary))
             self.assertIn("counts=7", self.ok("run", "local", "--path", temporary,
                                             "--duration", "0.5", "--device", "counter:left"))
@@ -195,7 +223,8 @@ class CliTests(unittest.TestCase):
         # No Tk import is needed to parse or run CLI commands.
         result = subprocess.run([sys.executable, "-c",
             "import sys; from nuclemu.cli import main; main(['list']); "
-            "assert 'tkinter' not in sys.modules"], cwd=ROOT, capture_output=True)
+            "assert 'tkinter' not in sys.modules; assert 'nuclemu.gui' not in sys.modules; "
+            "assert 'nuclemu.web' not in sys.modules"], cwd=ROOT, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         from nuclemu.cli import main
         import types

@@ -51,6 +51,58 @@ assert (first["acquisition"], second["acquisition"]) == (1, 2)
 
 当前本地目录按单个 Python 文件加载实验定义。可从已安装的 Python 包导入共用模型，并以模块的 `__file__` 定位旁边的参考数据。目录本身不会加入 Python 的模块搜索路径；多文件课程库可安装为包，再由目录中的实验定义导入。
 
+Web 目录读取 `Experiment` 的 `question` 和 `guide` 展示测量问题与步骤。各部件通过 `Component.parameters` 绑定同名模型参数，通过 `Component.device` 绑定读出仪器的实例 ID。同一探测器和仪器面板可以指向同一个读出实例。按装置顺序声明部件，用 `Connection` 明确照射路径（`particle`）和信号连线（`signal`）。已声明的装置图需能定位每个参数和设备。省略装置图的模块自动生成参数区和各设备入口。
+
+例如，将下列内容保存为可信课程目录中的 `counter_lab.py`，使用 `python -m nuclemu gui --path 课程目录` 进入工作台，也可用 `python -m nuclemu run clock-pulses --path 课程目录 --duration 3` 检查读数。
+
+```python
+from math import floor
+from nuclemu.core import Component, Connection, Device, Experiment, Parameter
+
+def count_pulses(settings, start, end, rng):
+    # 周期信号在整数秒发出一个脉冲，分窗计数之和等于整段计数。
+    pulses = floor(end) - floor(start)
+    return {"scaler": (pulses * settings["enabled"],)}
+
+EXPERIMENT = Experiment(
+    "clock-pulses", "周期脉冲计数", "改变采集时长并检查累计读数。",
+    (Parameter("enabled", "发生器开关", "", 1, 0, 1, integer=True),),
+    (Device("scaler", "counter", "脉冲计数器"),), count_pulses,
+    question="每秒一个脉冲，3 秒内会记录多少个？",
+    guide=("启用发生器，定时采集 3 秒，读取计数器。",),
+    components=(
+        Component("generator", "source", "脉冲发生器", parameters=("enabled",)),
+        Component("readout", "instrument", "数字计数器", device="scaler"),
+    ),
+    connections=(Connection("generator", "readout", "signal", "逻辑脉冲"),),
+)
+```
+
+模型返回的键仍是设备 ID。目录加载时会报告未声明的参数、设备或连线端点，并给出模块位置。编辑装置显示文字和浏览资料都不创建会话或推进时钟。
+
+### 具名选项、本底识别与课程分组
+
+数值参数可追加 `options=((0, "本底"), (1, "有源"))`。非空选项是完整的允许值集合，必须含默认值；选项值仍满足参数范围与整数约束，且数值不重复。界面显示标签，模型、CLI 和测量工况仍使用数值。例如 β 的 `source_present` 显示“本底 / 有源”；其他实验可使用自己的键和值。未声明选项时保留原数值输入行为。
+
+计数器可声明 `Device("counter", "counter", "计数器", background_conditions={"source_present": 0})`。声明会在定义加载时归一为不可变键值对，并检查引用的参数和值。条件按“且”匹配记录中的工况，不依赖实验 ID、参数名称或标签。非空声明用于识别可选本底；空声明表示没有自动识别规则，允许使用者显式选择适用的参考段，界面不能凭某个键或零值推断本底。具名选项只负责输入和显示，本底身份只由设备声明负责，两者独立。
+
+本底和样品须对应同一读出设备、互不重叠的有效曝光；同一段不能当作自己的独立本底。同一次开门中切换工况形成的不同曝光段也可以独立，不要求不同的 `acquisition`。本底行保留原读数并标为参考，其他适用样品以各自实际曝光计算净率及独立泊松标准不确定度，允许负净率。条件匹配只识别工况，不能证明所有几何和模型条件都适用；模块作者仍需说明。CLI 的显式 `--background` 选择行为保持兼容。
+
+`Experiment.course` 是可选的非空课程名称，默认 `"核物理实验"`，目录按该文字分组；无需额外课程注册或插件体系。`describe()` 输出的相关字段例如：
+
+```json
+{
+  "course": "核物理实验",
+  "parameters": [{"key": "source_present", "label": "测量模式", "unit": "",
+                  "default": 1, "minimum": 0, "maximum": 1, "integer": true,
+                  "options": [{"value": 0, "label": "本底"}, {"value": 1, "label": "有源"}]}],
+  "devices": [{"id": "counter", "kind": "counter", "label": "β 计数器", "channels": 1,
+               "calibration_parameters": [], "background_conditions": {"source_present": 0}}]
+}
+```
+
+以上均为追加的可选字段；旧 Python 定义的构造位置参数不变。旧目录或历史存档缺少 `options`、`background_conditions`、`course` 时，分别按空选项、无本底识别规则和默认课程处理。读回历史存档使用存档自身声明，不从当前模块补推过去的本底身份。原始测量产品格式、数值工况和 CLI 设置语法不变。
+
 可调增益的谱仪可声明 `Device("mca", "spectrum", "多道谱仪", 1024, calibration_parameters=("gain",))`，其中 `gain` 是实验已定义的参数。只列入会改变道址到能量映射的设置。工作台建立两点刻度时，取所选测量段的对应值。查看或导出不同增益的谱时，保留道址和计数，回到相同增益即可恢复能量轴。CSV 在不匹配的段将 `energy_MeV` 留空。测量 JSON 将这类刻度放在 `conditional_calibration`，读取者逐段比较 `conditions` 与 `settings` 后再换算。固定增益谱仪可省略该声明，仍可读写原有的 `nuclemu.calibration/1` 刻度文件。
 
 ### 本地会话的内存用量

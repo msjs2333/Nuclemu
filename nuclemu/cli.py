@@ -7,7 +7,7 @@ from math import isfinite
 from pathlib import Path
 import sys
 
-from .catalog import discover
+from .catalog import describe, discover
 from .core import Session
 from .results import Calibration, MeasurementView, net_count_rate, roi_centroid, save_product
 
@@ -76,8 +76,13 @@ def parser():
 
 
 def _describe(experiment):
+    entry = describe(experiment)
     print(f"{experiment.id}: {experiment.title}")
     print(f"  {experiment.description}")
+    if entry["question"] != experiment.description:
+        print(f"  question: {entry['question']}")
+    for index, paragraph in enumerate(entry["guide"], 1):
+        print(f"  guide {index}: {paragraph}")
     for p in experiment.parameters:
         print(f"  parameter {p.key}: default={p.default:g}; range=[{p.minimum:g}, {p.maximum:g}]"
               f" {p.unit}; {'integer' if p.integer else 'number'}; {p.label}")
@@ -85,6 +90,18 @@ def _describe(experiment):
         print(f"  device {d.kind}:{d.id}: {d.channels} channel(s); {d.label}")
         if d.calibration_parameters:
             print(f"    calibration parameters: {', '.join(d.calibration_parameters)}")
+    devices = {d.id: d for d in experiment.devices}
+    for part in entry["components"]:
+        print(f"  component {part['kind']}:{part['id']}: {part['label']}")
+        if part["description"]:
+            print(f"    {part['description']}")
+        if part["parameters"]:
+            print(f"    parameters: {', '.join(part['parameters'])}")
+        if part["device"] is not None:
+            device = devices[part["device"]]
+            print(f"    device: {device.kind}:{device.id}")
+    for link in entry["connections"]:
+        print(f"  connection {link['kind']}: {link['source']} -> {link['target']}; {link['label']}")
 
 
 def _run(args, experiment):

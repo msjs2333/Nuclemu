@@ -8,11 +8,13 @@ Nuclemu is a local nuclear physics simulator for undergraduate laboratories. The
 
 ## Getting started
 
-From the repository directory, use Python 3.11 or later. With Tk installed, open the graphical workbench:
+From the repository directory, use Python 3.11 or later to open the local workbench in your browser:
 
 ```sh
 python -m nuclemu gui
 ```
+
+Select an experiment from the catalogue. Use the apparatus view to adjust the foil, open the instrument to acquire data, then compare and save measurements in the records view. The interface and models run locally.
 
 For a scripted measurement, list the experiments, then acquire 10 seconds of background counts and 20 seconds with the source present behind four foils. The last option uses the first measurement to calculate the background-subtracted rate.
 

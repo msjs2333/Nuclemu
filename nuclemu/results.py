@@ -84,16 +84,22 @@ class Calibration:
             del data["conditions"]
         return data
 
-    def save(self, path):
+    def document(self):
         version = 2 if self.conditions else 1
+        return {"format": f"nuclemu.calibration/{version}", "unit": "MeV", **self._fields()}
+
+    def save(self, path):
         with _export_stream(path) as stream:
-            json.dump({"format": f"nuclemu.calibration/{version}", "unit": "MeV",
-                       **self._fields()}, stream, indent=2)
+            json.dump(self.document(), stream, indent=2)
             stream.write("\n")
 
     @classmethod
     def load(cls, path):
-        data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        return cls.from_document(json.loads(Path(path).read_text(encoding="utf-8-sig")))
+
+    @classmethod
+    def from_document(cls, document):
+        data = dict(document) if isinstance(document, dict) else {}
         version = data.pop("format", None) if isinstance(data, dict) else None
         if version not in ("nuclemu.calibration/1", "nuclemu.calibration/2") or data.pop("unit", None) != "MeV":
             raise ValueError("Expected a Nuclemu energy calibration in MeV.")
@@ -169,7 +175,12 @@ class MeasurementView:
 
 
 def save_product(path, product, device=None, calibration=None):
-    path = Path(path)
+    with _export_stream(path, newline="") as stream:
+        write_product(stream, Path(path).suffix.lower().removeprefix("."), product, device, calibration)
+
+
+def write_product(stream, format, product, device=None, calibration=None):
+    """Write the same measurement product to a download or a local UTF-8 file."""
     if not product["segments"]:
         raise ValueError("There is no completed exposure.")
     devices = product["devices"]
@@ -181,7 +192,7 @@ def save_product(path, product, device=None, calibration=None):
             raise ValueError("Calibration does not match the selected instrument.")
         calibration.check(product["experiment"], key, devices[key]["channels"],
                           devices[key].get("calibration_parameters", ()))
-    if path.suffix.lower() == ".json":
+    if format == "json":
         selected = dict(product)
         if device:
             selected["devices"] = {device: devices[device]}
@@ -190,24 +201,22 @@ def save_product(path, product, device=None, calibration=None):
         if calibration:
             field = "conditional_calibration" if calibration.conditions else "calibration"
             selected[field] = dict(unit="MeV", **calibration._fields())
-        with _export_stream(path) as stream:
-            json.dump(selected, stream, indent=2, ensure_ascii=False)
-            stream.write("\n")
+        json.dump(selected, stream, indent=2, ensure_ascii=False)
+        stream.write("\n")
         return
-    if path.suffix.lower() != ".csv":
+    if format != "csv":
         raise ValueError("Use .csv or .json for a measurement.")
-    with _export_stream(path, newline="") as stream:
-        writer = csv.writer(stream)
-        writer.writerow(("experiment", "device", "start_s", "end_s", "exposure_s", "settings",
-                         "channel", "energy_MeV", "counts", "acquisition"))
-        for s in product["segments"]:
-            apply_energy = calibration is not None and calibration.applies_to(s["settings"])
-            settings = json.dumps(s["settings"], sort_keys=True)
-            exposure = s["end_s"] - s["start_s"]
-            for key, values in s["readings"].items():
-                if device is not None and key != device:
-                    continue
-                for channel, count in enumerate(values):
-                    energy = calibration.energy(channel) if apply_energy and key == calibration.device else ""
-                    writer.writerow((product["experiment"], key, s["start_s"], s["end_s"],
-                                     exposure, settings, channel, energy, count, s.get("acquisition", "")))
+    writer = csv.writer(stream)
+    writer.writerow(("experiment", "device", "start_s", "end_s", "exposure_s", "settings",
+                     "channel", "energy_MeV", "counts", "acquisition"))
+    for s in product["segments"]:
+        apply_energy = calibration is not None and calibration.applies_to(s["settings"])
+        settings = json.dumps(s["settings"], sort_keys=True)
+        exposure = s["end_s"] - s["start_s"]
+        for key, values in s["readings"].items():
+            if device is not None and key != device:
+                continue
+            for channel, count in enumerate(values):
+                energy = calibration.energy(channel) if apply_energy and key == calibration.device else ""
+                writer.writerow((product["experiment"], key, s["start_s"], s["end_s"],
+                                 exposure, settings, channel, energy, count, s.get("acquisition", "")))

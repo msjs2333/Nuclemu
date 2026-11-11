@@ -1,13 +1,14 @@
 """Contracts for modular discovery and the single-clock acquisition model."""
 
+from dataclasses import replace
 from pathlib import Path
 from random import Random
 from statistics import mean, variance
 from tempfile import TemporaryDirectory
 import unittest
 
-from nuclemu.catalog import discover
-from nuclemu.core import Device, Experiment, Parameter, Session
+from nuclemu.catalog import describe, discover
+from nuclemu.core import Component, Connection, Device, Experiment, Parameter, Session
 from nuclemu.physics import AluminumFoil, poisson
 
 
@@ -199,6 +200,38 @@ class SessionTests(unittest.TestCase):
 
 
 class CatalogTests(unittest.TestCase):
+    def test_old_module_exposes_controls_and_distinct_counter_instances(self):
+        entry = describe(experiment())
+        parts = entry["components"]
+        self.assertEqual([p["device"] for p in parts if p["device"]], ["a", "b"])
+        self.assertEqual([key for p in parts for key in p["parameters"]], ["rate"])
+        self.assertEqual(entry["connections"], [])
+
+    def test_diagram_controls_and_detector_open_the_declared_model_and_device(self):
+        for name, key, value, meter in (("alpha", "foil_um", 8, "mca"),
+                                         ("beta", "foil_count", 4, "counter")):
+            with self.subTest(experiment=name):
+                definition = discover()[name]
+                parts = {p["id"]: p for p in describe(definition)["components"]}
+                session = Session(definition)
+                session.set(parts["foil"]["parameters"][0], value)
+                session.start(1)
+                session.advance(1)
+                row = session.records[0]
+                self.assertEqual(row.settings[key], value)
+                self.assertEqual(row.readings[parts["detector"]["device"]], row.readings[meter])
+
+    def test_invalid_diagram_points_to_the_bad_binding(self):
+        base = discover()["alpha"]
+        for part, reason in (
+            (Component("gain", "knob", "Gain", parameters=("gain",)), "unknown parameter 'gain'"),
+            (Component("adc", "instrument", "ADC", device="missing"), "unknown device 'missing'"),
+        ):
+            with self.subTest(part=part.id), self.assertRaisesRegex(ValueError, reason):
+                replace(base, components=(*base.components, part))
+        with self.assertRaisesRegex(ValueError, "broken"):
+            replace(base, connections=(Connection("detector", "broken", "signal", "Pulse"),))
+
     def test_definition_rejects_invalid_parameter_and_device_bindings(self):
         def define(parameters, devices):
             return Experiment("invalid", "Invalid", "", parameters, devices, split_counter)

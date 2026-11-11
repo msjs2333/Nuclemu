@@ -5,7 +5,7 @@ from bisect import bisect_left
 from random import Random
 from typing import Mapping
 
-from nuclemu.core import Device, Experiment, Parameter
+from nuclemu.core import Component, Connection, Device, Experiment, Parameter
 from nuclemu.physics import AluminumFoil, poisson
 
 
@@ -87,4 +87,24 @@ EXPERIMENT = Experiment(
     parameters=(Parameter("foil_um", "铝箔厚度", "µm", 0.0, 0.0, 40.0),),
     devices=(Device("mca", "spectrum", "α 多道谱仪", channels=CHANNELS),),
     model=measure,
+    question="α 粒子穿过铝箔后，谱峰能量怎样随箔厚变化？",
+    guide=(
+        "先将铝箔厚度调为 0 µm，打开多道谱仪采集无箔参考谱。"
+        "教学源三条参考线的能量依次为 5.155、5.486 和 5.805 MeV。",
+        "用 ROI 分别圈住低能和高能两个孤立峰，以实测峰心和对应参考能量建立两点刻度。"
+        "用中间峰检验刻度，再保留这份参考谱。",
+        "增加箔厚并重新采谱，与无箔谱比较同一条线的峰心。"
+        "接近射程时谱线可能消失，此时记录峰区计数及实际曝光。",
+    ),
+    components=(
+        Component("source", "source", "α 参考源", "固定源座发出三条已知能量的 α 谱线。"),
+        Component("foil", "foil", "铝箔架", "改变法向入射粒子穿过的铝箔厚度。", ("foil_um",)),
+        Component("detector", "detector", "硅探测器", "穿透铝箔的粒子产生脉冲，脉冲幅度反映沉积能量。", device="mca"),
+        Component("mca", "instrument", "多道谱仪", "按脉冲幅度分道，累计各道计数。", device="mca"),
+    ),
+    connections=(
+        Connection("source", "foil", "particle", "入射 α 粒子"),
+        Connection("foil", "detector", "particle", "透射 α 粒子"),
+        Connection("detector", "mca", "signal", "幅度脉冲"),
+    ),
 )
