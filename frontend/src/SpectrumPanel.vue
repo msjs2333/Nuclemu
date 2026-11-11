@@ -5,7 +5,7 @@ import {describe, exposure, fmt, indexValue, segmentName} from './display'
 import type {Act, Calibration, CalibrationContext, Course, Device, Segment, Series, State} from './types'
 
 const props = defineProps<{
-  course: Course; device: Device; segments: Segment[]; index: number | null; analysis: State['analysis']
+  course: Course; device: Device; session: string; segments: Segment[]; index: number | null; analysis: State['analysis']
   calibration: Calibration | null; calibrationContext: CalibrationContext; readout: State['readout']; act: Act
 }>()
 const emit = defineEmits<{task: [fn: () => Promise<void>]}>()
@@ -62,7 +62,7 @@ function copyContext(context: CalibrationContext): CalibrationContext {
   return {...context, settings: {...context.settings}}
 }
 let formContext: CalibrationContext
-let fileContext: CalibrationContext | null = null
+let fileTarget: {context: CalibrationContext; session: string} | null = null
 watch(() => props.calibrationContext, context => {
   formContext = copyContext(context)
   const c = props.calibration
@@ -84,20 +84,23 @@ function applyCalibration() {
     finally { if (submitted === calibration) submitted = null }
   })
 }
-function change(key: string, value: unknown) { emit('task', () => props.act('analysis', {[key]: value})) }
+function change(key: string, value: unknown, device = props.device.id) {
+  const session = props.session
+  emit('task', () => props.act('analysis', {device, [key]: value}, session))
+}
 function checked(e: Event) { return (e.target as HTMLInputElement).checked }
-let drag: {first: number; channelAt: (clientX: number) => number} | null = null
+let drag: {first: number; device: string; channelAt: (clientX: number) => number} | null = null
 function startDrag(e: PointerEvent) {
   if (e.button !== 0 || !e.isPrimary) return
   heldRange.value = visibleRange.value
   const channelAt = pointerChannels(plot.value!, heldRange.value)
-  drag = {first: channelAt(e.clientX), channelAt}
+  drag = {first: channelAt(e.clientX), device: props.device.id, channelAt}
   plot.value!.setPointerCapture(e.pointerId)
 }
 function endDrag(e: PointerEvent) {
   if (!e.isPrimary || drag === null || !heldRange.value) return
   const finish = drag.channelAt(e.clientX)
-  change('roi', [Math.min(drag.first, finish), Math.max(drag.first, finish)])
+  change('roi', [Math.min(drag.first, finish), Math.max(drag.first, finish)], drag.device)
   cancelDrag()
 }
 function cancelDrag() {
@@ -106,12 +109,12 @@ function cancelDrag() {
 }
 function load(e: Event) {
   const input = e.target as HTMLInputElement, file = input.files?.[0]
-  const context = fileContext ?? copyContext(formContext)
-  fileContext = null
+  const target = fileTarget ?? {context: copyContext(formContext), session: props.session}
+  fileTarget = null
   input.value = ''
   if (file) emit('task', async () => props.act('load_calibration', {
-    calibration: JSON.parse(await file.text()), calibration_context: context,
-  }))
+    calibration: JSON.parse(await file.text()), calibration_context: target.context,
+  }, target.session))
 }
 </script>
 
@@ -146,7 +149,7 @@ function load(e: Event) {
           <input :name="['c1','e1','c2','e2'][i]" v-model.number="points[i]" type="number" step="any" required></label>
         <button>应用刻度</button>
       </form><label>载入刻度 JSON <input id="cal-file" type="file" accept=".json"
-        @click="fileContext = copyContext(formContext)" @cancel="fileContext = null" @change="load"></label>
+        @click="fileTarget = {context: copyContext(formContext), session}" @cancel="fileTarget = null" @change="load"></label>
     </details></Teleport>
   </div>
 </template>

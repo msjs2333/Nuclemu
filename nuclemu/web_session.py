@@ -220,6 +220,7 @@ class WebLab:
         doc = store.read(identifier)
         product, info = doc["product"], doc["definition"]
         lab = cls(archived_definition(info), info, product["seed"], store, clock)
+        # A viewer owns fresh target ids; its source may still have a live writer.
         lab.work.lab.view = ArchivedView(product)
         lab.archive_time = doc["time_s"]
         lab.archived_settings = doc["settings"]
@@ -231,7 +232,6 @@ class WebLab:
         lab.mark_saved()
         if identifier.startswith("draft-"):
             lab.source = ("draft", identifier)
-            lab.draft_id = identifier
             lab.recovered_s = lab.archive_time
             lab.saved_revision = None
             lab._saved_ends = {}
@@ -242,7 +242,6 @@ class WebLab:
             lab._saved_settings = None
         else:
             lab.source = ("archive", identifier)
-            lab.archive_id = identifier
         return lab
 
     def bind(self, device):
@@ -258,6 +257,10 @@ class WebLab:
 
     def change_analysis(self, data):
         w = self.work
+        if "device" in data and data["device"] != w.device.id:
+            raise ValueError("分析所用设备已改变，请重新查看仪器后操作。")
+        if "roi" in data and "device" not in data and len(w.session.experiment.devices) > 1:
+            raise ValueError("请选择 ROI 所用设备后重新操作。")
         current = self.analysis[w.device.id]
         updates = {}
         for key in ("roi", "reference", "background", "energy_axis", "rate_axis"):
@@ -349,7 +352,8 @@ class WebLab:
                 raise ValueError("退出选项无效。")
             try:
                 document = self.document(finish=leave)
-                self.store.write(self.archive_id, "archive", document, remove=self.draft_id)
+                self.store.write(self.archive_id, "archive", document,
+                                 remove=self.draft_id if not self.readonly else None)
             finally:
                 # Confirmation and disk I/O are outside laboratory exposure.
                 self.last_tick = self.clock()
@@ -362,7 +366,8 @@ class WebLab:
                 self.confirmation_id = None
                 return True
         elif action == "discard":
-            self.store.remove(self.draft_id)
+            if not self.readonly:
+                self.store.remove(self.draft_id)
             self.confirmation_id = None
             return True
         else:

@@ -49,7 +49,7 @@ async function start() {
     </div>
     <SpectrumPanel v-if="instrument.kind === 'spectrum'" :key="instrument.id" :course="state.definition" :device="instrument" :segments="state.product.segments"
       :index="state.selected" :analysis="state.analysis" :calibration="state.calibration" :calibration-context="state.calibration_context"
-      :readout="state.readout" :act="act" @task="emit('task', $event)"/>
+      :readout="state.readout" :session="state.id" :act="act" @task="emit('task', $event)"/>
     <CounterPanel v-else-if="instrument.kind === 'counter'" :course="state.definition" :device="instrument" :segments="state.product.segments"
       :settings="state.settings" :running="state.running" :readonly="state.readonly"
       :background="state.analysis.background" @background="run('analysis', {background: $event})" @configure="run('configure', {values: $event})"/>

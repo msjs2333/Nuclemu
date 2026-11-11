@@ -48,6 +48,6 @@ export interface State {
   readout: {centroid?: number | null; energy_MeV?: number | null} | null
 }
 export type Page = 'setup' | 'instrument' | 'records'
-export type Act = (name: string, fields?: Record<string, unknown>) => Promise<void>
+export type Act = (name: string, fields?: Record<string, unknown>, session?: string) => Promise<void>
 export type Open = {experiment: string} | {archive: string} | {draft: string}
 export interface Series { label: string; counts: number[]; divisor: number }

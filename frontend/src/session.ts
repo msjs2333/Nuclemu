@@ -67,8 +67,7 @@ export function useSession() {
     const next = await api<Snapshot | null>('action', {session: s.id, product_cursor: s.product_cursor, action: name, ...fields})
     if (next) accept(next)
   }
-  const act: Act = (name, fields) => {
-    const session = state.value?.id
+  const act: Act = (name, fields, session = state.value?.id) => {
     return serial(() => action(name, fields, session))
   }
   function labUrl() { return '/lab/' + encodeURIComponent(state.value!.experiment) + '/#' + page.value }

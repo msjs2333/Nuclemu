@@ -145,6 +145,21 @@ class WebContextTests(unittest.TestCase):
         state = self.call("select", index=1)
         self.assertIsNone(state["calibration"])
 
+    def test_analysis_device_rejects_stale_roi_without_changing_either_instrument(self):
+        self.spectra()
+        self.call("analysis", device="left", roi=[1, 2])
+        self.call("device", device="right")
+        before = deepcopy(self.app.lab.analysis)
+        with self.assertRaisesRegex(ValueError, "ROI 所用设备"):
+            self.call("analysis", roi=[2, 3])
+        self.assertEqual(self.app.lab.analysis, before)
+        with self.assertRaisesRegex(ValueError, "分析所用设备已改变"):
+            self.call("analysis", device="left", roi=[2, 3])
+        self.assertEqual(self.app.lab.analysis, before)
+        state = self.call("analysis", device="right", roi=[2, 3])
+        self.assertEqual(state["analysis"]["roi"], [2, 3])
+        self.assertEqual(self.app.lab.analysis["left"]["roi"], [1, 2])
+
     def test_no_record_context_is_invalid_after_gain_change_or_first_completed_spectrum(self):
         self.spectra()
         # Reopen a new empty session using the same declared instruments.

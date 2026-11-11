@@ -252,6 +252,87 @@ class WebReviewBrowserTests(unittest.TestCase):
         for name, value in (("c1", 0), ("e1", 0), ("c2", 2), ("e2", 1)):
             self.page.locator(f"[name='{name}']").fill(str(value))
 
+    def test_stale_manual_and_drag_roi_cannot_change_another_instrument(self):
+        peer = self.spectra()
+        self.page.locator("#menu-analysis").click()
+        self.page.locator("#first").fill("1")
+        self.page.locator("#last").fill("2")
+        release = self.hold_poll(self.page, self.state())
+        peer.locator("#device").select_option("right")
+        expect(peer.locator("#device")).to_have_value("right")
+        before = json.loads(json.dumps(self.server.app.lab.analysis))
+        self.page.locator("#roi button").click()
+        expect(self.page.locator("#error")).to_contain_text("分析所用设备已改变")
+        self.assertEqual(self.server.app.lab.analysis, before)
+        box = self.page.locator("#plot").bounding_box()
+        self.page.mouse.move(box["x"] + box["width"] * .25, box["y"] + box["height"] * .5)
+        self.page.mouse.down()
+        self.page.mouse.move(box["x"] + box["width"] * .6, box["y"] + box["height"] * .5)
+        self.page.mouse.up()
+        expect(self.page.locator("#error")).to_contain_text("分析所用设备已改变")
+        self.assertEqual(self.server.app.lab.analysis, before)
+        release()
+        expect(self.page.locator("#device")).to_have_value("right")
+        self.page.locator("#first").fill("1")
+        self.page.locator("#last").fill("2")
+        self.page.locator("#roi button").click()
+        self.page.wait_for_function("document.querySelector('#peak').textContent.includes('选区峰心')")
+        self.assertEqual(self.server.app.lab.analysis["right"]["roi"], [1, 2])
+        self.assertEqual(self.server.app.lab.analysis["left"]["roi"], [0, 3])
+
+    def pending_calibration_file(self):
+        self.fill_calibration()
+        self.page.evaluate("""() => {
+            const text = window.originalFileText ??= File.prototype.text;
+            File.prototype.text = function() {
+                return new Promise(resolve => { window.finishFile = () => text.call(this).then(resolve) })
+            }
+        }""")
+        document = dict(format="nuclemu.calibration/2", unit="MeV", experiment="spectra-review",
+                        device="left", channels=4, channel1=0, energy1=0, channel2=2, energy2=1,
+                        conditions={"gain": 1})
+        with self.page.expect_file_chooser() as pending:
+            self.page.locator("#cal-file").click()
+        pending.value.set_files({"name": "energy.json", "mimeType": "application/json",
+                                 "buffer": json.dumps(document).encode()})
+        self.page.wait_for_function("typeof window.finishFile === 'function'")
+
+    def test_file_read_cannot_write_into_reentered_identical_session(self):
+        self.spectra()
+        self.pending_calibration_file()
+        original = self.state()
+        self.exit_dialog(self.page)
+        self.page.locator("#discard").click()
+        expect(self.page.locator("#catalog")).to_be_visible()
+        self.enter("spectra-review")
+        self.collect(1)
+        current = self.state()
+        self.assertNotEqual(current["id"], original["id"])
+        self.assertEqual(current["calibration_context"], original["calibration_context"])
+        self.page.evaluate("window.finishFile()")
+        expect(self.page.locator("#error")).to_contain_text("实验已变更")
+        self.assertEqual(self.server.app.lab.work.lab.calibrations, {})
+        self.assertEqual(self.state()["product"], current["product"])
+
+    def test_delayed_file_import_succeeds_in_same_session_and_rejects_changed_gain(self):
+        peer = self.spectra()
+        self.pending_calibration_file()
+        with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
+                                       r.request.post_data_json.get('action') == 'load_calibration') as imported:
+            self.page.evaluate("window.finishFile()")
+        self.assertTrue(imported.value.ok, imported.value.text())
+        self.assertEqual(dict(self.server.app.lab.work.lab.calibrations["left"].conditions), {"gain": 1})
+        self.pending_calibration_file()
+        peer.locator("[data-page='setup']").click()
+        peer.locator("#component input").fill("2")
+        peer.locator("#component form button").click()
+        expect(peer.locator("#message")).to_contain_text("已更新")
+        self.collect(1)
+        before = self.server.app.lab.work.lab.calibrations.copy()
+        self.page.evaluate("window.finishFile()")
+        expect(self.page.locator("#error")).to_contain_text("适用工况已改变")
+        self.assertEqual(self.server.app.lab.work.lab.calibrations, before)
+
     def test_stale_form_and_file_read_keep_original_device_context(self):
         peer = self.spectra()
         self.fill_calibration()
@@ -271,9 +352,9 @@ class WebReviewBrowserTests(unittest.TestCase):
                 return new Promise(resolve => { window.finishFile = () => text.call(this).then(resolve) })
             }
         }""")
-        document = dict(format="nuclemu.calibration/1", unit="MeV", experiment="spectra-review",
+        document = dict(format="nuclemu.calibration/2", unit="MeV", experiment="spectra-review",
                         device="left", channels=4, channel1=0, energy1=0, channel2=2, energy2=1,
-                        conditions=[["gain", 1]])
+                        conditions={"gain": 1})
         if self.page.locator("#menu-analysis").get_attribute("aria-expanded") != "true":
             self.page.locator("#menu-analysis").click()
         if self.page.locator("details.calibration-tools").get_attribute("open") is None:

@@ -17,6 +17,8 @@ const instruments = ref<InstanceType<typeof InstrumentPage>>()
 const commands = ref<InstanceType<typeof CommandBar>>()
 const title = ref<HTMLHeadingElement>()
 const kind = computed(() => state.value?.definition.devices.find(d => d.id === state.value?.device)?.kind)
+const copyNotice = computed(() => state.value?.readonly
+  ? '保存分析将另存独立记录，原档案或恢复草稿保持不变。' : '')
 const navIcons = {
   setup: 'M3 6h4v12H3z M10 9h4v6h-4z M17 4h4v16h-4z M7 12h3m4 0h3',
   instrument: 'M3 4v16h18 M5 15h3l2-7 3 9 3-6 2 3h3',
@@ -76,9 +78,11 @@ function leave(save: boolean) {
 }
 function save() { void report(async () => {
   commands.value?.close(true)
+  const copied = copyNotice.value
   await act('save', {exit: false})
   const last = state.value?.product.segments.at(-1)
-  message.value = last ? '已保存；测量记录截至 ' + fmt(last.end_s) + ' s。' : '已保存实验设置。尚无已完成的测量段。'
+  message.value = copied ? '已另存独立记录，原档案或恢复草稿保持不变。'
+    : last ? '已保存；测量记录截至 ' + fmt(last.end_s) + ' s。' : '已保存实验设置。尚无已完成的测量段。'
 }) }
 </script>
 
@@ -93,7 +97,7 @@ function save() { void report(async () => {
         <CommandBar ref="commands" :analysis="page === 'instrument' && kind === 'spectrum'"
           :display="page === 'instrument' && kind === 'spectrum'">
           <template #file>
-            <button id="save" @click="save">保存整场实验</button>
+            <button id="save" @click="save">{{ state.readonly ? '保存分析副本' : '保存整场实验' }}</button>
             <button id="open-products" @click="showRecords">选择导出产品…</button>
             <button id="leave" @click="requestExit">退出实验…</button>
           </template>
@@ -137,10 +141,11 @@ function save() { void report(async () => {
   </main>
   <dialog id="confirm" ref="dialog" aria-labelledby="exit-title" @cancel.prevent="report(cancelExit)">
     <h2 id="exit-title">退出实验</h2><p id="exit-message">{{ reason.length ? reason.join('，') + '。确认期间仿真时钟冻结。' : '退出并返回实验目录？' }}</p>
+    <p v-if="copyNotice" id="copy-notice">{{ copyNotice }}</p>
     <p id="exit-error" role="alert" :hidden="!error">{{ error }}</p><div class="dialog-actions">
       <button id="cancel" autofocus @click="report(cancelExit)">继续实验</button>
       <button id="discard" @click="leave(false)">{{ reason.length ? '放弃并退出' : '退出并返回目录' }}</button>
-      <button id="save-exit" class="primary" :hidden="!reason.length" @click="leave(true)">保存实验并退出</button>
+      <button id="save-exit" class="primary" :hidden="!reason.length" @click="leave(true)">{{ state?.readonly ? '保存副本并退出' : '保存实验并退出' }}</button>
     </div>
   </dialog>
 </template>
