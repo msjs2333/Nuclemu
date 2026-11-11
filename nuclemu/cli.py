@@ -181,7 +181,7 @@ def main(argv=None):
     paths = args.root_paths + args.paths
     try:
         if args.command == "gui":
-            from .gui import launch
+            from .web import launch
             launch(paths=paths)
             return 0
         definitions = discover(paths)

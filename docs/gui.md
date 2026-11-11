@@ -2,6 +2,8 @@
 
 在仓库目录运行 `python -m nuclemu gui`。命令启动本机 Python 服务，并在浏览器打开实验目录。保持终端打开，结束时按 Ctrl+C 停止服务。已安装的包也可用 `nuclemu gui` 启动。课程作者可用 `python -m nuclemu gui --path D:\MyLabs` 加载自己的可信实验模块。
 
+Python 调用保留 `from nuclemu.gui import launch`，使用 `launch(paths=("课程目录",))` 启动同一个 Web 工作台。
+
 ## 从装置到仪器
 
 在目录中查看实验资料，或进入一场新实验。装置页列出部件、粒子路径和信号连接。选择部件可查看它的用途，调整它绑定的参数，或进入相应仪器。外部模块也使用同一份参数与设备声明，接入例子见[框架与接口](architecture.md)。

@@ -220,19 +220,27 @@ class CliTests(unittest.TestCase):
             self.assertEqual(list(product["devices"]), ["s"])
 
     def test_console_main_and_lazy_gui_forward_paths(self):
-        # No Tk import is needed to parse or run CLI commands.
+        # Non-GUI commands do not import the browser workbench or its server.
         result = subprocess.run([sys.executable, "-c",
             "import sys; from nuclemu.cli import main; main(['list']); "
-            "assert 'tkinter' not in sys.modules; assert 'nuclemu.gui' not in sys.modules; "
+            "assert 'nuclemu.gui' not in sys.modules; "
             "assert 'nuclemu.web' not in sys.modules"], cwd=ROOT, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         from nuclemu.cli import main
         import types
-        fake = types.ModuleType("nuclemu.gui")
+        fake = types.ModuleType("nuclemu.web")
         fake.launch = unittest.mock.Mock()
-        with patch.dict(sys.modules, {"nuclemu.gui": fake}):
+        with patch.dict(sys.modules, {"nuclemu.web": fake}):
             self.assertEqual(main(["--path", "one", "gui", "--path", "two"]), 0)
         fake.launch.assert_called_once_with(paths=["one", "two"])
+
+    def test_python_gui_entry_forwards_to_web(self):
+        from nuclemu.gui import Workbench, launch
+        from nuclemu.workbench import Workbench as SharedWorkbench
+        self.assertIs(Workbench, SharedWorkbench)
+        with patch("nuclemu.web.launch") as launch_web:
+            launch(paths=("course-labs",))
+        launch_web.assert_called_once_with(paths=("course-labs",))
 
 
 if __name__ == "__main__":

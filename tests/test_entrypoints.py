@@ -7,7 +7,7 @@ import sys
 from tempfile import TemporaryDirectory
 import unittest
 
-from nuclemu.gui import Workbench
+from nuclemu.workbench import Workbench
 
 
 class EntryPointParityTests(unittest.TestCase):
@@ -19,7 +19,7 @@ class EntryPointParityTests(unittest.TestCase):
         )
         for experiment, seed, steps in scenarios:
             with self.subTest(experiment=experiment), TemporaryDirectory() as directory:
-                gui_path = Path(directory, "gui.json")
+                workbench_path = Path(directory, "workbench.json")
                 cli_path = Path(directory, "cli.json")
                 workbench = Workbench(seed=seed)
                 workbench.switch(experiment)
@@ -35,7 +35,7 @@ class EntryPointParityTests(unittest.TestCase):
                         workbench.advance(0.125)
                         workbench.product()
                     self.assertFalse(workbench.session.running)
-                workbench.export(gui_path, all_segments=True)
+                workbench.export(workbench_path, all_segments=True)
                 subprocess.run(command, check=True, capture_output=True)
-                self.assertEqual(json.loads(gui_path.read_text(encoding="utf-8")),
+                self.assertEqual(json.loads(workbench_path.read_text(encoding="utf-8")),
                                  json.loads(cli_path.read_text(encoding="utf-8")))
