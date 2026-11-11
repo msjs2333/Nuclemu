@@ -42,7 +42,7 @@ async function apply() {
     <div class="rig"><div><div class="section-title"><h2>装置示意</h2></div>
       <div id="apparatus" ref="diagram" class="apparatus">
         <canvas class="wiring" ref="wiring" aria-hidden="true"></canvas>
-        <button v-for="p in course.components" :key="p.id" :data-part="p.id"
+        <button v-for="p in course.components" :key="p.id" :data-part="p.id" :data-kind="p.kind"
           :aria-pressed="p.id === selection" @click="choose(p)">
           <ApparatusCanvas :data-part="p.id" :parts="[p]" :devices="course.devices"/><span>{{ p.label }}</span>
         </button>

@@ -4,6 +4,7 @@ import CatalogPage from './CatalogPage.vue'
 import SetupPage from './SetupPage.vue'
 import InstrumentPage from './InstrumentPage.vue'
 import RecordsPage from './RecordsPage.vue'
+import CommandBar from './CommandBar.vue'
 import {fmt, inputValue} from './display'
 import {useSession} from './session'
 import type {Page} from './types'
@@ -13,7 +14,27 @@ const tabs: {id: Page; label: string}[] = [{id: 'setup', label: '实验装置'},
 const dialog = ref<HTMLDialogElement>()
 const menu = ref<InstanceType<typeof CatalogPage>>()
 const instruments = ref<InstanceType<typeof InstrumentPage>>()
+const commands = ref<InstanceType<typeof CommandBar>>()
+const kind = computed(() => state.value?.definition.devices.find(d => d.id === state.value?.device)?.kind)
+const navIcons = {
+  setup: 'M3 6h4v12H3z M10 9h4v6h-4z M17 4h4v16h-4z M7 12h3m4 0h3',
+  instrument: 'M3 4v16h18 M5 15h3l2-7 3 9 3-6 2 3h3',
+  records: 'M5 3h14v18H5z M8 8h8 M8 12h8 M8 16h5',
+}
+function navigate(tab: Page) {
+  commands.value?.close()
+  setPage(tab)
+}
+function showRecords() {
+  navigate('records')
+  void nextTick(() => document.querySelector<HTMLHeadingElement>('#records-title')?.focus())
+}
+function requestExit() {
+  commands.value?.close(true)
+  void report(askExit)
+}
 watch(confirming, async value => {
+  if (value) commands.value?.close(true)
   await nextTick()
   if (value && !dialog.value?.open) dialog.value?.showModal()
   if (!value && dialog.value?.open) dialog.value.close()
@@ -47,6 +68,7 @@ function leave(save: boolean) {
   })
 }
 function save() { void report(async () => {
+  commands.value?.close(true)
   await act('save', {exit: false})
   const last = state.value?.product.segments.at(-1)
   message.value = last ? '已保存；测量记录截至 ' + fmt(last.end_s) + ' s。' : '已保存实验设置。尚无已完成的测量段。'
@@ -54,28 +76,46 @@ function save() { void report(async () => {
 </script>
 
 <template>
-  <header class="mast"><div class="wrap brand"><span class="mark" aria-hidden="true">N</span><span>Nuclemu</span><span class="subtitle">A Virtual Nuclear Physics Lab</span></div></header>
-  <main class="wrap">
+  <header v-if="!state" class="mast"><div class="wrap brand"><span class="mark" aria-hidden="true">N</span><span>Nuclemu</span></div></header>
+  <main :class="state ? 'workbench-wrap' : 'wrap'">
     <p id="error" role="alert" :hidden="!error || confirming">{{ error }}</p>
     <CatalogPage v-if="catalog && !state" ref="menu" :catalog="catalog" @open="args => report(() => open(args))"/>
-    <section v-if="state" id="workspace" :key="state.id">
-      <div class="heading"><h1 id="lab-title">{{ state.definition.title }}</h1><button id="leave" @click="report(askExit)">退出实验 ↗</button></div>
+    <section v-if="state" id="workspace" class="lab-shell" :key="state.id">
+      <header class="lab-topbar">
+        <h1 id="lab-title">{{ state.definition.title }}</h1>
+        <CommandBar ref="commands" :analysis="page === 'instrument' && (kind === 'spectrum' || kind === 'counter')"
+          :display="page === 'instrument' && kind === 'spectrum'">
+          <template #file>
+            <button id="save" @click="save">保存整场实验</button>
+            <button id="open-products" @click="showRecords">选择导出产品…</button>
+            <button id="leave" @click="requestExit">退出实验…</button>
+          </template>
+          <template #acquisition>
+            <div id="acquisition-settings"></div>
+            <div class="menu-fields clock-settings">
+              <label>时钟倍速 <select id="speed" :value="state.speed" :disabled="state.readonly" @change="report(() => act('speed', {speed: Number(inputValue($event))}))">
+                <option v-for="n in [0.25, 1, 2, 5, 10, 60]" :key="n" :value="n">{{ n }}×</option></select></label>
+              <button id="pause" :disabled="state.readonly" @click="report(() => act('pause', {paused: !state!.paused}))">{{ state.paused ? '恢复时钟' : '暂停时钟' }}</button>
+            </div>
+          </template>
+        </CommandBar>
+        <div class="clock"><span id="gate-status" :class="{open: state.running}">{{ state.running ? '采集中' : '采集门关闭' }}</span>
+          <output id="time" aria-label="仿真时间">{{ fmt(state.time_s) }} s</output><span v-if="state.paused">已暂停</span></div>
+      </header>
+      <nav class="lab-rail" aria-label="实验工作区"><button v-for="tab in tabs" :key="tab.id" :data-page="tab.id"
+        :aria-current="tab.id === page ? 'page' : 'false'" @click="navigate(tab.id)">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path :d="navIcons[tab.id]"/></svg>
+        <span>{{ tab.label }}</span></button></nav>
+      <div class="lab-main">
       <p v-if="recovered != null || state.readonly" id="recovered" class="notice">{{ recovered != null ? '已恢复至仿真时刻 ' + fmt(recovered) + ' s 的测量。' : '正在查看已保存的实验。' }}</p>
       <p v-if="state.draft_error" class="notice" role="alert">最近草稿未更新。{{ state.draft_error }}</p>
-      <nav aria-label="实验工作区"><div class="tabs"><button v-for="tab in tabs" :key="tab.id" :data-page="tab.id"
-        :aria-current="tab.id === page ? 'page' : 'false'" @click="setPage(tab.id)">{{ tab.label }}</button></div>
-        <div class="clock"><span id="gate-status" :class="{open: state.running}">{{ state.running ? '采集中' : '采集门关闭' }}</span>
-          <output id="time">{{ fmt(state.time_s) }} s</output>
-          <label>倍速 <select id="speed" :value="state.speed" :disabled="state.readonly" @change="report(() => act('speed', {speed: Number(inputValue($event))}))">
-            <option v-for="n in [0.25, 1, 2, 5, 10, 60]" :key="n" :value="n">{{ n }}</option></select></label>
-          <button id="pause" :disabled="state.readonly" @click="report(() => act('pause', {paused: !state!.paused}))">{{ state.paused ? '恢复时钟' : '暂停时钟' }}</button>
-        </div>
-      </nav>
       <SetupPage v-show="page === 'setup'" :course="state.definition" :settings="state.settings" :readonly="state.readonly" :act="act" @device="toDevice" @notice="message = $event"/>
-      <InstrumentPage ref="instruments" v-show="page === 'instrument'" :state="state" :act="act" @task="report"/>
+      <InstrumentPage ref="instruments" v-show="page === 'instrument'" :state="state" :act="act" @task="report"
+        @acquisition-settings="commands?.open('acquisition')"/>
       <RecordsPage v-show="page === 'records'" :session="state.id" :course="state.definition" :segments="state.product.segments"
-        :calibrated="state.calibrated_devices" @save="save" @task="report" @notice="message = $event"/>
-      <output id="message" role="status">{{ message }}</output>
+        :calibrated="state.calibrated_devices" @task="report" @notice="message = $event"/>
+      <output v-show="message" id="message" role="status">{{ message }}</output>
+      </div>
     </section>
   </main>
   <dialog id="confirm" ref="dialog" aria-labelledby="exit-title" @cancel.prevent="report(cancelExit)">

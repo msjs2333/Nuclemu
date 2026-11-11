@@ -78,30 +78,33 @@ function load(e: Event) {
 
 <template>
   <div id="spectrum">
-    <div class="tools">
+    <Teleport defer to="#panel-display"><div class="menu-fields">
       <label>当前谱 <select id="sample" :value="index ?? ''" @change="emit('task', () => act('select', {index: indexValue($event)}))">
         <option value="">跟随最新段</option><option v-for="(s, i) in segments" :key="i" :value="i">{{ segmentName(s, i) }}</option></select></label>
       <label>参考谱 <select id="reference" :value="analysis.reference ?? ''" @change="change('reference', indexValue($event))">
         <option value="">无参考谱</option><option v-for="(s, i) in segments" :key="i" :value="i">{{ segmentName(s, i) }}</option></select></label>
       <label><input type="checkbox" id="energy" :disabled="!calibration" :checked="!!energyScale" @change="change('energy_axis', checked($event))"> MeV 横轴</label>
       <label><input type="checkbox" id="rate" :checked="analysis.rate_axis" @change="change('rate_axis', checked($event))"> 按曝光归一</label>
-    </div>
+    </div></Teleport>
     <canvas id="plot" ref="plot" aria-label="道谱，亦可在下方输入选区道号" height="260"
       @pointerdown="startDrag" @pointercancel="drag = null" @pointerup="endDrag"></canvas>
-    <div id="legend" class="legend"><span v-for="line in series" :key="line.label">{{ line.label }}</span></div>
+    <div class="spectrum-readout"><div id="legend" class="legend"><span v-for="line in series" :key="line.label">{{ line.label }}</span></div>
+      <output id="peak">{{ readout?.centroid == null ? '无可测峰心' : '峰心 ' + fmt(readout.centroid) + ' 道' }}
+        {{ readout?.energy_MeV == null ? '' : ' · ' + Number(readout.energy_MeV.toFixed(5)) + ' MeV' }}</output>
+    </div>
     <p v-if="incompatible" class="notice">参考谱的刻度工况不同。切回道号轴可叠加两张谱。</p>
-    <form id="roi" @submit.prevent="change('roi', [first, last])"><strong>选区 ROI</strong>
+    <Teleport defer to="#panel-analysis">
+    <form id="roi" class="menu-fields" @submit.prevent="change('roi', [first, last])"><strong>选区 ROI</strong>
       <label>起道 <input id="first" v-model.number="first" type="number" min="0" :max="device.channels - 1" required step="1"></label>
       <label>止道 <input id="last" v-model.number="last" type="number" min="0" :max="device.channels - 1" required step="1"></label>
-      <button>计算峰心</button><output id="peak">{{ readout?.centroid == null ? '无可测峰心' : '峰心 ' + fmt(readout.centroid) + ' 道' }}
-        {{ readout?.energy_MeV == null ? '' : ' · ' + Number(readout.energy_MeV.toFixed(5)) + ' MeV' }}</output>
+      <button>计算峰心</button>
     </form>
-    <details><summary>两点能量刻度</summary>
-      <form id="calibrate" @submit.prevent="applyCalibration">
+    <details class="calibration-tools"><summary>两点能量刻度</summary>
+      <form id="calibrate" class="menu-fields" @submit.prevent="applyCalibration">
         <label v-for="(field, i) in ['参考道 1', '能量 1 / MeV', '参考道 2', '能量 2 / MeV']" :key="field">{{ field }}
           <input :name="['c1','e1','c2','e2'][i]" v-model.number="points[i]" type="number" step="any" required></label>
         <button>应用刻度</button>
       </form><label>载入刻度 JSON <input id="cal-file" type="file" accept=".json" @change="load"></label>
-    </details>
+    </details></Teleport>
   </div>
 </template>

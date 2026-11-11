@@ -5,7 +5,7 @@ import {describe, segmentName} from './display'
 import type {Course, Segment} from './types'
 
 const props = defineProps<{session: string; course: Course; segments: Segment[]; calibrated: string[]}>()
-const emit = defineEmits<{save: []; notice: [message: string]; task: [fn: () => Promise<void>]}>()
+const emit = defineEmits<{notice: [message: string]; task: [fn: () => Promise<void>]}>()
 const selections = reactive<Record<string, {checked: boolean; format: string}>>({})
 const rows = computed(() => {
   const course = props.course
@@ -37,7 +37,7 @@ async function saveProducts() {
 </script>
 
 <template>
-  <section id="records" class="page"><div class="section-title"><h2>测量产品</h2><button id="save" @click="emit('save')">保存整场实验</button></div>
+  <section id="records" class="page"><div class="section-title"><h2 id="records-title" tabindex="-1">测量产品</h2></div>
     <div id="products"><div v-for="row in rows" :key="row.key" class="product" :data-key="row.key" :data-device="row.device" :data-index="row.index ?? ''">
       <label><input type="checkbox" v-model="choice(row).checked"> {{ row.label }}</label>
       <select v-model="choice(row).format" :aria-label="row.label + '的导出格式'"><option v-for="f in row.formats" :key="f" :value="f">{{ f.toUpperCase() }}</option></select>

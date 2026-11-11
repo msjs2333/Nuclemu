@@ -29,9 +29,9 @@ const rows = computed(() => {
 
 <template>
   <div id="counter">
-    <div class="tools"><label>本底记录 <select id="background" :value="background ?? ''" @change="emit('background', indexValue($event))">
+    <Teleport defer to="#panel-analysis"><div class="menu-fields"><label>本底记录 <select id="background" :value="background ?? ''" @change="emit('background', indexValue($event))">
       <option value="">不扣本底</option><option v-for="{seg, i} in choices" :key="i" :value="i">{{ segmentName(seg, i) }} · {{ fmt(exposure(seg)) }} s</option>
-    </select></label></div>
+    </select></label></div></Teleport>
     <div class="scroll"><table><thead id="count-head"><tr><th>记录</th><th v-for="p in course.parameters" :key="p.key">{{ p.label }}{{ p.unit ? ' / ' + p.unit : '' }}</th>
       <th>曝光 / s</th><th>计数</th><th>计数率 / s⁻¹</th><th>净率 ± 标准不确定度 / s⁻¹</th></tr></thead>
       <tbody id="counts"><tr v-for="(cells, i) in rows" :key="i"><td v-for="(cell, j) in cells" :key="j">{{ cell }}</td></tr>

@@ -61,6 +61,7 @@ export function useSession() {
   const act: Act = (name, fields) => serial(() => action(name, fields))
   function labUrl() { return '/lab/' + encodeURIComponent(state.value!.experiment) + '/#' + page.value }
   function setPage(tab: Page) {
+    if (page.value !== tab) message.value = ''
     page.value = tab
     history.replaceState({id: state.value!.id, page: tab}, '', labUrl())
   }
