@@ -15,7 +15,6 @@ from .results import Calibration, MeasurementView, net_count_rate, roi_centroid,
 @dataclass
 class _SavedFile:
     path: Path
-    identity: tuple
     measurements: dict
     calibrations: dict
 
@@ -203,13 +202,10 @@ class Workbench:
 
     def _remember_file(self, path, measurements, calibrations):
         # Record this application's explicit file operations, not external edits.
-        # resolve handles lexical/symlink aliases; stat identity also joins hard links.
+        # Atomic replacement changes one directory entry; other hard links keep their data.
         path = Path(path).resolve()
-        info = path.stat()
-        identity = (info.st_dev, info.st_ino)
-        self.saved_files[:] = [file for file in self.saved_files
-                              if file.path != path and file.identity != identity]
-        self.saved_files.append(_SavedFile(path, identity, measurements, calibrations))
+        self.saved_files[:] = [file for file in self.saved_files if file.path != path]
+        self.saved_files.append(_SavedFile(path, measurements, calibrations))
 
     def export(self, path, *, all_segments=False):
         product = self.product()

@@ -4,7 +4,7 @@ import csv
 import json
 import os
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
@@ -219,7 +219,7 @@ class SaveTrackingTests(unittest.TestCase):
             c.export(self.path.with_name(self.path.name.upper()))
             self.assertTrue(c.unsaved())
 
-    def test_hardlink_alias_is_one_copy(self):
+    def test_replacing_a_hardlink_keeps_the_other_file_and_its_coverage(self):
         c = self.c
         c.select(0)
         c.export(self.path)
@@ -230,8 +230,11 @@ class SaveTrackingTests(unittest.TestCase):
             self.skipTest(str(error))
         c.select(1)
         c.export(alias)
+        self.assertFalse(c.unsaved())
+        self.assertEqual(json.loads(self.path.read_text())["segments"][0]["start_s"], 0)
+        self.assertEqual(json.loads(alias.read_text())["segments"][0]["start_s"], 1)
+        c.export(self.path)
         self.assertTrue(c.unsaved())
-        self.assertEqual(c.lab.saved, {(1, "counter"): 2})
         c.export(self.path, all_segments=True)
         self.assertFalse(c.unsaved())
 
@@ -247,6 +250,60 @@ class SaveTrackingTests(unittest.TestCase):
         c.select(1)
         c.export(alias)
         self.assertTrue(c.unsaved())
+
+    def test_partial_write_preserves_old_product_and_allows_retry(self):
+        def fail_during_write(*args, **kwargs):
+            stream = NamedTemporaryFile(*args, **kwargs)
+            write = stream.write
+
+            def partial(text):
+                write(text[:8])
+                raise OSError("disk full")
+
+            stream.write = partial
+            return stream
+
+        c = self.c
+        for suffix in (".json", ".csv"):
+            with self.subTest(suffix=suffix):
+                path = self.path.with_suffix(suffix)
+                c.export(path, all_segments=True)
+                original = path.read_bytes()
+                files = set(path.parent.iterdir())
+                c.select(1)
+                with patch("nuclemu.results.NamedTemporaryFile", side_effect=fail_during_write):
+                    with self.assertRaisesRegex(OSError, "disk full"):
+                        c.export(path)
+                self.assertEqual(path.read_bytes(), original)
+                self.assertEqual(set(path.parent.iterdir()), files)
+                self.assertFalse(c.unsaved())
+                if suffix == ".json":
+                    self.assertEqual(len(json.loads(original)["segments"]), 2)
+                else:
+                    self.assertEqual(len(list(csv.DictReader(original.decode().splitlines()))), 2)
+                c.export(path)
+                self.assertNotEqual(path.read_bytes(), original)
+
+        c.switch("alpha")
+        first = c.calibrate(0, 0, 1000, 6)
+        c.save_calibration(self.path)
+        original = self.path.read_bytes()
+        second = c.calibrate(0, 0, 1000, 5)
+        with patch("nuclemu.results.NamedTemporaryFile", side_effect=fail_during_write):
+            with self.assertRaisesRegex(OSError, "disk full"):
+                c.save_calibration(self.path)
+        self.assertEqual(self.path.read_bytes(), original)
+        self.assertNotIn("mca", c.lab.saved_calibrations)
+        self.assertEqual(first.load(self.path), first)
+        c.save_calibration(self.path)
+        self.assertEqual(first.load(self.path), second)
+
+    def test_failed_replace_of_new_file_does_not_mark_it_saved(self):
+        with patch.object(Path, "replace", side_effect=PermissionError("file locked")):
+            with self.assertRaisesRegex(PermissionError, "file locked"):
+                self.c.export(self.path, all_segments=True)
+        self.assertEqual(list(self.path.parent.iterdir()), [])
+        self.assertTrue(self.c.unsaved())
 
     def test_cross_experiment_overwrite_invalidates_old_experiment(self):
         c = self.c

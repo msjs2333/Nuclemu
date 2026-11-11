@@ -1,10 +1,29 @@
 """Measurement products and linear energy calibration for local instruments."""
 
 import csv
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 import json
 from math import isfinite, sqrt
 from pathlib import Path
+from tempfile import NamedTemporaryFile
+
+
+@contextmanager
+def _export_stream(path, *, newline=None):
+    """Publish one complete file, following a destination symlink if present."""
+    destination = Path(path).resolve()
+    if destination.exists() and not destination.is_file():
+        raise OSError(f"Expected a regular file: {destination}")
+    stream = NamedTemporaryFile(mode="w", encoding="utf-8", newline=newline,
+                                dir=destination.parent, suffix=".tmp", delete=False)
+    staged = Path(stream.name)
+    try:
+        with stream:
+            yield stream
+        staged.replace(destination)
+    finally:
+        staged.unlink(missing_ok=True)
 
 
 def net_count_rate(sample_counts, sample_exposure_s, background_counts, background_exposure_s):
@@ -67,8 +86,10 @@ class Calibration:
 
     def save(self, path):
         version = 2 if self.conditions else 1
-        Path(path).write_text(json.dumps({"format": f"nuclemu.calibration/{version}", "unit": "MeV",
-                                          **self._fields()}, indent=2) + "\n", encoding="utf-8")
+        with _export_stream(path) as stream:
+            json.dump({"format": f"nuclemu.calibration/{version}", "unit": "MeV",
+                       **self._fields()}, stream, indent=2)
+            stream.write("\n")
 
     @classmethod
     def load(cls, path):
@@ -169,11 +190,13 @@ def save_product(path, product, device=None, calibration=None):
         if calibration:
             field = "conditional_calibration" if calibration.conditions else "calibration"
             selected[field] = dict(unit="MeV", **calibration._fields())
-        path.write_text(json.dumps(selected, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        with _export_stream(path) as stream:
+            json.dump(selected, stream, indent=2, ensure_ascii=False)
+            stream.write("\n")
         return
     if path.suffix.lower() != ".csv":
         raise ValueError("Use .csv or .json for a measurement.")
-    with path.open("w", encoding="utf-8", newline="") as stream:
+    with _export_stream(path, newline="") as stream:
         writer = csv.writer(stream)
         writer.writerow(("experiment", "device", "start_s", "end_s", "exposure_s", "settings",
                          "channel", "energy_MeV", "counts", "acquisition"))
