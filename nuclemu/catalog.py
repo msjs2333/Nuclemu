@@ -3,13 +3,41 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import asdict
 from importlib import import_module
 from pathlib import Path
 from pkgutil import iter_modules
 from runpy import run_path
 
 from . import experiments
-from .core import Experiment
+from .core import Component, Experiment
+
+
+def describe(experiment: Experiment) -> dict:
+    """Return the public catalogue entry without constructing a session."""
+    parts = experiment.components
+    if not parts:
+        parts = tuple(Component(f"device-{d.id}", "instrument", d.label, device=d.id)
+                      for d in experiment.devices)
+        if experiment.parameters:
+            controls = Component("controls", "controls", "实验参数",
+                                 parameters=tuple(p.key for p in experiment.parameters))
+            parts = (controls, *parts)
+    return {
+        "id": experiment.id,
+        "title": experiment.title,
+        "course": experiment.course,
+        "description": experiment.description,
+        "question": experiment.question or experiment.description,
+        "guide": list(experiment.guide) or [experiment.description],
+        "parameters": [dict(asdict(p), options=[{"value": value, "label": label}
+                                               for value, label in p.options])
+                       for p in experiment.parameters],
+        "devices": [dict(asdict(d), background_conditions=dict(d.background_conditions))
+                    for d in experiment.devices],
+        "components": [asdict(part) for part in parts],
+        "connections": [asdict(link) for link in experiment.connections],
+    }
 
 
 def discover(paths: Iterable[str | Path] = ()) -> dict[str, Experiment]:

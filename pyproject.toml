@@ -15,3 +15,6 @@ nuclemu = "nuclemu.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["nuclemu*"]
+
+[tool.setuptools.package-data]
+nuclemu = ["static/*", "static/**/*"]

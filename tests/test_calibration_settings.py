@@ -6,7 +6,7 @@ import sys
 from tempfile import TemporaryDirectory
 import unittest
 
-from nuclemu.gui import TkWorkbench, Workbench
+from nuclemu.workbench import Workbench
 
 
 PLUGIN = """\
@@ -65,27 +65,11 @@ class CalibrationSettingsTests(unittest.TestCase):
         self.assertEqual(data["conditional_calibration"]["conditions"], {"gain": 1})
         self.assertEqual([s["settings"]["gain"] for s in data["segments"]], [1, 2, 1])
 
-    def test_gui_history_switch_restores_energy_axis(self):
-        try:
-            import tkinter as tk
-            root = tk.Tk()
-        except (ImportError, RuntimeError) as error:
-            self.skipTest(str(error))
-        except tk.TclError as error:
-            self.skipTest(str(error))
-        self.addCleanup(root.destroy)
-        ui = TkWorkbench(root, self.lab, clock=lambda: 0)
-        self.addCleanup(lambda: root.after_cancel(ui.after_id) if ui.after_id else None)
-        ui.energy_axis.set(True)
-        for index, axis, energy in [(0, "能量 / MeV", 1), (1, "道号", None), (0, "能量 / MeV", 1)]:
-            ui.history.selection_clear(0, "end")
-            ui.history.selection_set(index)
-            ui.select_history()
-            ui.refresh()
-            labels = [ui.canvas.itemcget(i, "text") for i in ui.canvas.find_all() if ui.canvas.type(i) == "text"]
-            self.assertIn(axis, labels)
+    def test_history_switch_restores_applicable_energy_calibration(self):
+        for index, energy in [(0, 1), (1, None), (0, 1)]:
+            self.lab.select(index)
             self.assertEqual(self.lab.readout()["energy_MeV"], energy)
-            self.assertEqual(bool(ui.calibration_vars[0].get()), energy is not None)
+            self.assertEqual(self.lab.active_calibration() is not None, energy is not None)
         self.lab.select(1)
         with self.assertRaisesRegex(ValueError, "selected spectrum"):
             self.lab.load_calibration(self.path)
