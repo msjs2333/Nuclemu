@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {computed, onBeforeUnmount, onMounted, ref, watch} from 'vue'
-import {channelAt, drawSpectrum} from '/draw.js'
+import {pointerChannels, drawSpectrum, spectrumExtent} from '/draw.js'
 import {exposure, fmt, indexValue, segmentName} from './display'
 import type {Act, Calibration, Device, Segment, Series, State} from './types'
 
@@ -29,12 +29,25 @@ const series = computed(() => {
   return lines
 })
 const plot = ref<HTMLCanvasElement>()
+const rangeMode = ref<'fit' | 'full'>('fit')
+const extent = computed(() => spectrumExtent(series.value, props.device.channels))
+const heldRange = ref<[number, number] | null>(null)
+const visibleRange = computed<[number, number]>(() => heldRange.value ??
+  (rangeMode.value === 'fit' ? extent.value.range : [0, props.device.channels - 1]))
+const centroidText = computed(() => {
+  if (!extent.value.maximum) return series.value.length ? '可见谱暂无计数，显示全道范围。' : '等待采集，显示全道范围。'
+  const centroid = props.readout?.centroid
+  if (centroid == null) return '选区无计数'
+  const [first, last] = props.analysis.roi
+  const label = first === 0 && last === props.device.channels - 1 ? '全谱重心' : '选区峰心'
+  return label + ' ' + fmt(centroid) + ' 道'
+})
 let observer: ResizeObserver
 function paint() {
   if (plot.value?.clientWidth) drawSpectrum(plot.value, series.value, props.device.channels, props.analysis.roi,
-    energyScale.value, props.analysis.rate_axis ? '每道计数率 / s⁻¹' : '每道计数')
+    energyScale.value, props.analysis.rate_axis ? '每道计数率 / s⁻¹' : '每道计数', visibleRange.value, extent.value.maximum)
 }
-watch([series, energyScale, () => props.analysis.roi], paint, {flush: 'post'})
+watch([series, energyScale, visibleRange, () => props.analysis.roi], paint, {flush: 'post'})
 onMounted(() => { observer = new ResizeObserver(paint); observer.observe(plot.value!); paint() })
 onBeforeUnmount(() => observer.disconnect())
 const first = ref(0), last = ref(0)
@@ -57,17 +70,23 @@ function applyCalibration() {
 }
 function change(key: string, value: unknown) { emit('task', () => props.act('analysis', {[key]: value})) }
 function checked(e: Event) { return (e.target as HTMLInputElement).checked }
-let drag: number | null = null
+let drag: {first: number; channelAt: (clientX: number) => number} | null = null
 function startDrag(e: PointerEvent) {
-  if (e.button !== 0) return
-  drag = channelAt(plot.value!, e, props.device.channels)
+  if (e.button !== 0 || !e.isPrimary) return
+  heldRange.value = visibleRange.value
+  const channelAt = pointerChannels(plot.value!, heldRange.value)
+  drag = {first: channelAt(e.clientX), channelAt}
   plot.value!.setPointerCapture(e.pointerId)
 }
 function endDrag(e: PointerEvent) {
-  if (drag === null) return
-  const finish = channelAt(plot.value!, e, props.device.channels)
-  change('roi', [Math.min(drag, finish), Math.max(drag, finish)])
+  if (!e.isPrimary || drag === null || !heldRange.value) return
+  const finish = drag.channelAt(e.clientX)
+  change('roi', [Math.min(drag.first, finish), Math.max(drag.first, finish)])
+  cancelDrag()
+}
+function cancelDrag() {
   drag = null
+  heldRange.value = null
 }
 function load(e: Event) {
   const input = e.target as HTMLInputElement, file = input.files?.[0]
@@ -83,13 +102,15 @@ function load(e: Event) {
         <option value="">跟随最新段</option><option v-for="(s, i) in segments" :key="i" :value="i">{{ segmentName(s, i) }}</option></select></label>
       <label>参考谱 <select id="reference" :value="analysis.reference ?? ''" @change="change('reference', indexValue($event))">
         <option value="">无参考谱</option><option v-for="(s, i) in segments" :key="i" :value="i">{{ segmentName(s, i) }}</option></select></label>
+      <label>横轴范围 <select id="spectrum-range" v-model="rangeMode">
+        <option value="fit">适合可见谱</option><option value="full">固定全道范围</option></select></label>
       <label><input type="checkbox" id="energy" :disabled="!calibration" :checked="!!energyScale" @change="change('energy_axis', checked($event))"> MeV 横轴</label>
       <label><input type="checkbox" id="rate" :checked="analysis.rate_axis" @change="change('rate_axis', checked($event))"> 按曝光归一</label>
     </div></Teleport>
-    <canvas id="plot" ref="plot" aria-label="道谱，亦可在下方输入选区道号" height="260"
-      @pointerdown="startDrag" @pointercancel="drag = null" @pointerup="endDrag"></canvas>
+    <canvas id="plot" ref="plot" :aria-label="`道谱，显示 ${visibleRange[0]} 至 ${visibleRange[1]} 道。可在分析菜单输入选区道号。`" height="260"
+      @pointerdown="startDrag" @lostpointercapture="cancelDrag" @pointerup="endDrag"></canvas>
     <div class="spectrum-readout"><div id="legend" class="legend"><span v-for="line in series" :key="line.label">{{ line.label }}</span></div>
-      <output id="peak">{{ readout?.centroid == null ? '无可测峰心' : '峰心 ' + fmt(readout.centroid) + ' 道' }}
+      <output id="peak">{{ centroidText }}
         {{ readout?.energy_MeV == null ? '' : ' · ' + Number(readout.energy_MeV.toFixed(5)) + ' MeV' }}</output>
     </div>
     <p v-if="incompatible" class="notice">参考谱的刻度工况不同。切回道号轴可叠加两张谱。</p>

@@ -97,10 +97,11 @@ EXPERIMENT = Experiment(
         "接近射程时谱线可能消失，此时记录峰区计数及实际曝光。",
     ),
     components=(
-        Component("source", "source", "α 参考源", "固定源座发出三条已知能量的 α 谱线。"),
-        Component("foil", "foil", "铝箔架", "改变法向入射粒子穿过的铝箔厚度。", ("foil_um",)),
-        Component("detector", "detector", "硅探测器", "穿透铝箔的粒子产生脉冲，脉冲幅度反映沉积能量。", device="mca"),
-        Component("mca", "instrument", "多道谱仪", "按脉冲幅度分道，累计各道计数。", device="mca"),
+        Component("source", "source", "α 参考源", "固定源座发出三条已知能量的 α 谱线。", illustration="source"),
+        Component("foil", "foil", "铝箔架", "改变法向入射粒子穿过的铝箔厚度。", ("foil_um",), illustration="foil"),
+        Component("detector", "detector", "硅探测器", "穿透铝箔的粒子产生脉冲，脉冲幅度反映沉积能量。",
+                  device="mca", illustration="silicon"),
+        Component("mca", "instrument", "多道谱仪", "按脉冲幅度分道，累计各道计数。", device="mca", illustration="mca"),
     ),
     connections=(
         Connection("source", "foil", "particle", "入射 α 粒子"),

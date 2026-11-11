@@ -8,6 +8,7 @@ export interface Device {
 }
 export interface Part {
   id: string; label: string; kind: string; description: string; parameters: string[]; device: string | null
+  illustration?: string | null
 }
 export interface Edge { source: string; target: string; kind: string; label: string }
 export interface Course {

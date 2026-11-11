@@ -1,7 +1,8 @@
 declare module '*/draw.js' {
-  import type {Part, Edge, Device, Series} from './types'
-  export function drawApparatus(canvas: HTMLCanvasElement, parts: Part[], devices: Device[], connections?: Edge[]): void
+  import type {Edge, Series} from './types'
   export function drawConnections(canvas: HTMLCanvasElement, connections: Edge[]): void
-  export function drawSpectrum(canvas: HTMLCanvasElement, series: Series[], channels: number, roi: number[], energy: ((channel: number) => number) | null, label: string): void
-  export function channelAt(canvas: HTMLCanvasElement, event: PointerEvent, channels: number): number
+  type ChannelRange = [number, number]
+  export function spectrumExtent(series: Series[], channels: number): {range: ChannelRange; maximum: number}
+  export function drawSpectrum(canvas: HTMLCanvasElement, series: Series[], channels: number, roi: number[], energy: ((channel: number) => number) | null, label: string, range: ChannelRange, maximum: number): void
+  export function pointerChannels(canvas: HTMLCanvasElement, range: ChannelRange): (clientX: number) => number
 }

@@ -18,6 +18,11 @@ function close(returnFocus = false) {
   if (id && returnFocus) root.value?.querySelector<HTMLButtonElement>('#menu-' + id)?.focus()
 }
 function outside(e: Event) {
+  // The spectrum and its ROI inspector share a channel axis during a drag.
+  if (opened.value === 'analysis' && e.target instanceof Element && e.target.closest('#plot')) {
+    if (e.type === 'pointerdown') e.preventDefault()
+    return
+  }
   if (opened.value && e.target instanceof Node && !root.value?.contains(e.target)) close()
 }
 async function first(id: Command) {

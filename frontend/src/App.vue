@@ -80,7 +80,7 @@ function save() { void report(async () => {
   <main :class="state ? 'workbench-wrap' : 'wrap'">
     <p id="error" role="alert" :hidden="!error || confirming">{{ error }}</p>
     <CatalogPage v-if="catalog && !state" ref="menu" :catalog="catalog" @open="args => report(() => open(args))"/>
-    <section v-if="state" id="workspace" class="lab-shell" :key="state.id">
+    <section v-if="state" id="workspace" class="lab-shell" :class="{'spectrum-workspace': page === 'instrument' && kind === 'spectrum'}" :key="state.id">
       <header class="lab-topbar">
         <h1 id="lab-title">{{ state.definition.title }}</h1>
         <CommandBar ref="commands" :analysis="page === 'instrument' && (kind === 'spectrum' || kind === 'counter')"
@@ -89,6 +89,14 @@ function save() { void report(async () => {
             <button id="save" @click="save">保存整场实验</button>
             <button id="open-products" @click="showRecords">选择导出产品…</button>
             <button id="leave" @click="requestExit">退出实验…</button>
+          </template>
+          <template #analysis>
+            <div v-if="page === 'instrument' && kind === 'spectrum'" class="inspector-heading">
+              <h2>谱分析</h2>
+              <button type="button" aria-label="关闭谱分析" @click="commands?.close(true)">
+                <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+              </button>
+            </div>
           </template>
           <template #acquisition>
             <div id="acquisition-settings"></div>
@@ -100,7 +108,9 @@ function save() { void report(async () => {
           </template>
         </CommandBar>
         <div class="clock"><span id="gate-status" :class="{open: state.running}">{{ state.running ? '采集中' : '采集门关闭' }}</span>
-          <output id="time" aria-label="仿真时间">{{ fmt(state.time_s) }} s</output><span v-if="state.paused">已暂停</span></div>
+          <span class="clock-reading"><span class="clock-label">仿真时间</span>
+            <output id="time" aria-label="仿真时间" aria-live="off">{{ fmt(state.time_s) }} <small>s</small></output></span>
+          <span v-if="state.paused">已暂停</span></div>
       </header>
       <nav class="lab-rail" aria-label="实验工作区"><button v-for="tab in tabs" :key="tab.id" :data-page="tab.id"
         :aria-current="tab.id === page ? 'page' : 'false'" @click="navigate(tab.id)">

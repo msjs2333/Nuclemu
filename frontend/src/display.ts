@@ -1,7 +1,10 @@
 import type {Course, Parameter, Segment} from './types'
 
 const formatter = new Intl.NumberFormat('zh-CN', {maximumFractionDigits: 3})
-export function fmt(value: number) { return formatter.format(value) }
+const smallNumber = new Intl.NumberFormat('zh-CN', {maximumSignificantDigits: 3})
+export function fmt(value: number) {
+  return (value !== 0 && Math.abs(value) < .001 ? smallNumber : formatter).format(value)
+}
 export function exposure(s: Segment) { return s.end_s - s.start_s }
 export function segmentName(s: Segment, i: number) { return '测量 ' + s.acquisition + ' · 段 ' + (i + 1) }
 export function parameterText(p: Parameter, value: number) {

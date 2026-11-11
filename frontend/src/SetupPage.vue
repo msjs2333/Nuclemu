@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {computed, onMounted, onBeforeUnmount, ref, watch} from 'vue'
 import {drawConnections} from '/draw.js'
-import ApparatusCanvas from './ApparatusCanvas.vue'
+import ApparatusFigure from './ApparatusFigure.vue'
 import {errorMessage} from './api'
 import type {Act, Course, Part} from './types'
 
@@ -40,11 +40,11 @@ async function apply() {
 <template>
   <section id="setup" class="page">
     <div class="rig"><div><div class="section-title"><h2>装置示意</h2></div>
-      <div id="apparatus" ref="diagram" class="apparatus">
+      <div id="apparatus" ref="diagram" class="apparatus" @load.capture="paint">
         <canvas class="wiring" ref="wiring" aria-hidden="true"></canvas>
         <button v-for="p in course.components" :key="p.id" :data-part="p.id" :data-kind="p.kind"
           :aria-pressed="p.id === selection" @click="choose(p)">
-          <ApparatusCanvas :data-part="p.id" :parts="[p]" :devices="course.devices"/><span>{{ p.label }}</span>
+          <ApparatusFigure :parts="[p]"/><span>{{ p.label }}</span>
         </button>
       </div>
       <div id="connections" class="connections"><span v-for="edge in course.connections" :key="edge.source + '/' + edge.target + '/' + edge.label">

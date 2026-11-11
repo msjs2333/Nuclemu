@@ -53,6 +53,8 @@ assert (first["acquisition"], second["acquisition"]) == (1, 2)
 
 Web 目录读取 `Experiment` 的 `question` 和 `guide` 展示测量问题与步骤。各部件通过 `Component.parameters` 绑定同名模型参数，通过 `Component.device` 绑定读出仪器的实例 ID。同一探测器和仪器面板可以指向同一个读出实例。按装置顺序声明部件，用 `Connection` 明确照射路径（`particle`）和信号连线（`signal`）。已声明的装置图需能定位每个参数和设备。省略装置图的模块自动生成参数区和各设备入口。
 
+部件可用 `Component.illustration` 选择内置设备插图。源座、箔架、硅探头、β 探头、多道谱仪和计数器分别对应 `source`、`foil`、`silicon`、`beta-probe`、`mca` 和 `counter`。省略此项或使用未知图名时，界面以部件名称标记连接节点。仪器面板和测量始终由设备绑定决定。
+
 例如，将下列内容保存为可信课程目录中的 `counter_lab.py`，使用 `python -m nuclemu gui --path 课程目录` 进入工作台，也可用 `python -m nuclemu run clock-pulses --path 课程目录 --duration 3` 检查读数。
 
 ```python

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {computed, nextTick, ref} from 'vue'
-import ApparatusCanvas from './ApparatusCanvas.vue'
+import ApparatusFigure from './ApparatusFigure.vue'
 import type {Catalog, Course, Open} from './types'
 import {fmt} from './display'
 
@@ -37,7 +37,7 @@ async function showGuide(course: Course) {
     <div id="catalog-list"><section v-for="[group, courses] in groups" :key="group">
       <h2>{{ group }}</h2><div class="catalog-list">
       <article v-for="course in courses" :key="course.id" class="course">
-        <div class="illustration"><ApparatusCanvas :parts="course.components" :devices="course.devices" :edges="course.connections"/></div>
+        <div class="illustration"><ApparatusFigure :parts="course.components" :edges="course.connections"/></div>
         <div class="course-body"><h2>{{ course.title }}</h2><p>{{ course.question }}</p>
           <p class="subtle">{{ course.devices.map(d => d.label).join(' · ') }}</p>
           <div class="course-actions"><button ref="entryButtons" class="primary" :data-experiment="course.id" @click="emit('open', {experiment: course.id})">进入实验 →</button>

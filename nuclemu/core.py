@@ -79,6 +79,7 @@ class Component:
     description: str = ""
     parameters: tuple[str, ...] = ()
     device: str | None = None
+    illustration: str | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "parameters", tuple(self.parameters))

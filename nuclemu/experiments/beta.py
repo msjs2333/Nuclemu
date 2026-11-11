@@ -45,10 +45,11 @@ EXPERIMENT = Experiment(
         "估计固定几何下信号降至无箔值一半所需的厚度。",
     ),
     components=(
-        Component("source", "source", "β 源座", "移开源测本底，放入源测量透射信号。", ("source_present",)),
-        Component("foil", "foil", "铝箔架", "每片厚 0.10 mm，可叠放 0 至 24 片。", ("foil_count",)),
-        Component("detector", "detector", "β 探测器", "在固定几何下记录到达探测器且通过甄别的脉冲。", device="counter"),
-        Component("counter", "instrument", "计数器", "累加采集门内的脉冲数，并记录实际曝光。", device="counter"),
+        Component("source", "source", "β 源座", "移开源测本底，放入源测量透射信号。", ("source_present",), illustration="source"),
+        Component("foil", "foil", "铝箔架", "每片厚 0.10 mm，可叠放 0 至 24 片。", ("foil_count",), illustration="foil"),
+        Component("detector", "detector", "β 探测器", "在固定几何下记录到达探测器且通过甄别的脉冲。",
+                  device="counter", illustration="beta-probe"),
+        Component("counter", "instrument", "计数器", "累加采集门内的脉冲数，并记录实际曝光。", device="counter", illustration="counter"),
     ),
     connections=(
         Connection("source", "foil", "particle", "入射 β 粒子"),
