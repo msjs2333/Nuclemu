@@ -1,5 +1,7 @@
 # 本地浏览器实验台
 
+本文说明当前发布版的操作。下一轮的会话缓存、批量下载及实验文件设计见[采集、缓存与文件](measurement-workflow.md)。
+
 在仓库目录运行 `python -m nuclemu gui`。命令启动本机 Python 服务，并在浏览器打开实验目录。保持终端打开，结束时按 Ctrl+C 停止服务。已安装的包也可用 `nuclemu gui` 启动。课程作者可用 `python -m nuclemu gui --path D:\MyLabs` 加载自己的可信实验模块。
 
 Python 调用保留 `from nuclemu.gui import launch`，使用 `launch(paths=("课程目录",))` 启动同一个 Web 工作台。
