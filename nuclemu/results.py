@@ -27,10 +27,16 @@ class Calibration:
     energy1: float
     channel2: float
     energy2: float
+    conditions: tuple[tuple[str, float], ...] = ()
 
     def __post_init__(self):
         if not isinstance(self.device, str) or not self.device:
             raise ValueError("Calibration requires a device id.")
+        pairs = tuple(sorted((key, value) for key, value in self.conditions))
+        if (len(dict(pairs)) != len(pairs) or any(not isinstance(k, str)
+                or type(v) not in (int, float) or not isfinite(v) for k, v in pairs)):
+            raise ValueError("Invalid calibration conditions.")
+        object.__setattr__(self, "conditions", pairs)
         values = (self.channel1, self.channel2, self.energy1, self.energy2)
         if not all(isfinite(v) for v in values):
             raise ValueError("Calibration points must be finite.")
@@ -42,19 +48,40 @@ class Calibration:
         slope = (self.energy2 - self.energy1) / (self.channel2 - self.channel1)
         return self.energy1 + (channel - self.channel1) * slope
 
-    def check(self, experiment, device, channels):
+    def check(self, experiment, device, channels, parameters=()):
         if (self.experiment, self.device, self.channels) != (experiment, device, channels):
             raise ValueError("Calibration belongs to a different instrument configuration.")
+        if set(dict(self.conditions)) != set(parameters):
+            raise ValueError("Calibration must bind the instrument's calibration parameters.")
+
+    def applies_to(self, settings):
+        return all(settings.get(key) == value for key, value in self.conditions)
+
+    def _fields(self):
+        data = asdict(self)
+        if self.conditions:
+            data["conditions"] = dict(self.conditions)
+        else:
+            del data["conditions"]
+        return data
 
     def save(self, path):
-        Path(path).write_text(json.dumps({"format": "nuclemu.calibration/1", "unit": "MeV",
-                                          **asdict(self)}, indent=2) + "\n", encoding="utf-8")
+        version = 2 if self.conditions else 1
+        Path(path).write_text(json.dumps({"format": f"nuclemu.calibration/{version}", "unit": "MeV",
+                                          **self._fields()}, indent=2) + "\n", encoding="utf-8")
 
     @classmethod
     def load(cls, path):
         data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
-        if not isinstance(data, dict) or data.pop("format", None) != "nuclemu.calibration/1" or data.pop("unit", None) != "MeV":
+        version = data.pop("format", None) if isinstance(data, dict) else None
+        if version not in ("nuclemu.calibration/1", "nuclemu.calibration/2") or data.pop("unit", None) != "MeV":
             raise ValueError("Expected a Nuclemu energy calibration in MeV.")
+        if version == "nuclemu.calibration/2":
+            if not isinstance(data.get("conditions"), dict) or not data["conditions"]:
+                raise ValueError("A conditional calibration requires its bound settings.")
+            data["conditions"] = tuple(data["conditions"].items())
+        elif "conditions" in data:
+            raise ValueError("Use the conditional calibration format for bound settings.")
         try:
             return cls(**data)
         except TypeError as exc:
@@ -92,8 +119,13 @@ def collect(experiment, records, seed):
     """Combine consecutive windows within one acquisition at unchanged settings."""
     segments = []
     _add_windows(segments, records)
-    return {"format": "nuclemu.measurement/1", "experiment": experiment.id, "seed": seed,
-            "devices": {d.id: {"kind": d.kind, "channels": d.channels} for d in experiment.devices},
+    devices = {}
+    for device in experiment.devices:
+        info = {"kind": device.kind, "channels": device.channels}
+        if device.calibration_parameters:
+            info["calibration_parameters"] = list(device.calibration_parameters)
+        devices[device.id] = info
+    return {"format": "nuclemu.measurement/1", "experiment": experiment.id, "seed": seed, "devices": devices,
             "segments": segments}
 
 
@@ -126,7 +158,8 @@ def save_product(path, product, device=None, calibration=None):
         key = calibration.device
         if key not in devices or (device is not None and device != key):
             raise ValueError("Calibration does not match the selected instrument.")
-        calibration.check(product["experiment"], key, devices[key]["channels"])
+        calibration.check(product["experiment"], key, devices[key]["channels"],
+                          devices[key].get("calibration_parameters", ()))
     if path.suffix.lower() == ".json":
         selected = dict(product)
         if device:
@@ -134,7 +167,8 @@ def save_product(path, product, device=None, calibration=None):
             selected["segments"] = [dict(s, readings={device: s["readings"][device]})
                                     for s in product["segments"]]
         if calibration:
-            selected["calibration"] = dict(unit="MeV", **asdict(calibration))
+            field = "conditional_calibration" if calibration.conditions else "calibration"
+            selected[field] = dict(unit="MeV", **calibration._fields())
         path.write_text(json.dumps(selected, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         return
     if path.suffix.lower() != ".csv":
@@ -144,12 +178,13 @@ def save_product(path, product, device=None, calibration=None):
         writer.writerow(("experiment", "device", "start_s", "end_s", "exposure_s", "settings",
                          "channel", "energy_MeV", "counts", "acquisition"))
         for s in product["segments"]:
+            apply_energy = calibration is not None and calibration.applies_to(s["settings"])
             settings = json.dumps(s["settings"], sort_keys=True)
             exposure = s["end_s"] - s["start_s"]
             for key, values in s["readings"].items():
                 if device is not None and key != device:
                     continue
                 for channel, count in enumerate(values):
-                    energy = calibration.energy(channel) if calibration and key == calibration.device else ""
+                    energy = calibration.energy(channel) if apply_energy and key == calibration.device else ""
                     writer.writerow((product["experiment"], key, s["start_s"], s["end_s"],
                                      exposure, settings, channel, energy, count, s.get("acquisition", "")))

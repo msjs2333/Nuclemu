@@ -47,6 +47,10 @@ class Device:
     kind: str
     label: str
     channels: int = 1
+    calibration_parameters: tuple[str, ...] = ()
+
+    def __post_init__(self):
+        object.__setattr__(self, "calibration_parameters", tuple(self.calibration_parameters))
 
 
 @dataclass(frozen=True)
@@ -71,6 +75,7 @@ class Experiment:
             p.value(p.default)
         if not self.devices or len({d.id for d in self.devices}) != len(self.devices):
             raise ValueError(f"{self.id}: at least one device with a distinct id is required")
+        parameter_keys = {p.key for p in self.parameters}
         for device in self.devices:
             if not device.id or not device.kind or not device.label:
                 raise ValueError(f"{self.id}: each device needs an id, kind and label")
@@ -78,6 +83,9 @@ class Experiment:
                 raise ValueError(f"{device.id}: channels must be a positive integer")
             if device.kind == "counter" and device.channels != 1:
                 raise ValueError(f"{device.id}: a counter has one channel")
+            keys = set(device.calibration_parameters)
+            if not keys <= parameter_keys or len(keys) != len(device.calibration_parameters):
+                raise ValueError(f"{device.id}: calibration_parameters must name distinct declared parameters")
 
 
 @dataclass(frozen=True)

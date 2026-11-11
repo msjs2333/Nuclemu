@@ -13,6 +13,14 @@ from .results import Calibration, MeasurementView, net_count_rate, roi_centroid,
 
 
 @dataclass
+class _SavedFile:
+    path: Path
+    identity: tuple
+    measurements: dict
+    calibrations: dict
+
+
+@dataclass
 class _Lab:
     session: Session
     view: MeasurementView
@@ -20,8 +28,23 @@ class _Lab:
     selected: int | None = None
     background: int | None = None
     calibrations: dict = field(default_factory=dict)
-    saved_calibrations: dict = field(default_factory=dict)
-    saved: dict = field(default_factory=dict)
+    files: list = field(default_factory=list)
+
+    @property
+    def saved(self):
+        saved = {}
+        for file in self.files:
+            for (experiment, index, device), end in file.measurements.items():
+                if experiment == self.session.experiment.id:
+                    saved[index, device] = max(end, saved.get((index, device), end))
+        return saved
+
+    @property
+    def saved_calibrations(self):
+        experiment = self.session.experiment.id
+        return {device: calibration for device, calibration in self.calibrations.items()
+                if any(file.calibrations.get((experiment, device)) == calibration
+                       for file in self.files)}
 
 
 class Workbench:
@@ -37,6 +60,7 @@ class Workbench:
             raise ValueError("No experiments are available.")
         self.seed = seed
         self.labs = {}
+        self.saved_files = []
         self.current = None
         self.paused = False
         self.speed = 1.0
@@ -62,7 +86,8 @@ class Workbench:
         if experiment not in self.labs:
             session = Session(self.definitions[experiment], self.seed)
             self.labs[experiment] = _Lab(
-                session, MeasurementView(session), session.experiment.devices[0].id
+                session, MeasurementView(session), session.experiment.devices[0].id,
+                files=self.saved_files,
             )
         self.current = experiment
 
@@ -115,6 +140,16 @@ class Workbench:
             raise ValueError("Select a completed background segment.")
         self.lab.background = index
 
+    def spectrum_settings(self):
+        segment = self.segment()
+        return self.session.settings if segment is None else segment["settings"]
+
+    def active_calibration(self):
+        calibration = self.lab.calibrations.get(self.device.id)
+        if calibration and calibration.applies_to(self.spectrum_settings()):
+            return calibration
+        return None
+
     def readout(self, first=0, last=None):
         segment = self.segment()
         if segment is None:
@@ -125,7 +160,7 @@ class Workbench:
         if self.device.kind == "spectrum":
             center = roi_centroid(counts, first, len(counts) - 1 if last is None else last)
             result["centroid"] = center
-            calibration = self.lab.calibrations.get(self.device.id)
+            calibration = self.active_calibration()
             result["energy_MeV"] = calibration.energy(center) if calibration and center is not None else None
         elif self.device.kind == "counter" and self.lab.background is not None:
             background = self.product()["segments"][self.lab.background]
@@ -141,8 +176,10 @@ class Workbench:
     def calibrate(self, channel1, energy1, channel2, energy2):
         if self.device.kind != "spectrum":
             raise ValueError("Energy calibration requires a spectrum instrument.")
+        settings = self.spectrum_settings()
+        conditions = tuple((key, settings[key]) for key in self.device.calibration_parameters)
         calibration = Calibration(self.current, self.device.id, self.device.channels,
-                                  *map(float, (channel1, energy1, channel2, energy2)))
+                                  *map(float, (channel1, energy1, channel2, energy2)), conditions=conditions)
         self.lab.calibrations[self.device.id] = calibration
         return calibration
 
@@ -150,16 +187,29 @@ class Workbench:
         if self.device.kind != "spectrum":
             raise ValueError("Energy calibration requires a spectrum instrument.")
         calibration = Calibration.load(path)
-        calibration.check(self.current, self.device.id, self.device.channels)
+        calibration.check(self.current, self.device.id, self.device.channels,
+                          self.device.calibration_parameters)
+        if not calibration.applies_to(self.spectrum_settings()):
+            raise ValueError("Calibration does not match the selected spectrum's settings.")
         self.lab.calibrations[self.device.id] = calibration
-        self.lab.saved_calibrations[self.device.id] = calibration
+        self._remember_file(path, {}, {(self.current, self.device.id): calibration})
 
     def save_calibration(self, path):
-        calibration = self.lab.calibrations.get(self.device.id)
+        calibration = self.active_calibration()
         if calibration is None:
-            raise ValueError("请先应用两点刻度。")
+            raise ValueError("请先为当前工况应用两点刻度。")
         calibration.save(path)
-        self.lab.saved_calibrations[self.device.id] = calibration
+        self._remember_file(path, {}, {(self.current, self.device.id): calibration})
+
+    def _remember_file(self, path, measurements, calibrations):
+        # Record this application's explicit file operations, not external edits.
+        # resolve handles lexical/symlink aliases; stat identity also joins hard links.
+        path = Path(path).resolve()
+        info = path.stat()
+        identity = (info.st_dev, info.st_ino)
+        self.saved_files[:] = [file for file in self.saved_files
+                              if file.path != path and file.identity != identity]
+        self.saved_files.append(_SavedFile(path, identity, measurements, calibrations))
 
     def export(self, path, *, all_segments=False):
         product = self.product()
@@ -170,13 +220,16 @@ class Workbench:
         indices = list(indices)
         selected = dict(product, segments=[product["segments"][i] for i in indices])
         save_product(path, selected, self.device.id, self.lab.calibrations.get(self.device.id))
+        calibrations = {}
         if Path(path).suffix.lower() == ".json" and self.device.id in self.lab.calibrations:
-            self.lab.saved_calibrations[self.device.id] = self.lab.calibrations[self.device.id]
-        for i in indices:
-            self.lab.saved[i, self.device.id] = product["segments"][i]["end_s"]
+            calibrations[self.current, self.device.id] = self.lab.calibrations[self.device.id]
+        self._remember_file(path, {
+            (self.current, i, self.device.id): product["segments"][i]["end_s"] for i in indices
+        }, calibrations)
 
     def unsaved(self):
-        return any(self.lab.saved.get((i, d.id)) != s["end_s"]
+        saved = self.lab.saved
+        return any(saved.get((i, d.id)) != s["end_s"]
                    for i, s in enumerate(self.product()["segments"])
                    for d in self.session.experiment.devices)
 
@@ -371,7 +424,10 @@ class TkWorkbench:
             self.counter_table_frame.pack(fill="both", expand=True)
         else:
             self.canvas.pack(fill="both", expand=True)
-        calibration = c.lab.calibrations.get(c.device.id)
+        self.show_calibration(c.active_calibration())
+
+    def show_calibration(self, calibration):
+        self.shown_calibration = calibration
         values = (calibration.channel1, calibration.energy1, calibration.channel2, calibration.energy2) if calibration else ("", "", "", "")
         for variable, value in zip(self.calibration_vars, values):
             variable.set(str(value))
@@ -397,6 +453,7 @@ class TkWorkbench:
     def apply_parameters(self):
         self.sync_time()
         self.controller.configure({key: variable.get() for key, variable in self.parameter_vars.items()})
+        self.render_key = None
 
     def start(self):
         self.sync_time()
@@ -452,15 +509,14 @@ class TkWorkbench:
             self.message.set(f"已导出 {path}")
 
     def apply_calibration(self):
-        self.controller.calibrate(*(v.get() for v in self.calibration_vars))
+        self.shown_calibration = self.controller.calibrate(*(v.get() for v in self.calibration_vars))
         self.update_reading()
         self.draw()
 
     def save_calibration(self):
         from tkinter import filedialog
-        calibration = self.controller.lab.calibrations.get(self.controller.device.id)
-        if calibration is None:
-            raise ValueError("请先应用两点刻度。")
+        if self.controller.active_calibration() is None:
+            raise ValueError("请先为当前工况应用两点刻度。")
         path = self.dialog(filedialog.asksaveasfilename, parent=self.root, title="保存能量刻度", defaultextension=".json", filetypes=(("刻度 JSON", "*.json"),))
         if path:
             self.controller.save_calibration(path)
@@ -506,6 +562,9 @@ class TkWorkbench:
         key = (c.current, len(c.session.records), c.device.id, c.lab.selected)
         if key == self.render_key:
             return
+        calibration = c.active_calibration()
+        if calibration != self.shown_calibration:
+            self.show_calibration(calibration)
         segments = c.product()["segments"]
         labels = [f"{i + 1}. {s['start_s']:g}–{s['end_s']:g} s · {s['settings']}" for i, s in enumerate(segments)]
         self.history.delete(0, "end")
@@ -544,6 +603,8 @@ class TkWorkbench:
             text += "\nROI 峰心 " + ("无计数" if center is None else f"{center:.3f} 道")
             if reading["energy_MeV"] is not None:
                 text += f" · {reading['energy_MeV']:.5g} MeV"
+            elif c.device.id in c.lab.calibrations and c.active_calibration() is None:
+                text += " · 当前工况使用道号（刻度不匹配）"
         if "net_rate" in reading:
             text += f"\n净计数率 {reading['net_rate']:.4g} ± {reading['uncertainty']:.3g} s⁻¹（标准不确定度）"
         if reading.get("background_reference"):
@@ -583,7 +644,7 @@ class TkWorkbench:
                                bottom - value / peak * (bottom - top)))
             if len(points) >= 4:
                 canvas.create_line(*points, fill="#6ee7dc", width=1.5)
-            calibration = c.lab.calibrations.get(c.device.id) if self.energy_axis.get() else None
+            calibration = c.active_calibration() if self.energy_axis.get() else None
             for fraction in (0, .25, .5, .75, 1):
                 channel = fraction * (len(counts) - 1)
                 label = f"{calibration.energy(channel):.3g}" if calibration else f"{channel:.0f}"
@@ -599,9 +660,10 @@ class TkWorkbench:
         unsaved = []
         for key, lab in self.controller.labs.items():
             reasons = []
+            saved = lab.saved
             if lab.session.running:
                 reasons.append("采集中")
-            if any(lab.saved.get((i, d.id)) != s["end_s"]
+            if any(saved.get((i, d.id)) != s["end_s"]
                    for i, s in enumerate(lab.view.product()["segments"])
                    for d in lab.session.experiment.devices):
                 reasons.append("未导出读数")

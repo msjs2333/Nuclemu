@@ -2,6 +2,7 @@
 
 import csv
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -163,6 +164,177 @@ class WorkbenchTests(unittest.TestCase):
                 c.advance(.05)
                 c.readout()
             self.assertEqual(c.product(), collect(reference.experiment, reference.records, seed))
+
+
+class SaveTrackingTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name) / "reading.json"
+        self.c = Workbench(seed=42)
+        self.c.switch("beta")
+        for _ in range(2):
+            self.c.start(1)
+            self.c.advance(1)
+
+    def test_overwriting_single_segment_invalidates_only_replaced_coverage(self):
+        c = self.c
+        c.select(0)
+        c.export(self.path)
+        c.export(self.path)  # Repeated saves do not create phantom copies.
+        c.select(1)
+        c.export(self.path)
+        self.assertTrue(c.unsaved())
+        self.assertEqual(c.lab.saved, {(1, "counter"): 2})
+        self.assertEqual(len(json.loads(self.path.read_text())["segments"]), 1)
+        c.export(self.path, all_segments=True)
+        self.assertFalse(c.unsaved())
+        c.select(0)
+        c.export(self.path)
+        self.assertTrue(c.unsaved())
+
+    def test_independent_duplicate_file_preserves_copy_when_other_is_overwritten(self):
+        c = self.c
+        backup = self.path.with_name("copy.json")
+        c.select(0)
+        c.export(self.path)
+        c.export(backup)
+        c.select(1)
+        c.export(self.path)
+        self.assertFalse(c.unsaved())
+        c.export(backup)
+        self.assertTrue(c.unsaved())
+
+    def test_lexical_and_case_aliases_replace_the_same_target(self):
+        c = self.c
+        child = self.path.parent / "child"
+        child.mkdir()
+        c.select(0)
+        c.export(self.path)
+        c.select(1)
+        c.export(child / ".." / self.path.name)
+        self.assertTrue(c.unsaved())
+        if os.name == "nt":
+            c.export(self.path, all_segments=True)
+            c.export(self.path.with_name(self.path.name.upper()))
+            self.assertTrue(c.unsaved())
+
+    def test_hardlink_alias_is_one_copy(self):
+        c = self.c
+        c.select(0)
+        c.export(self.path)
+        alias = self.path.with_name("hardlink.json")
+        try:
+            os.link(self.path, alias)
+        except OSError as error:
+            self.skipTest(str(error))
+        c.select(1)
+        c.export(alias)
+        self.assertTrue(c.unsaved())
+        self.assertEqual(c.lab.saved, {(1, "counter"): 2})
+        c.export(self.path, all_segments=True)
+        self.assertFalse(c.unsaved())
+
+    def test_symlink_alias_is_one_copy(self):
+        c = self.c
+        c.select(0)
+        c.export(self.path)
+        alias = self.path.with_name("symlink.json")
+        try:
+            alias.symlink_to(self.path)
+        except OSError as error:
+            self.skipTest(str(error))
+        c.select(1)
+        c.export(alias)
+        self.assertTrue(c.unsaved())
+
+    def test_cross_experiment_overwrite_invalidates_old_experiment(self):
+        c = self.c
+        c.export(self.path, all_segments=True)
+        self.assertFalse(c.unsaved())
+        c.switch("alpha")
+        c.start(1)
+        c.advance(1)
+        c.export(self.path)
+        self.assertFalse(c.unsaved())
+        c.switch("beta")
+        self.assertTrue(c.unsaved())
+
+    def test_same_file_cannot_preserve_two_device_exports(self):
+        definition = Experiment("two", "Two counters", "", (),
+            (Device("left", "counter", "Counter"), Device("right", "counter", "Counter")),
+            lambda settings, start, end, rng: {"left": [2], "right": [5]})
+        c = Workbench(definitions={"two": definition})
+        c.start(1)
+        c.advance(1)
+        c.export(self.path)
+        c.bind_device("right")
+        c.export(self.path)
+        self.assertTrue(c.unsaved())
+        self.assertEqual(c.lab.saved, {(0, "right"): 1})
+
+    def test_old_partial_copy_does_not_cover_new_exposure_and_no_external_polling(self):
+        c = self.c
+        c.start()
+        c.advance(1)
+        c.export(self.path, all_segments=True)
+        c.advance(1)
+        newer = self.path.with_name("newer.json")
+        c.export(newer, all_segments=True)
+        self.assertFalse(c.unsaved())
+        c.stop()
+        c.switch("alpha")
+        c.calibrate(0, 0, 1000, 6)
+        c.save_calibration(newer)  # Leaves only the earlier beta snapshot.
+        c.switch("beta")
+        self.assertTrue(c.unsaved())
+        c.export(self.path, all_segments=True)
+        self.path.write_text("external edit", encoding="utf-8")
+        # We track this workbench's saves, not filesystem history or external tools.
+        with patch.object(Path, "stat", side_effect=AssertionError("Unexpected filesystem polling")):
+            self.assertFalse(c.unsaved())
+
+    def test_calibration_overwrite_and_independent_copies(self):
+        c = self.c
+        c.switch("alpha")
+        first = c.calibrate(0, 0, 1000, 6)
+        c.save_calibration(self.path)
+        copy = self.path.with_name("energy-copy.json")
+        c.save_calibration(copy)
+        second = c.calibrate(0, 0, 1000, 5)
+        c.save_calibration(self.path)
+        self.assertEqual(c.lab.saved_calibrations["mca"], second)
+        c.calibrate(0, 0, 1000, 6)
+        self.assertEqual(c.lab.saved_calibrations["mca"], first)
+        c.switch("beta")
+        c.export(copy, all_segments=True)
+        c.switch("alpha")
+        self.assertNotIn("mca", c.lab.saved_calibrations)
+        c.load_calibration(self.path)
+        self.assertEqual(c.lab.saved_calibrations["mca"], second)
+        c.switch("beta")
+        c.export(self.path, all_segments=True)
+        c.switch("alpha")
+        self.assertNotIn("mca", c.lab.saved_calibrations)
+
+    def test_measurement_and_calibration_replace_each_others_file_coverage(self):
+        c = self.c
+        c.switch("alpha")
+        c.start(1)
+        c.advance(1)
+        c.calibrate(0, 0, 1000, 6)
+        c.export(self.path)
+        self.assertFalse(c.unsaved())
+        self.assertIn("mca", c.lab.saved_calibrations)
+        c.save_calibration(self.path)
+        self.assertTrue(c.unsaved())
+        self.assertIn("mca", c.lab.saved_calibrations)
+        c.export(self.path.with_suffix(".csv"))
+        c.switch("beta")
+        c.export(self.path)
+        c.switch("alpha")
+        self.assertFalse(c.unsaved())
+        self.assertNotIn("mca", c.lab.saved_calibrations)
 
 
 class TkWorkbenchTests(unittest.TestCase):
@@ -344,6 +516,24 @@ class TkWorkbenchTests(unittest.TestCase):
             ui.tick()
             self.assertFalse(c.session.running)
             self.assertEqual(c.readout()["exposure_s"], 1.25)
+
+    def test_close_warns_after_same_file_loses_an_exported_segment(self):
+        ui, c = self.ui, self.c
+        c.switch("beta")
+        ui.rebuild()
+        for _ in range(2):
+            c.start(1)
+            c.advance(1)
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "reused.json"
+            c.select(0)
+            c.export(path)
+            c.select(1)
+            c.export(path)
+            with patch("tkinter.messagebox.askokcancel", return_value=False) as prompt:
+                ui.close()
+                self.assertIn("未导出读数", prompt.call_args.args[1])
+            self.assertTrue(self.root.winfo_exists())
 
     def test_uncommitted_roi_input_does_not_pause_acquisition_and_axis_preserves_calibration(self):
         ui, c = self.ui, self.c

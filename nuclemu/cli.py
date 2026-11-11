@@ -83,6 +83,8 @@ def _describe(experiment):
               f" {p.unit}; {'integer' if p.integer else 'number'}; {p.label}")
     for d in experiment.devices:
         print(f"  device {d.kind}:{d.id}: {d.channels} channel(s); {d.label}")
+        if d.calibration_parameters:
+            print(f"    calibration parameters: {', '.join(d.calibration_parameters)}")
 
 
 def _run(args, experiment):
@@ -108,7 +110,7 @@ def _run(args, experiment):
     calibration = Calibration.load(args.calibration) if args.calibration else None
     if calibration:
         bound = _device(experiment, calibration.device)
-        calibration.check(experiment.id, bound.id, bound.channels)
+        calibration.check(experiment.id, bound.id, bound.channels, bound.calibration_parameters)
         if bound.kind != "spectrum" or (selected and selected.id != bound.id):
             raise ValueError("Calibration requires its bound spectrum device")
     if args.background is not None and not any(d.kind == "counter" for d in devices):
@@ -138,7 +140,9 @@ def _run(args, experiment):
                 centroid = roi_centroid(counts, *roi)
                 detail = "None" if centroid is None else f"{centroid:.6g}"
                 print(f"    ROI {roi[0]}:{roi[1]}: counts={sum(counts[roi[0]:roi[1]+1])}; centroid={detail} channel")
-                if centroid is not None and calibration:
+                if calibration and not calibration.applies_to(segment["settings"]):
+                    print("    calibration does not apply to this segment; channel axis retained")
+                elif centroid is not None and calibration:
                     print(f"    energy={calibration.energy(centroid):.6g} MeV")
             if args.background is not None and d.kind == "counter" and index != args.background:
                 background = product["segments"][args.background - 1]
