@@ -35,6 +35,12 @@ class WebSessionTests(unittest.TestCase):
         return self.app.open(dict(experiment=name, seed=187, **kwargs))
 
     def action(self, action, **kwargs):
+        if action in ("continue", "discard") or (action == "save" and kwargs.get("exit") is True):
+            if not self.app.lab.frozen:
+                self.action("freeze")
+            kwargs.setdefault("confirmation_id", self.app.lab.confirmation_id)
+        if action in ("calibrate", "load_calibration"):
+            kwargs.setdefault("calibration_context", self.app.lab.calibration_context())
         return self.app.request("/api/action", dict(session=self.app.lab.id, action=action, **kwargs))
 
     def acquire(self, duration, **settings):

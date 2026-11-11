@@ -2,11 +2,11 @@
 import {computed, onBeforeUnmount, onMounted, ref, watch} from 'vue'
 import {pointerChannels, drawSpectrum, spectrumExtent} from '/draw.js'
 import {describe, exposure, fmt, indexValue, segmentName} from './display'
-import type {Act, Calibration, Course, Device, Segment, Series, State} from './types'
+import type {Act, Calibration, CalibrationContext, Course, Device, Segment, Series, State} from './types'
 
 const props = defineProps<{
   course: Course; device: Device; segments: Segment[]; index: number | null; analysis: State['analysis']
-  calibration: Calibration | null; readout: State['readout']; act: Act
+  calibration: Calibration | null; calibrationContext: CalibrationContext; readout: State['readout']; act: Act
 }>()
 const emit = defineEmits<{task: [fn: () => Promise<void>]}>()
 const current = computed(() => props.segments[props.index ?? props.segments.length - 1])
@@ -58,6 +58,17 @@ const first = ref(0), last = ref(0)
 watch(() => props.analysis.roi.join('/'), () => { [first.value, last.value] = props.analysis.roi }, {immediate: true})
 const points = ref<(number | string)[]>([])
 let submitted: number[] | null = null
+function copyContext(context: CalibrationContext): CalibrationContext {
+  return {...context, settings: {...context.settings}}
+}
+let formContext: CalibrationContext
+let fileContext: CalibrationContext | null = null
+watch(() => props.calibrationContext, context => {
+  formContext = copyContext(context)
+  const c = props.calibration
+  points.value = c ? [c.channel1, c.energy1, c.channel2, c.energy2] : ['', '', '', '']
+  submitted = null
+}, {immediate: true})
 watch(() => props.calibration, c => {
   const values = c ? [c.channel1, c.energy1, c.channel2, c.energy2] : ['', '', '', '']
   // An acknowledgement can arrive after the learner starts typing the next pair.
@@ -66,9 +77,10 @@ watch(() => props.calibration, c => {
 }, {immediate: true})
 function applyCalibration() {
   const calibration = points.value.map(Number)
+  const context = copyContext(formContext)
   submitted = calibration
   emit('task', async () => {
-    try { await props.act('calibrate', {points: calibration}) }
+    try { await props.act('calibrate', {points: calibration, calibration_context: context}) }
     finally { if (submitted === calibration) submitted = null }
   })
 }
@@ -94,8 +106,12 @@ function cancelDrag() {
 }
 function load(e: Event) {
   const input = e.target as HTMLInputElement, file = input.files?.[0]
+  const context = fileContext ?? copyContext(formContext)
+  fileContext = null
   input.value = ''
-  if (file) emit('task', async () => props.act('load_calibration', {calibration: JSON.parse(await file.text())}))
+  if (file) emit('task', async () => props.act('load_calibration', {
+    calibration: JSON.parse(await file.text()), calibration_context: context,
+  }))
 }
 </script>
 
@@ -129,7 +145,8 @@ function load(e: Event) {
         <label v-for="(field, i) in ['参考道 1', '能量 1 / MeV', '参考道 2', '能量 2 / MeV']" :key="field">{{ field }}
           <input :name="['c1','e1','c2','e2'][i]" v-model.number="points[i]" type="number" step="any" required></label>
         <button>应用刻度</button>
-      </form><label>载入刻度 JSON <input id="cal-file" type="file" accept=".json" @change="load"></label>
+      </form><label>载入刻度 JSON <input id="cal-file" type="file" accept=".json"
+        @click="fileContext = copyContext(formContext)" @cancel="fileContext = null" @change="load"></label>
     </details></Teleport>
   </div>
 </template>

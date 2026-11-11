@@ -26,12 +26,17 @@ export interface Calibration {
   channel1: number; channel2: number; energy1: number; energy2: number
   conditions: [string, number][]
 }
+export interface CalibrationContext {
+  device: string; selected: number | null; settings: Record<string, number>
+}
 export interface State {
   id: string; experiment: string; definition: Course; settings: Record<string, number>
   time_s: number; remaining_s: number | null; paused: boolean; running: boolean; frozen: boolean; speed: number
   dirty: boolean; readonly: boolean; recovered_s: number | null; device: string; selected: number | null
   product: { segments: Segment[] }; calibration: Calibration | null
   product_cursor: string
+  confirmation_id: number | null
+  calibration_context: CalibrationContext
   calibrated_devices: string[]
   draft_error?: string
   spectrum_settings?: Record<string, number>

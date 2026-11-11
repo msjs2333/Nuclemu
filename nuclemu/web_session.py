@@ -46,6 +46,9 @@ class WebLab:
         self.clock = clock
         self.last_tick = clock()
         self.frozen = False
+        self.confirmation_id = None
+        self._confirmation_serial = 0
+        self.source = None
         self.archive_time = None
         self.archived_settings = None
         self.recovered_s = None
@@ -158,6 +161,24 @@ class WebLab:
     def time_s(self):
         return self.archive_time if self.readonly else self.work.session.time_s
 
+    def calibration_context(self):
+        w = self.work
+        segments = w.product()["segments"]
+        selected = w.lab.selected if w.lab.selected is not None else (len(segments) - 1 if segments else None)
+        settings = w.spectrum_settings()
+        return dict(device=w.device.id, selected=selected,
+                    settings={key: settings[key] for key in w.device.calibration_parameters})
+
+    def check_confirmation(self, data):
+        """Reject obsolete exit decisions before advancing the live clock."""
+        action = data["action"]
+        if action in ("continue", "discard") or (action == "save" and data.get("exit") is True):
+            token = data.get("confirmation_id")
+            if (not self.frozen or type(token) is not int or token != self.confirmation_id):
+                raise ValueError("退出确认已过期，请重新确认。")
+        if action == "save" and self.frozen and data.get("exit") is not True:
+            raise ValueError("请先完成当前退出确认。")
+
     def state(self, product_cursor=None):
         w = self.work
         analysis = self.analysis[w.device.id]
@@ -166,10 +187,12 @@ class WebLab:
         result = dict(id=self.id, experiment=w.current, definition=self.info,
                     seed=w.seed, settings=self.settings(), time_s=self.time_s(),
                     running=w.session.running, paused=w.paused, frozen=self.frozen,
+                    confirmation_id=self.confirmation_id,
                     speed=w.speed, remaining_s=w.session.remaining_s, device=w.device.id,
                     selected=w.lab.selected, analysis=analysis,
                     spectrum_settings=dict(w.spectrum_settings()),
                     calibration=asdict(calibration) if calibration else None,
+                    calibration_context=self.calibration_context(),
                     calibrated_devices=list(w.lab.calibrations),
                     readout=w.readout(*analysis["roi"]), readonly=self.readonly,
                     dirty=any(pending.values()), unsaved=pending, recovered_s=self.recovered_s,
@@ -207,6 +230,7 @@ class WebLab:
         lab.bind(doc["device"])
         lab.mark_saved()
         if identifier.startswith("draft-"):
+            lab.source = ("draft", identifier)
             lab.draft_id = identifier
             lab.recovered_s = lab.archive_time
             lab.saved_revision = None
@@ -217,6 +241,7 @@ class WebLab:
             lab._dirty_segments = 0
             lab._saved_settings = None
         else:
+            lab.source = ("archive", identifier)
             lab.archive_id = identifier
         return lab
 
@@ -262,18 +287,28 @@ class WebLab:
             self.edits += 1
 
     def act(self, data):
+        """Apply one action, settling its clock only after exit-round validation."""
+        self.check_confirmation(data)
+        self.sync()
         action, w = data["action"], self.work
         if self.frozen and action not in ("freeze", "continue", "suspend", "save", "discard"):
             raise ValueError("先返回实验，再执行此操作。")
         if self.readonly and action in ("start", "stop", "configure", "speed", "pause"):
             raise ValueError("已保存的实验只支持查看和分析。")
+        if action in ("calibrate", "load_calibration"):
+            if data.get("calibration_context") != self.calibration_context():
+                raise ValueError("刻度所用设备、测量记录或适用工况已改变，请重新查看谱后操作。")
         if action == "freeze":
+            if not self.frozen:
+                self._confirmation_serial += 1
+                self.confirmation_id = self._confirmation_serial
             self.frozen = True
         elif action == "suspend":
             # A page leaving checkpoints completed windows, not the shared clock.
             pass
         elif action == "continue":
             self.frozen = False
+            self.confirmation_id = None
             self.last_tick = self.clock()
         elif action == "configure":
             old = dict(w.session.settings)
@@ -324,9 +359,11 @@ class WebLab:
             self.recovered_s = None
             self.draft_error = None
             if leave:
+                self.confirmation_id = None
                 return True
         elif action == "discard":
             self.store.remove(self.draft_id)
+            self.confirmation_id = None
             return True
         else:
             raise ValueError("未知的工作台操作。")
@@ -371,8 +408,6 @@ class Application:
                     drafts=drafts, draft=drafts[0] if drafts else None)
 
     def open(self, data):
-        if self.lab is not None:
-            raise ValueError("请先从当前实验退出。")
         if data.get("draft"):
             identifier = data["draft"]
             if identifier is True:
@@ -380,6 +415,24 @@ class Application:
                 if draft is None:
                     raise ValueError("没有恢复草稿。")
                 identifier = draft["id"]
+            source = ("draft", identifier)
+        elif "archive" in data:
+            source = ("archive", data["archive"])
+        else:
+            source = None
+        if source is not None and (not isinstance(source[1], str)
+                or (source[0] == "draft") != source[1].startswith("draft-")):
+            raise ValueError("实验记录与恢复草稿不能混用。")
+        if self.lab is not None:
+            same_archive = source is not None and self.lab.source == source
+            same_live = (source is None and not self.lab.readonly
+                         and data.get("experiment") == self.lab.work.current
+                         and ("seed" not in data or (type(data["seed"]) is int
+                              and data["seed"] == self.lab.work.seed)))
+            if same_archive or same_live:
+                return self.state(session=self.lab.id)
+            raise ValueError("请先从当前实验退出。")
+        if source is not None and source[0] == "draft":
             self.lab = WebLab.read(identifier, self.store, self.clock)
         elif "archive" in data:
             self.lab = WebLab.read(data["archive"], self.store, self.clock)
@@ -402,6 +455,12 @@ class Application:
             return self.open(data)
         if self.lab is None or data.get("session") != self.lab.id:
             raise ValueError("会话已结束，请返回目录。")
+        if path == "/api/action":
+            if self.lab.act(data):
+                self.lab = None
+                return None
+            self.lab.update_draft()
+            return self.lab.state(data.get("product_cursor"))
         self.lab.sync()
         if path in ("/api/export", "/api/download"):
             self.lab.update_draft()
@@ -409,10 +468,4 @@ class Application:
             return self.lab.export(data)
         if path == "/api/download":
             return make_download(self.lab, data["products"])
-        if path != "/api/action":
-            raise ValueError("未知请求。")
-        if self.lab.act(data):
-            self.lab = None
-            return None
-        self.lab.update_draft()
-        return self.lab.state(data.get("product_cursor"))
+        raise ValueError("未知请求。")

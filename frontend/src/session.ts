@@ -18,6 +18,7 @@ export function useSession() {
   const catalog = shallowRef<Catalog>()
   const page = ref<Page>('setup'), confirming = ref(false), error = ref(''), message = ref('')
   const recovered = ref<number | null>(null)
+  let confirmationId: number | null = null, dismissedConfirmationId: number | null = null
   let tail: Promise<unknown> = Promise.resolve(), pending = 0, revision = 0, polling = false
   let interval: number
 
@@ -35,11 +36,19 @@ export function useSession() {
       next.settings = stable(prev.settings, next.settings)
       next.analysis = stable(prev.analysis, next.analysis)
       next.calibration = stable(prev.calibration, next.calibration)
+      next.calibration_context = stable(prev.calibration_context, next.calibration_context)
       next.calibrated_devices = stable(prev.calibrated_devices, next.calibrated_devices)
       next.readout = stable(prev.readout, next.readout)
     }
     state.value = {...next, product}
-    confirming.value = next.frozen
+    if (!next.frozen) {
+      confirming.value = false
+      confirmationId = dismissedConfirmationId = null
+    } else if (!confirming.value && next.confirmation_id !== dismissedConfirmationId) {
+      // A visible confirmation retains its own round even if another tab starts a new one.
+      confirmationId = next.confirmation_id
+      confirming.value = true
+    }
   }
   function serial<T>(fn: () => Promise<T>) {
     pending++
@@ -52,23 +61,26 @@ export function useSession() {
     error.value = ''
     try { await fn() } catch (e) { error.value = errorMessage(e) }
   }
-  async function action(name: string, fields: Record<string, unknown> = {}) {
+  async function action(name: string, fields: Record<string, unknown> = {}, session = state.value?.id) {
     const s = state.value
-    if (!s) throw Error('实验已结束。')
+    if (!s || s.id !== session) throw Error('实验已变更，请重新执行操作。')
     const next = await api<Snapshot | null>('action', {session: s.id, product_cursor: s.product_cursor, action: name, ...fields})
     if (next) accept(next)
   }
-  const act: Act = (name, fields) => serial(() => action(name, fields))
+  const act: Act = (name, fields) => {
+    const session = state.value?.id
+    return serial(() => action(name, fields, session))
+  }
   function labUrl() { return '/lab/' + encodeURIComponent(state.value!.experiment) + '/#' + page.value }
   function setPage(tab: Page) {
     if (page.value !== tab) message.value = ''
     page.value = tab
     history.replaceState({id: state.value!.id, page: tab}, '', labUrl())
   }
-  function enter(next: Snapshot, tab: Page) {
+  function enter(next: Snapshot, tab: Page, recovery: number | null = null) {
     accept(next)
     page.value = tab
-    recovered.value = next.recovered_s
+    recovered.value = recovery
     error.value = message.value = ''
     document.title = next.definition.title + ' · Nuclemu'
   }
@@ -77,26 +89,52 @@ export function useSession() {
     return serial(async () => {
       if (state.value) return
       const next = await api<Snapshot>('open', args)
-      enter(next, 'archive' in args || 'draft' in args ? 'instrument' : 'setup')
+      enter(next, 'archive' in args || 'draft' in args ? 'instrument' : 'setup',
+        'draft' in args ? next.recovered_s : null)
       history.pushState({id: next.id, page: page.value}, '', labUrl())
     })
   }
   function askExit() {
+    const session = state.value?.id
     return serial(async () => {
       if (!state.value || confirming.value) return
-      await action('freeze')
+      await action('freeze', {}, session)
+      confirmationId = state.value.confirmation_id
+      dismissedConfirmationId = null
       confirming.value = true
     })
   }
+  async function confirmationAction(name: string, fields: Record<string, unknown>, session: string | undefined, round: number | null) {
+    try { await action(name, {...fields, confirmation_id: round}, session) }
+    catch (e) {
+      if (e instanceof ApiError && e.status === 400 && session && state.value?.id === session) {
+        const latest = await api<Snapshot>('state?session=' + encodeURIComponent(session)).catch(() => null)
+        if (latest && latest.confirmation_id !== round) {
+          accept(latest)
+          dismissedConfirmationId = latest.confirmation_id
+          confirming.value = false
+          confirmationId = null
+        }
+      }
+      throw e
+    }
+  }
   function cancelExit() {
-    return serial(async () => { await action('continue'); confirming.value = false })
+    const session = state.value?.id, round = confirmationId
+    return serial(async () => {
+      await confirmationAction('continue', {}, session, round)
+      confirming.value = false
+      confirmationId = null
+    })
   }
   function finish(save: boolean) {
+    const session = state.value?.id, round = confirmationId
     return serial(async () => {
       if (!state.value || !confirming.value) return
-      await action(save ? 'save' : 'discard', save ? {exit: true} : {})
+      await confirmationAction(save ? 'save' : 'discard', save ? {exit: true} : {}, session, round)
       state.value = null
       confirming.value = false
+      confirmationId = dismissedConfirmationId = null
       document.title = 'Nuclemu · 核物理实验台'
       history.replaceState(null, '', '/')
       await loadCatalog()
