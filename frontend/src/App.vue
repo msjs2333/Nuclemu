@@ -27,7 +27,8 @@ const title = ref<HTMLHeadingElement>()
 const kind = computed(() => state.value?.definition.devices.find(d => d.id === state.value?.device)?.kind)
 const livePortable = computed(() => !!state.value?.definition.outputs?.length && !state.value?.readonly)
 const exitDownloadStarted = ref(false)
-const copyNotice = computed(() => state.value?.readonly
+const convertedFile = computed(() => state.value?.readonly && state.value?.portable_loaded)
+const copyNotice = computed(() => state.value?.readonly && !convertedFile.value
   ? '保存分析将另存独立记录，原档案或恢复草稿保持不变。' : '')
 const navIcons = {
   setup: 'M3 6h4v12H3z M10 9h4v6h-4z M17 4h4v16h-4z M7 12h3m4 0h3',
@@ -132,7 +133,7 @@ async function returnToExperiment() { replacementFile.value = null; await cancel
         <CommandBar ref="commands">
           <template #file>
             <button id="load-experiment" @click="chooseExperiment">载入实验</button>
-            <button id="save" @click="save">保存实验</button>
+            <button id="save" :disabled="convertedFile" @click="save">保存实验</button>
             <button id="leave" class="danger" @click="requestExit">退出实验</button>
           </template>
           <template #simulation>
@@ -150,9 +151,10 @@ async function returnToExperiment() { replacementFile.value = null; await cancel
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path :d="navIcons[tab.id]"/></svg>
         <span>{{ tab.label }}</span></button></nav>
       <div class="lab-main">
-      <p v-if="recovered != null || state.readonly" id="recovered" class="notice">{{ recovered != null ? '已恢复至仿真时刻 ' + fmt(recovered) + ' s 的测量。' : '正在查看已保存的实验。' }}</p>
+      <p v-if="recovered != null || (state.readonly && !convertedFile)" id="recovered" class="notice">{{ recovered != null ? '已恢复至仿真时刻 ' + fmt(recovered) + ' s 的测量。' : '正在查看已保存的实验。' }}</p>
       <p v-if="state.draft_error" class="notice" role="alert">最近草稿未更新。{{ state.draft_error }}</p>
-      <p v-if="state.portable_loaded && state.selected !== null" id="portable-view" class="notice">正在查看文件中已保存的读数。仪器当前门关闭，开始后建立新的测量轮次。</p>
+      <p v-if="convertedFile" id="portable-view" class="notice">历史转存文件只供查看，可从实验记录导出读数。</p>
+      <p v-else-if="state.portable_loaded && state.selected !== null" id="portable-view" class="notice">正在查看文件中已保存的读数。仪器当前门关闭，开始后建立新的测量轮次。</p>
       <p v-if="Object.keys(state.portable_unresolved).length" class="notice">部分分析引用未对应一份完整保存的读数。已保存的各段仍可查看；请选择所需记录核对工况。</p>
       <SetupPage v-show="page === 'setup'" :course="state.definition" :settings="state.settings" :readonly="state.readonly" :act="act"
         :particle-flow="state.particle_flow" :output-enabled="state.output_enabled" :gates="state.gates" @device="toDevice" @notice="message = $event"/>
@@ -177,7 +179,7 @@ async function returnToExperiment() { replacementFile.value = null; await cancel
     <p id="exit-error" role="alert" :hidden="!error">{{ error }}</p><div class="dialog-actions">
       <button id="cancel" autofocus @click="report(returnToExperiment)">继续实验</button>
       <button id="discard" @click="leave(false)">{{ replacementFile ? '放弃本场并载入' : reason.length ? '放弃并退出' : '退出并返回目录' }}</button>
-      <button id="save-exit" class="primary" :hidden="!reason.length && !livePortable" @click="leave(true)">{{ livePortable ? '下载整场实验' : state?.readonly ? '保存副本并退出' : '保存实验并退出' }}</button>
+      <button id="save-exit" class="primary" :hidden="convertedFile || (!reason.length && !livePortable)" @click="leave(true)">{{ livePortable ? '下载整场实验' : state?.readonly ? '保存副本并退出' : '保存实验并退出' }}</button>
       <button v-if="exitDownloadStarted" id="exit-after-download" @click="leave(false)">{{ replacementFile ? '文件已保存，载入' : '文件已保存，退出' }}</button>
     </div>
   </dialog>

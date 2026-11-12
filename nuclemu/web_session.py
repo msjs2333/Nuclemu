@@ -466,10 +466,10 @@ class WebLab:
         return result
 
     @classmethod
-    def read(cls, identifier, store, clock):
-        doc = store.read(identifier)
+    def from_archive(cls, doc, store, clock):
         product, info = doc["product"], doc["definition"]
-        lab = cls(archived_definition(info), info, product["seed"], store, clock)
+        definition = archived_definition(info)
+        lab = cls(definition, {**describe(definition), **info}, product["seed"], store, clock)
         # A viewer owns fresh target ids; its source may still have a live writer.
         lab.work.lab.view = ArchivedView(product)
         lab.archive_time = doc["time_s"]
@@ -478,10 +478,16 @@ class WebLab:
         lab.archived_settings = doc["settings"]
         for key, value in lab.archived_settings.items():
             lab.work.session.set(key, value)
-        lab.analysis = doc["analysis"]
-        lab.work.lab.calibrations = {k: Calibration(**v) for k, v in doc["calibrations"].items()}
+        for device, selection in doc.get("analysis", {}).items():
+            lab.analysis[device].update(selection)
+        lab.work.lab.calibrations = {k: Calibration(**v) for k, v in doc.get("calibrations", {}).items()}
         lab.bind(doc["device"])
         lab.mark_saved()
+        return lab
+
+    @classmethod
+    def read(cls, identifier, store, clock):
+        lab = cls.from_archive(store.read(identifier), store, clock)
         if identifier.startswith("draft-"):
             lab.source = ("draft", identifier)
             lab.recovered_s = lab.archive_time
@@ -826,6 +832,8 @@ class WebLab:
                 w.apply_calibration(Calibration.from_document(document))
             self.edits += 1
         elif action == "save":
+            if self.readonly and self.portable_loaded:
+                raise ValueError("转存文件只供查看，请从实验记录导出所选读数。")
             if w.session.experiment.outputs and not self.readonly:
                 raise ValueError("请下载整场 .nuclemu 文件；仪器读数请保存到本场缓存。")
             leave = data.get("exit", False)

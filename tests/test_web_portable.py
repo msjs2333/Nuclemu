@@ -132,7 +132,7 @@ class PortableWebTests(unittest.TestCase):
         self.assertEqual(lab.work.lab.calibrations["mca"], calibration)
         self.assertEqual(lab.state()["readout"]["energy_MeV"], 2)
 
-    def test_legacy_package_is_explicitly_rejected(self):
+    def test_converted_package_missing_archived_observations_is_rejected(self):
         doc = deepcopy(self.doc)
         doc["legacy"] = {"archive": "historical"}
         with self.assertRaisesRegex(ValueError, "只读"):

@@ -17,8 +17,6 @@ def inspect_import(lab, raw):
     source = load_package(raw) if raw.startswith((b"PK\x03\x04", b"SQLite format 3\0")) else load_item(raw)
     if source["definition"]["id"] != lab.work.session.experiment.id:
         raise ValueError("保存项属于不同课程。")
-    if source.get("legacy"):
-        raise ValueError("历史包请先通过只读转存查看。")
     items = list_items(source) if source.get("format") == FORMAT else [
         dict(id=i["id"], title=i["title"], kind=i["kind"],
              device=i["document"].get("snapshot", {}).get("device", i["document"].get("device")),

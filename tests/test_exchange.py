@@ -221,6 +221,33 @@ class ExchangeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 reopen_session(copied, discover()["alpha"])
 
+        # The original database is now gone. Read only the downloaded package.
+        from nuclemu.web_portable import open_portable
+        from nuclemu.web_import import inspect_import, apply_import
+        from nuclemu.web_session import Application
+        with TemporaryDirectory() as elsewhere:
+            raw = package_bytes(copied)
+            lab = open_portable(raw, {}, ArchiveStore(elsewhere), lambda: 0)
+            state = lab.state()
+            self.assertTrue(state["readonly"])
+            self.assertEqual(state["settings"], {"foil_um": 2.5})
+            self.assertEqual(state["readout"]["energy_MeV"], 3)
+            self.assertEqual(state["readout"]["counts"], 172)
+            self.assertEqual(state["readout"]["exposure_s"], 2.25)
+            with self.assertRaisesRegex(ValueError, "只支持查看"):
+                lab.act(dict(action="start", device="mca"))
+            current = Application(discover(), elsewhere, clock=lambda: 0)
+            current.open({"experiment": "alpha"})
+            choice = inspect_import(current.lab, raw)
+            choice_id = next(i["id"] for i in choice["items"] if i["kind"] == "measurement")
+            apply_import(current.lab, choice["token"], choice_id)
+            self.assertEqual(current.lab.work.session.instrument("mca").exposure_s, 0)
+            saved_import = load_package(current.lab.portable_download()[2])
+            imported = next(i for i in saved_import["items"] if i["kind"] == "measurement")
+            self.assertEqual(imported["document"], measured["document"])
+            self.assertEqual(imported["source"], measured["source"])
+            self.assertIsNotNone(imported["calibration_id"])
+
     def test_invalid_files_and_failed_save_do_not_replace_valid_measurements(self):
         original = capture_session(saved())
         for mutation in (lambda d: d["items"][0]["document"]["snapshot"].update(exposure_s=5),

@@ -86,8 +86,17 @@ def open_portable(data, definitions, store, clock):
     from .web_session import WebLab  # Avoid a WebLab <-> adapter import cycle.
 
     doc = load_package(data)
-    if doc.get("legacy"):
-        raise ValueError("历史数据请先使用只读转存查看，不能直接继续采集。")
+    if "legacy" in doc:
+        legacy = doc["legacy"]
+        archive = legacy.get("document") if isinstance(legacy, dict) else None
+        if not isinstance(archive, dict):
+            raise ValueError("文件缺少只读查看所需的历史记录。")
+        lab = WebLab.from_archive(archive, store, clock)
+        course = definitions.get(lab.work.current)
+        if not archive["definition"].get("short_code") and course and course.short_code:
+            lab.info["short_code"] = course.short_code
+        lab.portable_loaded = True
+        return lab
     definition = definitions.get(doc["definition"]["id"])
     if definition is None:
         raise ValueError("找不到该可携文件对应的课程。")
