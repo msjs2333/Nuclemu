@@ -3,6 +3,7 @@ import {computed, nextTick, ref} from 'vue'
 import ApparatusFigure from './ApparatusFigure.vue'
 import type {Catalog, Course, Open} from './types'
 import {fmt} from './display'
+import {studentIntro} from './studentMaterials'
 
 const props = defineProps<{catalog: Catalog}>()
 const groups = computed(() => {
@@ -48,7 +49,7 @@ async function showGuide(course: Course) {
       <h2>{{ group }}</h2><div class="catalog-list">
       <article v-for="course in courses" :key="course.id" class="course">
         <div class="illustration"><ApparatusFigure :parts="course.components" :edges="course.connections"/></div>
-        <div class="course-body"><h3>{{ course.title }}</h3><p class="course-question">{{ course.question }}</p>
+        <div class="course-body"><h3>{{ course.title }}</h3><p class="course-question course-intro">{{ studentIntro(course) || course.question }}</p>
           <p class="course-instruments">{{ instruments(course) }}</p>
           <div class="course-actions"><button ref="entryButtons" class="primary" :data-experiment="course.id" @click="emit('open', {experiment: course.id})">进入实验</button>
             <button @click="showGuide(course)">查看资料</button></div>
@@ -69,7 +70,8 @@ async function showGuide(course: Course) {
     </section>
     <dialog id="guide" ref="guide" aria-labelledby="guide-title">
       <h2 id="guide-title">{{ selected?.title }}</h2>
-      <div class="guide-text"><p>{{ selected?.description }}</p><p v-for="line in selected?.guide" :key="line">{{ line }}</p></div>
+      <div v-if="selected && studentIntro(selected)" class="guide-text"><p>{{ studentIntro(selected) }}</p></div>
+      <div v-else class="guide-text"><p>{{ selected?.description }}</p><p v-for="line in selected?.guide" :key="line">{{ line }}</p></div>
       <form method="dialog"><button>关闭资料</button></form>
     </dialog>
   </section>

@@ -6,7 +6,6 @@ from math import sqrt
 from tempfile import TemporaryDirectory
 import unittest
 
-from nuclemu.catalog import discover
 from nuclemu.core import Device, Experiment, Parameter
 from nuclemu.web_session import Application
 
@@ -99,8 +98,12 @@ class InstrumentTargetTests(unittest.TestCase):
         self.assertEqual(state["selected"], 1)
 
     def test_one_instrument_legacy_commands_work_but_explicit_wrong_device_is_rejected(self):
-        self.app = Application(discover(), self.folder.name, clock=lambda: self.now)
-        self.app.open({"experiment": "beta"})
+        definition = Experiment("legacy", "Legacy counter", "",
+            (Parameter("source_present", "Source", "", 1, 0, 1, True),),
+            (Device("counter", "counter", "Counter", background_conditions={"source_present": 0}),),
+            lambda settings, start, end, rng: {"counter": (int(10 * (end - start)),)})
+        self.app = Application({"legacy": definition}, self.folder.name, clock=lambda: self.now)
+        self.app.open({"experiment": "legacy"})
         self.call("configure", values={"source_present": 0})
         self.call("start", duration=1)
         self.now = 1

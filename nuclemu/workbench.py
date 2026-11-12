@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .catalog import discover
 from .core import Session
-from .results import Calibration, MeasurementView, net_count_rate, roi_centroid, save_product
+from .results import Calibration, MeasurementView, net_count_rate, roi_centroid, save_product, snapshot_product
 
 
 @dataclass
@@ -93,13 +93,15 @@ class Workbench:
         if device not in {d.id for d in self.session.experiment.devices}:
             raise ValueError(f"Unknown instrument: {device}")
         self.lab.device = device
+        segments = self.product()["segments"]
+        if self.lab.selected is not None and device not in segments[self.lab.selected]["readings"]:
+            self.lab.selected = None
+        if self.lab.background is not None and device not in segments[self.lab.background]["readings"]:
+            self.lab.background = None
 
     def configure(self, values):
         # Validate the entire form before changing any physical condition.
-        parameters = {p.key: p for p in self.session.experiment.parameters}
-        checked = {key: parameters[key].value(float(value)) for key, value in values.items()}
-        for key, value in checked.items():
-            self.session.set(key, value)
+        self.session.configure({key: float(value) for key, value in values.items()})
 
     def set_speed(self, speed):
         speed = float(speed)
@@ -107,11 +109,32 @@ class Workbench:
             raise ValueError("Simulation speed must be finite and positive.")
         self.speed = speed
 
-    def start(self, duration=None):
-        self.session.start(None if duration is None else float(duration))
+    def start(self, duration=None, *, device=None, count_limit=None, window_s=None):
+        self.session.start(None if duration is None else float(duration), device=device,
+                           count_limit=count_limit, window_s=window_s)
 
-    def stop(self):
-        self.session.stop()
+    def stop(self, *, device=None):
+        self.session.stop(device=device)
+
+    def set_output(self, output, enabled):
+        self.session.set_output(output, enabled)
+
+    def snapshot(self, *, device=None, cache=True, writer=None):
+        return self.session.snapshot(self.lab.device if device is None else device,
+                                     cache=cache, writer=writer)
+
+    def begin_clear(self, *, device=None):
+        return self.session.begin_clear(self.lab.device if device is None else device)
+
+    def finish_clear(self, token, choice, *, device=None, writer=None):
+        return self.session.finish_clear(self.lab.device if device is None else device,
+                                         token, choice, writer=writer)
+
+    def clear(self, *, device=None):
+        self.session.clear(device=device)
+
+    def configure_acquisition(self, *, device=None, **targets):
+        self.session.configure_acquisition(self.lab.device if device is None else device, **targets)
 
     def advance(self, wall_seconds):
         if not self.paused:
@@ -130,12 +153,17 @@ class Workbench:
         if not segments:
             return None
         index = self.lab.selected
-        return segments[-1 if index is None else index]
+        if index is None:
+            return next((s for s in reversed(segments) if self.device.id in s["readings"]), None)
+        segment = segments[index]
+        return segment if self.device.id in segment["readings"] else None
 
     def set_background(self, index):
         segments = self.product()["segments"]
         if index is not None and not 0 <= index < len(segments):
             raise ValueError("Select a completed background segment.")
+        if index is not None and self.device.id not in segments[index]["readings"]:
+            raise ValueError("Background segment belongs to another instrument.")
         self.lab.background = index
 
     def spectrum_settings(self):
@@ -144,27 +172,81 @@ class Workbench:
 
     def active_calibration(self):
         calibration = self.lab.calibrations.get(self.device.id)
-        if calibration and calibration.applies_to(self.spectrum_settings()):
+        if calibration and all(calibration.applies_to(settings) for settings in self._spectrum_conditions()):
             return calibration
         return None
 
+    def _spectrum_conditions(self):
+        if self.session.experiment.outputs and self.lab.selected is None:
+            if self.session.instrument(self.device.id).readable_exposure_s > 0:
+                return tuple(row.settings for row in self.snapshot(cache=False).segments)
+            return (self.session.settings,)
+        return (self.spectrum_settings(),)
+
     def readout(self, first=0, last=None):
         segment = self.segment()
-        if segment is None:
-            return None
-        counts = segment["readings"][self.device.id]
-        exposure = segment["end_s"] - segment["start_s"]
+        cumulative_acquisition = None
+        if self.session.experiment.outputs and self.lab.selected is None:
+            current = self.session.instrument(self.device.id)
+            if current.readable_exposure_s == 0:
+                return None
+            counts, exposure = current.counts, current.readable_exposure_s
+            cumulative_acquisition = current.acquisition
+        else:
+            if segment is None:
+                return None
+            counts = segment["readings"][self.device.id]
+            exposure = segment["end_s"] - segment["start_s"]
+        return self._readout(segment, counts, exposure, first, last, cumulative_acquisition,
+                             measurement_index=self.lab.selected)
+
+    def readout_for(self, index, first=0, last=None):
+        """Analyze one nonoverlapping historical segment without changing selection."""
+        segments = self.product()["segments"]
+        if type(index) is not int or not 0 <= index < len(segments):
+            raise ValueError("Select a completed measurement segment")
+        segment = segments[index]
+        if self.device.id not in segment["readings"]:
+            raise ValueError("Measurement segment belongs to another instrument")
+        return self._readout(segment, segment["readings"][self.device.id],
+                             segment["end_s"] - segment["start_s"], first, last, measurement_index=index)
+
+    def _measurement_origin(self, index):
+        origin = getattr(self.lab.view, "measurement_origin", None)
+        return self.session if origin is None else origin(index)
+
+    def _readout(self, segment, counts, exposure, first, last, cumulative_acquisition=None,
+                 *, measurement_index=None):
         result = dict(counts=sum(counts), exposure_s=exposure, rate=sum(counts) / exposure)
         if self.device.kind == "spectrum":
-            center = roi_centroid(counts, first, len(counts) - 1 if last is None else last)
+            last = len(counts) - 1 if last is None else last
+            center = roi_centroid(counts, first, last)
+            result["roi_counts"] = sum(counts[first:last + 1])
             result["centroid"] = center
-            calibration = self.active_calibration()
+            calibration = self.lab.calibrations.get(self.device.id)
+            conditions = (segment["settings"],) if cumulative_acquisition is None else self._spectrum_conditions()
+            if calibration and not all(calibration.applies_to(settings) for settings in conditions):
+                calibration = None
             result["energy_MeV"] = calibration.energy(center) if calibration and center is not None else None
         elif self.device.kind == "counter" and self.lab.background is not None:
             background = self.product()["segments"][self.lab.background]
-            if background is segment:
+            intervals = ([(row.start_s, row.end_s) for row in self.snapshot(cache=False).segments]
+                         if cumulative_acquisition is not None else [(segment["start_s"], segment["end_s"])])
+            background_interval = background["start_s"], background["end_s"]
+            same_observation = (background is segment
+                                and intervals == [background_interval]
+                                and list(counts) == background["readings"][self.device.id])
+            if same_observation:
                 result["background_reference"] = True
             else:
+                source = self._measurement_origin(measurement_index)
+                reference_source = self._measurement_origin(self.lab.background)
+                if source is None or reference_source is None:
+                    raise ValueError("Measurement source is unknown; independent background subtraction is unavailable")
+                if source == reference_source and any(
+                        max(start, background_interval[0]) < min(end, background_interval[1])
+                        for start, end in intervals):
+                    raise ValueError("Measurement includes the background exposure; select a nonoverlapping sample segment")
                 result["net_rate"], result["uncertainty"] = net_count_rate(
                     result["counts"], exposure, sum(background["readings"][self.device.id]),
                     background["end_s"] - background["start_s"],
@@ -178,6 +260,8 @@ class Workbench:
         conditions = tuple((key, settings[key]) for key in self.device.calibration_parameters)
         calibration = Calibration(self.current, self.device.id, self.device.channels,
                                   *map(float, (channel1, energy1, channel2, energy2)), conditions=conditions)
+        if not all(calibration.applies_to(settings) for settings in self._spectrum_conditions()):
+            raise ValueError("Select a spectrum with matching instrument settings before calibrating")
         self.lab.calibrations[self.device.id] = calibration
         return calibration
 
@@ -191,7 +275,7 @@ class Workbench:
             raise ValueError("Energy calibration requires a spectrum instrument.")
         calibration.check(self.current, self.device.id, self.device.channels,
                           self.device.calibration_parameters)
-        if not calibration.applies_to(self.spectrum_settings()):
+        if not all(calibration.applies_to(settings) for settings in self._spectrum_conditions()):
             raise ValueError("Calibration does not match the selected spectrum's settings.")
         self.lab.calibrations[self.device.id] = calibration
 
@@ -211,12 +295,20 @@ class Workbench:
 
     def export(self, path, *, all_segments=False):
         product = self.product()
-        indices = range(len(product["segments"])) if all_segments else (
-            [len(product["segments"]) - 1 if self.lab.selected is None else self.lab.selected]
-            if product["segments"] else []
-        )
-        indices = list(indices)
-        selected = dict(product, segments=[product["segments"][i] for i in indices])
+        available = [i for i, s in enumerate(product["segments"]) if self.device.id in s["readings"]]
+        if self.session.experiment.outputs and not all_segments and self.lab.selected is None:
+            current = self.snapshot(cache=False)
+            selected = snapshot_product(self.session.experiment, current, self.session.seed)
+            indices = [i for i in available if product["segments"][i]["acquisition"] == current.acquisition]
+        elif all_segments:
+            indices = available
+            selected = dict(product, segments=[product["segments"][i] for i in indices])
+        elif self.lab.selected is None:
+            indices = available[-1:]
+            selected = dict(product, segments=[product["segments"][i] for i in indices])
+        else:
+            indices = [self.lab.selected] if self.lab.selected in available else []
+            selected = dict(product, segments=[product["segments"][i] for i in indices])
         save_product(path, selected, self.device.id, self.lab.calibrations.get(self.device.id))
         calibrations = {}
         if Path(path).suffix.lower() == ".json" and self.device.id in self.lab.calibrations:
@@ -229,4 +321,4 @@ class Workbench:
         saved = self.lab.saved
         return any(saved.get((i, d.id)) != s["end_s"]
                    for i, s in enumerate(self.product()["segments"])
-                   for d in self.session.experiment.devices)
+                   for d in self.session.experiment.devices if d.id in s["readings"])

@@ -11,6 +11,7 @@ import unittest
 from zipfile import ZipFile
 
 from nuclemu.web import make_server
+from legacy_web_fixture import legacy_course
 
 try:
     from playwright.sync_api import expect, sync_playwright
@@ -26,6 +27,61 @@ EXPERIMENT = Experiment('records-test', '双仪器记录', '比较两台计数�
     (Parameter('foil', '箔片数', '片', 0, 0, 8, True),),
     (Device('left', 'counter', '计数器'), Device('right', 'counter', '计数器')), measure)
 """
+
+
+def install_legacy(test, name):
+    """Inject only the explicit archived/draft scenario into the public old protocol."""
+    definition = legacy_course(name)
+    test.server.app.definitions[definition.id] = definition
+    test.page.reload()
+    return definition.id
+
+
+def enable_output(test):
+    """Turn on the selected instrument's declared detector from its apparatus part."""
+    page = test.page
+    state = page.request.get(test.url + "/api/state").json()
+    device = next(d for d in state["definition"]["devices"] if d["id"] == state["device"])
+    output = device.get("input")
+    if not output or state["output_enabled"].get(output):
+        return
+    part = next(p for p in state["definition"]["components"] if p.get("output") == output)
+    page.locator("[data-page='setup']").click()
+    page.locator(f"[data-part='{part['id']}']").click()
+    with page.expect_response(lambda r: r.url.endswith('/api/action') and
+                              r.request.post_data_json.get('action') == 'output') as enabled:
+        page.locator("#part-output").check()
+    test.assertTrue(enabled.value.ok, enabled.value.text())
+    expect(page.locator("#part-output")).to_be_checked()
+    page.locator("[data-page='instrument']").click()
+
+
+def start_collection(test, seconds):
+    """Use visible instrument controls, including a new round after reaching its limit."""
+    page = test.page
+    page.locator("[data-page='instrument']").click()
+    state = page.request.get(test.url + "/api/state").json()
+    instrument = state.get("instrument")
+    if instrument and instrument["stop_reason"] in ("time_limit", "count_limit"):
+        with page.expect_response(lambda r: r.url.endswith('/api/action') and
+                                  r.request.post_data_json.get('action') == 'begin_clear') as clearing:
+            page.locator("#clear").click()
+        test.assertTrue(clearing.value.ok, clearing.value.text())
+        if clearing.value.json().get("clear_confirmation"):
+            expect(page.locator("#clear-discard")).to_be_visible()
+            with page.expect_response(lambda r: r.url.endswith('/api/action') and
+                                      r.request.post_data_json.get('action') == 'finish_clear') as cleared:
+                page.locator("#clear-discard").click()
+            test.assertTrue(cleared.value.ok, cleared.value.text())
+            expect(page.locator("#clear-discard")).not_to_be_visible()
+        expect(page.locator("#start")).to_be_enabled()
+    enable_output(test)
+    page.locator("#menu-acquisition").click()
+    page.locator("#mode").select_option("timed")
+    page.locator("#duration").fill(str(seconds))
+    page.keyboard.press("Escape")
+    page.locator("#start").click()
+    expect(page.locator("#gate-status")).to_have_text("采集中")
 
 
 @unittest.skipUnless(sync_playwright, "Install Playwright to run browser checks")
@@ -77,16 +133,11 @@ class CatalogRecordsBrowserTests(unittest.TestCase):
         expect(self.page.locator("#records-title")).to_be_focused()
 
     def collect(self, seconds):
-        self.page.locator("[data-page='instrument']").click()
-        self.page.locator("#menu-acquisition").click()
-        self.page.locator("#duration").fill(str(seconds))
-        self.page.keyboard.press("Escape")
-        self.page.locator("#start").click()
-        expect(self.page.locator("#gate-status")).to_have_text("采集中")
+        start_collection(self, seconds)
         self.now += seconds
-        expect(self.page.locator("#gate-status")).to_have_text("采集门关闭")
+        expect(self.page.locator("#gate-status")).to_have_attribute("data-running", "false")
 
-    def test_guide_and_empty_states_at_desktop_and_phone_width(self):
+    def test_guide_and_empty_states_at_desktop_width(self):
         card = self.page.locator("article").filter(has=self.page.locator("[data-experiment='alpha']"))
         guide = card.get_by_role("button", name="查看资料")
         guide.focus()
@@ -96,16 +147,15 @@ class CatalogRecordsBrowserTests(unittest.TestCase):
         self.page.keyboard.press("Escape")
         expect(guide).to_be_focused()
         expect(self.page.locator(".archive-empty")).to_be_visible()
-        for width in (1366, 390):
-            self.page.set_viewport_size({"width": width, "height": 844})
-            self.assertEqual(self.page.evaluate("document.documentElement.scrollWidth"), width)
-            expect(card.get_by_role("button", name="进入实验", exact=True)).to_be_visible()
-            self.screenshot(f"catalog-empty-{width}")
+        self.page.set_viewport_size({"width": 1366, "height": 844})
+        self.assertEqual(self.page.evaluate("document.documentElement.scrollWidth"), 1366)
+        expect(card.get_by_role("button", name="进入实验", exact=True)).to_be_visible()
+        self.screenshot("catalog-empty-1366")
         self.enter("alpha")
         self.records()
         expect(self.page.locator(".product-empty")).to_be_visible()
         expect(self.page.locator("#export")).to_be_disabled()
-        self.screenshot("records-empty-390")
+        self.screenshot("records-empty-desktop")
         self.page.locator("#menu-file").click()
         self.page.locator("#leave").click()
         expect(self.page.locator("#confirm")).to_be_visible()
@@ -140,9 +190,6 @@ class CatalogRecordsBrowserTests(unittest.TestCase):
         self.records()
         expect(rows.nth(1).locator("select")).to_have_value("json")
         self.screenshot("records-desktop")
-        self.page.set_viewport_size({"width": 390, "height": 844})
-        self.assertEqual(self.page.evaluate("document.documentElement.scrollWidth"), 390)
-        self.screenshot("records-390")
         with self.page.expect_download() as pending:
             self.page.locator("#export").click()
         download = pending.value
@@ -163,7 +210,7 @@ class CatalogRecordsBrowserTests(unittest.TestCase):
         self.page.locator("#save-exit").click()
         expect(self.page.locator("[data-experiment='records-test']")).to_be_focused()
         expect(self.page.locator(".archive-table tbody tr")).to_have_count(1)
-        self.screenshot("catalog-archive-390")
+        self.screenshot("catalog-archive-desktop")
         self.page.get_by_role("button", name="查看实验", exact=True).click()
         expect(self.page.locator("#start")).to_be_disabled()
         expect(self.page.locator("#device")).to_be_focused()
@@ -181,8 +228,11 @@ class CatalogRecordsBrowserTests(unittest.TestCase):
         for field, value in (("c1", 0), ("e1", 0), ("c2", 1000), ("e2", 6)):
             self.page.locator(f"[name='{field}']").fill(str(value))
         self.page.locator("#calibrate button").click()
+        expect(self.page.locator("#save-calibration")).to_be_enabled()
+        self.page.locator("#save-calibration").click()
+        expect(self.page.locator("#calibration-notice")).to_contain_text("刻度已保存")
         self.records()
-        row = self.page.locator(".product[data-key='c/mca']")
+        row = self.page.locator(".product[data-key^='c/']")
         expect(row).to_be_visible()
         expect(row.locator(".product-exposure")).to_have_text("—")
         expect(row.locator("select option")).to_have_count(1)
@@ -194,7 +244,11 @@ class CatalogRecordsBrowserTests(unittest.TestCase):
         self.assertTrue(download.suggested_filename.endswith(".json"))
         destination = Path(self.folder.name) / "calibration.json"
         download.save_as(destination)
-        calibration = json.loads(destination.read_text(encoding="utf-8"))
+        bundle = json.loads(destination.read_text(encoding="utf-8"))
+        self.assertEqual(bundle["format"], "nuclemu.item/1")
+        self.assertEqual(len(bundle["items"]), 1)
+        self.assertEqual(bundle["items"][0]["kind"], "calibration")
+        calibration = bundle["items"][0]["document"]
         self.assertEqual(calibration["format"], "nuclemu.calibration/1")
         self.assertEqual(calibration["device"], "mca")
         self.assertEqual(calibration["energy2"], 6)

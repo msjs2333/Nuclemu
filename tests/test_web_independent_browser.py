@@ -1,0 +1,86 @@
+"""Independent Web gates display only their own exposure and observations."""
+
+import unittest
+
+import test_catalog_records_browser as fixtures
+from nuclemu.catalog import discover
+
+if fixtures.sync_playwright:
+    from playwright.sync_api import expect
+
+
+@unittest.skipUnless(fixtures.sync_playwright, 'Install Playwright to run browser checks')
+class IndependentWebBrowserTests(unittest.TestCase):
+    setUp = fixtures.CatalogRecordsBrowserTests.setUp
+    stop_server = fixtures.CatalogRecordsBrowserTests.stop_server
+    enter = fixtures.CatalogRecordsBrowserTests.enter
+    records = fixtures.CatalogRecordsBrowserTests.records
+
+    def test_split_signal_gates_exposure_and_sparse_history(self):
+        self.server.app.definitions = discover(['examples/courses'])
+        self.page.reload()
+        self.enter('split-signal')
+        self.page.locator('[data-part=output-detector]').click()
+        self.page.locator('#part-output').check()
+        self.page.locator('[data-part=device-a]').click()
+        self.page.locator('#open-instrument').click()
+        self.page.locator('#start').click()
+        expect(self.page.locator('#stop')).to_be_enabled()
+        self.now = 1.25
+        expect(self.page.locator('#exposure')).to_have_text('实际曝光 1.25 s')
+        expect(self.page.locator('#current-readout')).to_contain_text(' / 1 s')
+        self.page.locator('#save-current').click()
+        expect(self.page.locator('#cache-count')).to_have_text('本场已保存 1 份')
+        self.page.locator('#device').select_option('b')
+        expect(self.page.locator('#start')).to_be_enabled()
+        expect(self.page.locator('#stop')).to_be_disabled()
+        expect(self.page.locator('#exposure')).to_have_text('实际曝光 0 s')
+        expect(self.page.locator('#counts .counter-empty')).to_be_visible()
+        self.records()
+        expect(self.page.locator('#products .product')).to_have_count(1)
+        expect(self.page.locator('#products [data-device=a]')).to_have_count(1)
+        expect(self.page.locator('#products [data-device=b]')).to_have_count(0)
+        self.page.locator("[data-page='instrument']").click()
+        self.page.locator('#start').click()
+        expect(self.page.locator('#stop')).to_be_enabled()
+        self.now = 1.75
+        expect(self.page.locator('#exposure')).to_have_text('实际曝光 0.5 s')
+        expect(self.page.locator('#counts .counter-empty')).to_be_visible()
+        self.now = 2.5
+        expect(self.page.locator('#exposure')).to_have_text('实际曝光 1.25 s')
+        expect(self.page.locator('#counts tr')).to_have_count(1)
+        expect(self.page.locator('#counts tr td').nth(2)).to_have_text('1')
+        self.page.locator('#stop').click()
+        expect(self.page.locator('#start')).to_be_enabled()
+        expect(self.page.locator('#counts tr td').nth(2)).to_have_text('1.25')
+        self.page.locator('#device').select_option('a')
+        expect(self.page.locator('#stop')).to_be_enabled()
+        expect(self.page.locator('#exposure')).to_have_text('实际曝光 2.5 s')
+        expect(self.page.locator('#counts tr td').nth(2)).to_have_text('2.5')
+        self.page.locator('#save-current').click()
+        expect(self.page.locator('#cache-count')).to_have_text('本场已保存 2 份')
+        session = self.server.app.lab.work.session
+        self.assertTrue(session.instrument('a').running)
+        self.assertFalse(session.instrument('b').running)
+        self.assertEqual([snapshot.exposure_s for snapshot in session.snapshots], [1, 2.5])
+        self.assertEqual(self.server.app.catalog()['archives'], [])
+
+    def test_legacy_shared_gate_course_still_reads_and_stops(self):
+        self.enter('records-test')
+        self.page.locator("[data-page='instrument']").click()
+        expect(self.page.locator('#detector-output')).to_have_count(0)
+        self.page.locator('#start').click()
+        expect(self.page.locator('#stop')).to_be_enabled()
+        self.now = 1.25
+        self.page.locator('#device').select_option('right')
+        expect(self.page.locator('#stop')).to_be_enabled()
+        expect(self.page.locator('#counts tr td').nth(1)).to_have_text('7')
+        self.page.locator('#stop').click()
+        expect(self.page.locator('#start')).to_be_enabled()
+        self.assertFalse(self.server.app.lab.work.session.running)
+        product = self.server.app.lab.work.product()
+        self.assertEqual(set(product['segments'][0]['readings']), {'left', 'right'})
+
+
+if __name__ == '__main__':
+    unittest.main()

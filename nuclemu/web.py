@@ -101,7 +101,8 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if not 0 < length <= 1024 * 1024:
+            maximum = 64 * 1024 * 1024 if urlsplit(self.path).path in ("/api/open_package", "/api/inspect_import") else 1024 * 1024
+            if not 0 < length <= maximum:
                 self.payload(413, {"error": "请求大小无效。"})
                 return
             data = json.loads(self.rfile.read(length))

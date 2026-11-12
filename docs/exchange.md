@@ -1,0 +1,88 @@
+# 可携实验文件与单项交换
+
+整场交付使用 `.nuclemu`：它是可解压的 ZIP，内含 `manifest.json` 和 `experiment.sqlite3`，不依赖本机的 `workbench.sqlite3`。清单声明 `nuclemu.package/1`、版本 1、SQLite 文档结构 `nuclemu.experiment/1`、实验与包标识、数据库文件名及 SHA-256。打开时核对版本、身份和数据库内容。所有资源由标准库离线读写。
+
+## 保存什么
+
+SQLite 将末态与目录放在 `manifest` 表，轮次元数据放在 `rounds`，手动缓存项目的描述放在 `items`，测量段放在 `segments`。包中的单位来自归档实验定义与产品；计数为整数，曝光和物理时间以 s 为单位，谱刻度能量为 MeV。
+
+`capture_session()` 读取 `Session.rounds`、`configuration_history` 和明确保存到 `Session.snapshots` 的快照，不读取未缓存的 `records` 或当前累计道谱。仪器的门状态、模式、目标、窗长和曝光可作为末态元数据保存，当前未缓存计数不随末态落盘。
+
+例如：3 s 时保存一份 60 次的快照，继续采到 5 s，整场文件可以包含轮次曝光 5 s，但这份谱仍是 60 次、3 s，其率为 20 s⁻¹。若 5 s 再主动保存，则有两份各自独立命名的累计快照，两者可重叠，不能作为独立测量相加。另一轮全程没有保存时，仅有工况历史与曝光，没有伪造的零计数记录。
+
+单项记录使用 UUID，保留包来源与原项目身份；`snapshot.id` 仍保留内核的本机会话编号。仪器与同轮身份、保存时刻和实际截止曝光保存在测量产品的 `snapshot` 中。原生项目和导入参考分别识别，同包导出再回导也不会向内核恢复两个同编号快照。
+
+手动保存刻度使用 `cache_calibration()`。通过 `bind_calibration()` 把测量项目关联到已保存、设备与工况相符的刻度，不将后来未保存的当前刻度自动附给旧谱。分析的 `reference`、`background` 和 `selected` 引用项目 UUID，不能使用实时产品的段下标。
+
+## 公共 Python 调用
+
+```python
+from nuclemu.catalog import discover
+from nuclemu.core import Session
+from nuclemu.exchange import capture_session, save_package, load_package, reopen_session
+
+experiment = discover()["alpha"]
+s = Session(experiment, seed=187)
+s.set_output("alpha_detector", True)
+s.start(5, device="mca")
+s.advance(3)
+s.snapshot("mca")                 # 学生主动保存，曝光 3 s
+s.advance(2)                       # 尚未主动保存的尾部不会进入文件
+doc = capture_session(s)
+save_package("alpha.nuclemu", doc)
+
+loaded = load_package("alpha.nuclemu")
+fresh = reopen_session(loaded, experiment)
+assert fresh.instrument("mca").exposure_s == 0
+fresh.set_output("alpha_detector", True)
+fresh.start(1, device="mca")
+fresh.advance(1)
+fresh.snapshot("mca")
+doc = capture_session(fresh, loaded)  # 保留旧项目及其身份，新增第二轮的 1 s 快照
+```
+
+打开文件本身不执行模型或结清采集窗。`reopen_session()` 经公共 `Session.reopen()` 载入已验证的规范设置、历史轮次和缓存快照。所有门与探测输出均关闭，当前仪器从零曝光开始；按开始后建立新轮，编号接续。保留既有仪器目标和窗长，但不恢复随机流或未缓存的当前计数，不能称作精确续跑。
+
+完整可跑例：
+
+```powershell
+python -m examples.portable_experiment --directory portable-output
+```
+
+该例实际保存 α 同轮两份参考谱：种子 187 下为 221 次/3 s、375 次/5 s，另存实测峰心建立的刻度；把 `.nuclemu` 复制到另一目录后重开，核对全部项目，再开始第二轮 1 s。例中同时写出第一份谱的 JSON 和 CSV，并将其作为参考导入一个新实验。省略 `--directory` 时使用临时目录，完成后清理。
+
+## Web 与 CLI 共用的下载和导入
+
+`package_download(doc)` 返回整场文件的 `(文件名, MIME, bytes)`，名称为 `nuclemu-实验ID-experiment.nuclemu`；它不接受记录勾选列表，始终包含全部手动缓存和元数据。
+
+`batch_download(doc, [{"id": item_id, "format": "csv"}, ...])` 只导出指定项目。单项直接返回文件，多项返回 `nuclemu-saved-items.zip`，项目可分别选择格式，名称与整场包不同。刻度只支持 JSON。
+
+```python
+from nuclemu.exchange import export_item, load_item, import_item
+
+identity = loaded["items"][0]["id"]
+data = export_item(loaded, identity, "csv")
+bundle = load_item(data)
+new_id = import_item(doc, bundle, identity)
+```
+
+单项 JSON 包含所选项目及所依赖的刻度。单项 CSV 第一行以 `# ` 开头，保存 `nuclemu.item/1` 元数据与刻度关联；后续是标准列名和各道整数计数。第三方表格工具可以跳过第一行读计数；Nuclemu 读回时使用它恢复快照身份、截止曝光和刻度。全道谱保留零计数道，缺道、重道或曝光不符会报错。普通 `run --output` 保持既有无元数据行的测量 CSV，供外部分析；需要可重新导入的单项文件时，使用本节的导出。
+
+`import_item()` 完成校验后追加新 UUID 并保留源标识和刻度依赖。相同名称不覆盖已有项目；当前仪器及未保存读数不变。分析引用由调用方在导入成功后显式选择，不会因导入而自动改换本底或参考谱。导入来自不同实验或不符的设备类型/道数时明确报错。
+
+## 既有内部档案转存
+
+`convert_archive("workbench.sqlite3", archive_id)` 只读旧库 `archives/segments`，转换一个独立保存的实验。旧档原有测量已经是已存观测，转存时全部保留，不按新实时设置重算。原始定义、末态与完整旧产品还保留在 `legacy.document` 中，便于逐道核对。
+
+α 旧档的 `foil_um=2.5` 始终是原始总厚度 2.5 µm，不补成新规格或片数，不经实时设置转换；旧固定两点刻度保持原值。旧档可离线查看和作为参考导入；若要开始新的实测，先建立当前课程的合法新实验再导入需要的观测，不能用旧厚度重建新模型。
+
+旧段下标分析选择在转存时映射为对应仪器的项目 UUID。转存文件独立于原库，原库不修改。相同曝光与谱计数不因转换改变，已有保存结果不会被当前模型代替。
+
+## 验证
+
+```powershell
+python -m unittest discover -s tests -p test_exchange.py -v
+python -m unittest discover -s tests -p "test_cli*.py" -v
+```
+
+专项包含 3 s 快照/5 s 轮次、同轮两份快照分别导出、未保存轮次只含元数据、另一目录离线重开、新轮零曝光、同名及同包回导、刻度关联、目标变更历史、旧厚度保留、损坏实验/设备绑定拒绝和写入失败保留原文件。浏览器的具体菜单与确认流程由 Web 工作台接入后另行验收。

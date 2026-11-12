@@ -1,6 +1,7 @@
 """Server-owned clock, measurements, analysis selections and archive transactions."""
 
 from copy import deepcopy
+from base64 import b64decode
 from dataclasses import asdict
 from io import StringIO
 import json
@@ -9,11 +10,22 @@ from time import monotonic
 from uuid import uuid4
 
 from .catalog import describe
-from .core import Device, Experiment, Parameter
+from .core import Device, Experiment, Parameter, SignalOutput
 from .workbench import Workbench
 from .results import Calibration, _add_windows, write_product
 from .web_download import make_download
 from .web_store import ArchiveStore
+from .web_exchange import WebExchange
+from .exchange import cache_calibration, bind_calibration, load_item
+
+
+def analysis_error(error):
+    message = str(error)
+    if 'includes the background exposure' in message:
+        return '两份记录包含同一段曝光，请选择独立测量的本底。'
+    if 'Measurement source is unknown' in message:
+        return '记录来源不明确，暂不能按独立测量扣除本底。'
+    return message
 
 
 class ArchivedView:
@@ -32,7 +44,8 @@ def archived_definition(info):
 
     return Experiment(info["id"], info["title"], info["description"],
                       tuple(Parameter(**p) for p in info["parameters"]),
-                      tuple(Device(**d) for d in info["devices"]), unavailable)
+                      tuple(Device(**d) for d in info["devices"]), unavailable,
+                      outputs=tuple(SignalOutput(**o) for o in info.get("outputs", ())))
 
 
 class WebLab:
@@ -50,6 +63,7 @@ class WebLab:
         self._confirmation_serial = 0
         self.source = None
         self.archive_time = None
+        self.archive_measurement_end = None
         self.archived_settings = None
         self.recovered_s = None
         self.analysis = {
@@ -70,6 +84,72 @@ class WebLab:
         self._pending_entries = []
         self._dirty_records = -1
         self._dirty_segments = 0
+        self.cache_writer = None
+        self._clear_requests = {}
+        self._snapshot_summaries = []
+        self._counter_analysis_key = None
+        self._counter_analysis = []
+        self.exchange = WebExchange()
+        self.portable_loaded = False
+        self.product_generation = 0
+        self._imported_count = 0
+        self._imported_items = []
+        self._live_calibrations = {}
+        self._saved_calibration_devices = set()
+
+    def portable_download(self, selections=None):
+        if self.readonly or not self.work.session.experiment.outputs:
+            raise ValueError("此历史记录请使用旧库转存入口；当前可携文件用于显式保存的仪器读数。")
+        analysis = deepcopy(self.analysis)
+        for device, index in getattr(self, 'portable_default_selection', {}).items():
+            if analysis[device]['selected'] == index:
+                analysis[device]['selected'] = None
+        self.exchange.refresh(self.work.session, device=self.work.device.id, definition=self.info,
+                              product=self.work.product(), analysis=analysis,
+                              item_indices=getattr(self.work.lab.view, 'item_indices', None),
+                              preserved_analysis=getattr(self, 'portable_preserved_analysis', None))
+        return self.exchange.download_package() if selections is None else self.exchange.download_selected(selections)
+
+    def cache_calibration(self):
+        calibration = self.work.active_calibration()
+        if calibration is None:
+            raise ValueError("请先应用适用的能量刻度。")
+        doc = self.exchange.refresh(self.work.session, device=self.work.device.id, definition=self.info,
+                                    product=self.work.product(), analysis=self.analysis,
+                                    item_indices=getattr(self.work.lab.view, 'item_indices', None),
+                                    preserved_analysis=getattr(self, 'portable_preserved_analysis', None))
+        identity = cache_calibration(doc, calibration)
+        for item in doc['items']:
+            if (item['kind'] == 'measurement' and not item.get('calibration_id') and calibration.device in item['document']['devices']
+                    and all(calibration.applies_to(s['settings']) for s in item['document']['segments'])):
+                bind_calibration(doc, item['id'], identity)
+        self.exchange.document = doc
+
+    def bind_saved_calibration(self, snapshot):
+        calibration = self.work.active_calibration()
+        if calibration is None or self.exchange.document is None:
+            return
+        doc = self.exchange.refresh(self.work.session, device=self.work.device.id, definition=self.info,
+                                    product=self.work.product(), analysis=self.analysis,
+                                    item_indices=getattr(self.work.lab.view, 'item_indices', None),
+                                    preserved_analysis=getattr(self, 'portable_preserved_analysis', None))
+        saved = next((item for item in reversed(doc['items']) if item['kind'] == 'calibration'
+                      and item['document'] == calibration.document()), None)
+        if saved:
+            for item in doc['items']:
+                if (item['kind'] == 'measurement' and item['document'].get('snapshot', {}).get('id') == snapshot.id
+                        and item['document']['snapshot']['device'] == snapshot.device
+                        and item['source']['package'] == doc['id'] and item['source']['item'] == item['id']):
+                    bind_calibration(doc, item['id'], saved['id'])
+            self.exchange.document = doc
+
+    def changed_start(self, old_count, old_length):
+        """Use the shared view's cursor index for sparse, independently growing tails."""
+        if old_count < 0:
+            return 0
+        if self.readonly:
+            return old_length
+        return self.work.lab.view.changed_start_since(old_count)
 
     @property
     def readonly(self):
@@ -87,8 +167,8 @@ class WebLab:
 
     def mark_saved(self, product=None):
         segments = (self.work.product() if product is None else product)["segments"]
-        self._saved_ends = {(i, d.id): s["end_s"] for i, s in enumerate(segments)
-                            for d in self.work.session.experiment.devices}
+        self._saved_ends = {(i, d): s["end_s"] for i, s in enumerate(segments)
+                            for d in s["readings"]}
         self._saved_settings = dict(self.settings())
         self._saved_analysis = deepcopy(self.analysis)
         self._saved_device = self.work.device.id
@@ -101,15 +181,33 @@ class WebLab:
 
     def unsaved(self):
         w = self.work
+        if w.session.experiment.outputs and not self.readonly:
+            snapshots = w.session.snapshots
+            measurements, active = [], []
+            for d in w.session.experiment.devices:
+                instrument = w.session.instrument(d.id)
+                if instrument.running:
+                    active.append(dict(device=d.id, remaining_s=instrument.remaining_s))
+                if instrument.readable_exposure_s and not any(s.device == d.id and s.acquisition == instrument.acquisition
+                        and s.exposure_s == instrument.readable_exposure_s for s in snapshots):
+                    measurements.append(dict(index=instrument.acquisition - 1, acquisition=instrument.acquisition,
+                                             device=d.id, end_s=instrument.readable_exposure_s))
+            saved_calibrations = [i['document'] for i in (self.exchange.document or {}).get('items', ()) if i['kind'] == 'calibration']
+            return dict(measurements=measurements,
+                        calibrations=[key for key, cal in w.lab.calibrations.items() if cal.document() not in saved_calibrations],
+                        analysis=self.analysis != self._saved_analysis or w.device.id != self._saved_device,
+                        settings=self.settings() != self._saved_settings,
+                        active_exposure=dict(devices=active) if active else None,
+                        cached_items=len(snapshots) + len(saved_calibrations))
         count = len(w.session.records)
         if count != self._dirty_records:
             segments = w.product()["segments"]
-            for i in range(max(0, self._dirty_segments - 1), len(segments)):
+            for i in range(self.changed_start(self._dirty_records, self._dirty_segments), len(segments)):
                 segment = segments[i]
-                for d in w.session.experiment.devices:
-                    key = i, d.id
+                for device in segment["readings"]:
+                    key = i, device
                     if self._saved_ends.get(key) != segment["end_s"]:
-                        self._pending[key] = dict(index=i, device=d.id, end_s=segment["end_s"])
+                        self._pending[key] = dict(index=i, device=device, end_s=segment["end_s"])
                     else:
                         self._pending.pop(key, None)
             self._pending_entries = list(self._pending.values())
@@ -125,7 +223,8 @@ class WebLab:
 
     def document(self, *, finish=False):
         product = self.work.product()
-        if finish and self.work.session.running:
+        end_s = self.measurement_end_s()
+        if finish and self.work.session.running and not self.work.session.experiment.outputs:
             row = self.work.session.preview_stop()
             if row is not None:
                 # Only the last aggregate can change when settling a partial window.
@@ -134,20 +233,25 @@ class WebLab:
                     segments[-1] = deepcopy(segments[-1])
                 _add_windows(segments, [row])
                 product = dict(product, segments=segments)
-        end_s = product["segments"][-1]["end_s"] if product["segments"] else 0
+                end_s = row.end_s
         return dict(definition=self.info, time_s=self.time_s(), measurement_end_s=end_s, settings=self.settings(),
                     product=product, device=self.work.device.id, analysis=self.analysis,
                     calibrations={k: asdict(v) for k, v in self.work.lab.calibrations.items()})
 
     def update_draft(self):
+        # New courses keep only this live session's temporary cache. Portable
+        # files are explicit downloads; old-course archives remain isolated.
+        if self.work.session.experiment.outputs:
+            return
         revision = self.revision()
         if self.readonly or self.draft_revision == revision:
             return
         doc = self.document()
         segments = doc["product"]["segments"]
-        doc["time_s"] = segments[-1]["end_s"] if segments else 0
+        doc["time_s"] = self.measurement_end_s()
         try:
-            self.store.write(self.draft_id, "draft", doc, start=max(0, self.draft_segments - 1))
+            self.store.write(self.draft_id, "draft", doc,
+                             start=self.changed_start(self.draft_revision[1], self.draft_segments))
         except (OSError, sqlite3.Error) as error:
             self.draft_error = str(error)
             return
@@ -161,10 +265,25 @@ class WebLab:
     def time_s(self):
         return self.archive_time if self.readonly else self.work.session.time_s
 
+    def measurement_end_s(self):
+        if self.readonly:
+            return self.archive_measurement_end
+        records = self.work.session.records
+        return max(records[-1].end_s if records else 0, getattr(self.work.lab.view, 'saved_end_s', 0))
+
+    def write_cache(self, snapshot):
+        """Let other instruments advance while the target snapshot stays immutable."""
+        try:
+            if self.cache_writer is not None:
+                self.cache_writer(snapshot)
+        finally:
+            self.sync()
+
     def calibration_context(self):
         w = self.work
         segments = w.product()["segments"]
-        selected = w.lab.selected if w.lab.selected is not None else (len(segments) - 1 if segments else None)
+        selected = w.lab.selected if w.lab.selected is not None else next(
+            (i for i in range(len(segments) - 1, -1, -1) if w.device.id in segments[i]["readings"]), None)
         settings = w.spectrum_settings()
         return dict(device=w.device.id, selected=selected,
                     settings={key: settings[key] for key in w.device.calibration_parameters})
@@ -184,33 +303,85 @@ class WebLab:
         analysis = self.analysis[w.device.id]
         calibration = w.active_calibration()
         pending = self.unsaved()
+        instrument = w.session.instrument(w.device.id) if w.session.experiment.outputs and not self.readonly else None
+        snapshots = w.session.snapshots
+        for item in snapshots[len(self._snapshot_summaries):]:
+            device = next(d for d in w.session.experiment.devices if d.id == item.device)
+            conditions = dict(device.background_conditions)
+            self._snapshot_summaries.append(dict(id=item.id, device=item.device, acquisition=item.acquisition,
+                time_s=item.time_s, exposure_s=item.exposure_s, counts=sum(item.counts),
+                settings=[dict(s.settings) for i, s in enumerate(item.segments) if i == 0 or s.settings != item.segments[i-1].settings],
+                background_eligible=all(all(s.settings.get(k) == v for k, v in conditions.items()) for s in item.segments)))
+        package = self.exchange.document
+        if package:
+            for item in package['items'][self._imported_count:]:
+                if item['kind'] == 'measurement' and (item['source']['package'] != package['id'] or item['source']['item'] != item['id']):
+                    metadata = item['document']['snapshot']
+                    self._imported_items.append(dict(id=item['id'], device=metadata['device'], title=item['title'],
+                        acquisition=metadata['acquisition'], exposure_s=metadata['exposure_s'], source=item['source']))
+            self._imported_count = len(package['items'])
+        readout_error = None
+        try:
+            readout = w.readout(*analysis["roi"])
+        except ValueError as error:
+            readout, readout_error = None, analysis_error(error)
+        if w.device.kind == "counter":
+            key = len(w.session.records), w.device.id, analysis["background"]
+            if key != self._counter_analysis_key:
+                rows = []
+                for i, segment in enumerate(w.product()["segments"]):
+                    if w.device.id in segment["readings"]:
+                        try:
+                            rows.append(dict(index=i, **w.readout_for(i)))
+                        except ValueError as error:
+                            rows.append(dict(index=i, error=analysis_error(error)))
+                self._counter_analysis, self._counter_analysis_key = rows, key
         result = dict(id=self.id, experiment=w.current, definition=self.info,
                     seed=w.seed, settings=self.settings(), time_s=self.time_s(),
-                    running=w.session.running, paused=w.paused, frozen=self.frozen,
-                    active_acquisition=w.session.active_acquisition,
+                    running=instrument.running if instrument else w.session.running,
+                    any_running=w.session.running, clock_running=w.session.clock_running,
+                    output_enabled=dict(w.session.output_enabled),
+                    instrument=asdict(instrument) if instrument else None,
+                    snapshots=self._snapshot_summaries,
+                    imported_items=self._imported_items,
+                    cached_calibrations=[dict(id=item['id'], device=item['document']['device'], title=item['title'])
+                                         for item in (self.exchange.document or {}).get('items', ()) if item['kind'] == 'calibration'],
+                    gates={d.id: (w.session.instrument(d.id).running if w.session.experiment.outputs else w.session.running)
+                           for d in w.session.experiment.devices},
+                    clear_confirmation=(dict(token=self._clear_requests[w.device.id].token,
+                        exposure_s=self._clear_requests[w.device.id].snapshot.exposure_s)
+                        if w.device.id in self._clear_requests else None),
+                    exposure_s=instrument.exposure_s if instrument else None,
+                    paused=w.paused, frozen=self.frozen,
+                    active_acquisition=(instrument.acquisition if instrument.running else None) if instrument else w.session.active_acquisition,
                     confirmation_id=self.confirmation_id,
-                    speed=w.speed, remaining_s=w.session.remaining_s, device=w.device.id,
+                    speed=w.speed, remaining_s=instrument.remaining_s if instrument else w.session.remaining_s, device=w.device.id,
                     selected=w.lab.selected, analysis=analysis,
                     spectrum_settings=dict(w.spectrum_settings()),
                     calibration=asdict(calibration) if calibration else None,
+                    reference_calibration=(asdict(self.reference_calibration()) if self.reference_calibration() else None),
                     calibration_context=self.calibration_context(),
                     calibrated_devices=list(w.lab.calibrations),
-                    readout=w.readout(*analysis["roi"]), readonly=self.readonly,
+                    readout=readout, readout_error=readout_error,
+                    counter_analysis=self._counter_analysis if w.device.kind == "counter" else [], readonly=self.readonly,
+                    portable_loaded=self.portable_loaded,
+                    portable_unresolved=getattr(self, 'portable_unresolved', {}),
                     dirty=any(pending.values()), unsaved=pending, recovered_s=self.recovered_s,
                     draft_error=self.draft_error,
                     export_notice="已生成下载；浏览器未确认文件保存成功，未保存状态仍保留。")
         product = w.product()
-        result["measurement_end_s"] = product["segments"][-1]["end_s"] if product["segments"] else 0
+        result["measurement_end_s"] = self.measurement_end_s()
         count, length = len(w.session.records), len(product["segments"])
-        result["product_cursor"] = f"{self.id}:{count}:{length}"
+        product_identity = self.id if not self.product_generation else f'{self.id}.{self.product_generation}'
+        result["product_cursor"] = f"{product_identity}:{count}:{length}"
         try:
             identity, old_count, old_length = product_cursor.split(":")
             old_count, old_length = int(old_count), int(old_length)
-            valid = identity == self.id and 0 <= old_count <= count and 0 <= old_length <= length
+            valid = identity == product_identity and 0 <= old_count <= count and 0 <= old_length <= length
         except (AttributeError, TypeError, ValueError):
             valid = False
         if valid:
-            start = length if (old_count, old_length) == (count, length) else max(0, old_length - 1)
+            start = self.changed_start(old_count, old_length)
             result["product_delta"] = dict(start=start, segments=product["segments"][start:])
         else:
             result["product"] = product
@@ -224,6 +395,8 @@ class WebLab:
         # A viewer owns fresh target ids; its source may still have a live writer.
         lab.work.lab.view = ArchivedView(product)
         lab.archive_time = doc["time_s"]
+        lab.archive_measurement_end = doc.get("measurement_end_s", max(
+            (s["end_s"] for s in product["segments"]), default=0))
         lab.archived_settings = doc["settings"]
         for key, value in lab.archived_settings.items():
             lab.work.session.set(key, value)
@@ -245,15 +418,55 @@ class WebLab:
             lab.source = ("archive", identifier)
         return lab
 
-    def bind(self, device):
+    def bind(self, device, *, restore_calibration=True):
         self.work.bind_device(device)
         analysis = self.analysis[device]
         self.work.select(analysis["selected"])
         self.work.set_background(analysis["background"])
+        if restore_calibration:
+            self.select_saved_calibration()
 
-    def index(self, index):
-        if index is not None and (type(index) is not int or not 0 <= index < len(self.work.product()["segments"])):
+    def saved_item_calibration(self, index):
+        indices = getattr(self.work.lab.view, 'item_indices', {})
+        identity = next((identity for identity, rows in indices.items() if index in rows), None)
+        items = (self.exchange.document or {}).get('items', ())
+        item = next((item for item in items if item['id'] == identity), None)
+        saved = next((entry for entry in items if item and entry['id'] == item.get('calibration_id')), None)
+        return item, Calibration.from_document(saved['document']) if saved else None
+
+    def reference_calibration(self):
+        index = self.analysis[self.work.device.id]['reference']
+        if index is None:
+            return None
+        item, calibration = self.saved_item_calibration(index)
+        if item is None:
+            calibration = self.work.lab.calibrations.get(self.work.device.id)
+        settings = self.work.product()['segments'][index]['settings']
+        return calibration if calibration and calibration.applies_to(settings) else None
+
+    def select_saved_calibration(self):
+        device = self.work.device.id
+        item, calibration = self.saved_item_calibration(self.work.lab.selected)
+        if item is not None:
+            if device not in self._saved_calibration_devices:
+                self._live_calibrations[device] = self.work.lab.calibrations.get(device)
+            self._saved_calibration_devices.add(device)
+        elif device in self._saved_calibration_devices:
+            calibration = self._live_calibrations.get(device)
+            self._saved_calibration_devices.remove(device)
+        else:
+            return
+        if calibration is None:
+            self.work.lab.calibrations.pop(device, None)
+        else:
+            self.work.lab.calibrations[device] = calibration
+
+    def index(self, index, device=None):
+        segments = self.work.product()["segments"]
+        if index is not None and (type(index) is not int or not 0 <= index < len(segments)):
             raise ValueError("请先选择已采集的测量段。")
+        if index is not None and (device or self.work.device.id) not in segments[index]["readings"]:
+            raise ValueError("所选测量段不属于当前仪器。")
         return index
 
     def _check_device_target(self, data):
@@ -290,25 +503,40 @@ class WebLab:
             elif type(value) is not bool:
                 raise ValueError("坐标轴选择无效。")
             updates[key] = value
+        for key in updates:
+            self.clear_portable_reference(w.device.id, key)
         if any(current[k] != v for k, v in updates.items()):
             current.update(updates)
             w.set_background(current["background"])
             self.edits += 1
 
+    def clear_portable_reference(self, device, key):
+        """An explicit choice replaces an unresolved UUID, including choosing none."""
+        getattr(self, 'portable_preserved_analysis', {}).get(device, {}).pop(key, None)
+        getattr(self, 'portable_unresolved', {}).get(device, {}).pop(key, None)
+
     def act(self, data):
         """Apply one action, settling its clock only after exit-round validation."""
         self.check_confirmation(data)
         if data["action"] == "stop":
+            if self.work.session.experiment.outputs:
+                self._check_device_target(data)
+                target = self.work.session.instrument(self.work.device.id)
+                active_acquisition = target.acquisition if target.running else None
+                if type(data.get("cycle")) is not int or data["cycle"] != target.cycle:
+                    raise ValueError("采集门已改变或已关闭，请重新查看仪器后操作。")
+            else:
+                active_acquisition = self.work.session.active_acquisition
             acquisition = data.get("acquisition")
-            if type(acquisition) is not int or acquisition != self.work.session.active_acquisition:
+            if type(acquisition) is not int or acquisition != active_acquisition:
                 raise ValueError("采集轮次已改变或已结束，请重新查看采集门后操作。")
         self.sync()
         action, w = data["action"], self.work
         if self.frozen and action not in ("freeze", "continue", "suspend", "save", "discard"):
             raise ValueError("先返回实验，再执行此操作。")
-        if self.readonly and action in ("start", "stop", "configure", "speed", "pause"):
+        if self.readonly and action in ("start", "stop", "configure", "speed", "pause", "output", "snapshot", "begin_clear", "finish_clear", "instrument_config", "cache_calibration"):
             raise ValueError("已保存的实验只支持查看和分析。")
-        if action in ("calibrate", "load_calibration"):
+        if action in ("calibrate", "load_calibration", "cache_calibration"):
             if data.get("calibration_context") != self.calibration_context():
                 raise ValueError("刻度所用设备、测量记录或适用工况已改变，请重新查看谱后操作。")
         if action == "freeze":
@@ -329,9 +557,55 @@ class WebLab:
             if old != w.session.settings:
                 self.edits += 1
         elif action == "start":
-            w.start(data.get("duration"))
+            if w.session.experiment.outputs:
+                self._check_device_target(data)
+                w.start(data.get("duration"), device=w.device.id,
+                        count_limit=data.get("count_limit"), window_s=data.get("window_s"))
+                w.select(None)
+                self.analysis[w.device.id]["selected"] = None
+            else:
+                w.start(data.get("duration"))
         elif action == "stop":
-            w.stop()
+            w.stop(device=w.device.id if w.session.experiment.outputs else None)
+        elif action == "output":
+            w.set_output(data["output"], data["enabled"])
+            self.edits += 1
+        elif action == "snapshot":
+            self._check_device_target(data)
+            snapshot = w.snapshot(writer=self.write_cache)
+            self.bind_saved_calibration(snapshot)
+            self.edits += 1
+        elif action == "cache_calibration":
+            self._check_device_target(data)
+            self.cache_calibration()
+            self.edits += 1
+        elif action == "import_item":
+            from .web_import import apply_import
+            apply_import(self, data['token'], data['item_id'])
+            self.edits += 1
+        elif action == "instrument_config":
+            self._check_device_target(data)
+            w.configure_acquisition(**{key: data[key] for key in ('duration_s', 'count_limit', 'window_s') if key in data})
+            self.edits += 1
+        elif action == "begin_clear":
+            self._check_device_target(data)
+            request = w.begin_clear()
+            if request.snapshot is None:
+                w.finish_clear(request.token, "discard")
+            else:
+                self._clear_requests[w.device.id] = request
+            self.edits += 1
+        elif action == "finish_clear":
+            device = data["device"]
+            if device not in self.analysis:
+                raise ValueError("请选择有效的设备。")
+            try:
+                w.finish_clear(data["token"], data["choice"], device=device, writer=self.write_cache)
+            finally:
+                # A failed cache write restores this instrument, just like cancel.
+                if not w.session.instrument(device).clearing:
+                    self._clear_requests.pop(device, None)
+            self.edits += 1
         elif action == "speed":
             w.set_speed(data["speed"])
         elif action == "pause":
@@ -345,19 +619,30 @@ class WebLab:
         elif action == "select":
             self._check_device_target(data)
             index = self.index(data["index"])
+            getattr(self, 'portable_default_selection', {}).pop(w.device.id, None)
+            self.clear_portable_reference(w.device.id, 'selected')
             if index != w.lab.selected:
                 w.select(index)
                 self.analysis[w.device.id]["selected"] = index
                 self.edits += 1
+            self.select_saved_calibration()
         elif action == "analysis":
             self.change_analysis(data)
         elif action == "calibrate":
             w.calibrate(*data["points"])
             self.edits += 1
         elif action == "load_calibration":
-            w.apply_calibration(Calibration.from_document(data["calibration"]))
+            document = data["calibration"]
+            if document.get('format') == 'nuclemu.item/1':
+                bundle = load_item(json.dumps(document).encode('utf-8'))
+                if bundle['items'][0]['kind'] != 'calibration':
+                    raise ValueError("请选择一份已保存的刻度记录。")
+                document = bundle['items'][0]['document']
+            w.apply_calibration(Calibration.from_document(document))
             self.edits += 1
         elif action == "save":
+            if w.session.experiment.outputs and not self.readonly:
+                raise ValueError("请下载整场 .nuclemu 文件；仪器读数请保存到本场缓存。")
             leave = data.get("exit", False)
             if type(leave) is not bool:
                 raise ValueError("退出选项无效。")
@@ -366,8 +651,9 @@ class WebLab:
                 self.store.write(self.archive_id, "archive", document,
                                  remove=self.draft_id if not self.readonly else None)
             finally:
-                # Confirmation and disk I/O are outside laboratory exposure.
-                self.last_tick = self.clock()
+                # Legacy exit handling excludes disk I/O; independent live gates keep time.
+                if leave or not w.session.experiment.outputs:
+                    self.last_tick = self.clock()
             self.mark_saved(document["product"])
             self.draft_revision = self.revision()
             self.draft_segments = 0
@@ -377,7 +663,7 @@ class WebLab:
                 self.confirmation_id = None
                 return True
         elif action == "discard":
-            if not self.readonly:
+            if not self.readonly and not w.session.experiment.outputs:
                 self.store.remove(self.draft_id)
             self.confirmation_id = None
             return True
@@ -403,7 +689,7 @@ class WebLab:
         if (not isinstance(indices, list) or not indices
                 or any(i is None for i in indices) or len(set(indices)) != len(indices)):
             raise ValueError("请选择不重复的测量段。")
-        selected = [product["segments"][self.index(i)] for i in indices]
+        selected = [product["segments"][self.index(i, device)] for i in indices]
         stream = StringIO(newline="")
         write_product(stream, fmt, dict(product, segments=selected), device, calibration)
         return stream.getvalue().encode("utf-8")
@@ -469,6 +755,12 @@ class Application:
     def request(self, path, data):
         if path == "/api/open":
             return self.open(data)
+        if path == "/api/open_package":
+            if self.lab is not None:
+                raise ValueError("请先退出当前实验，再打开实验文件。")
+            from .web_portable import open_portable
+            self.lab = open_portable(b64decode(data["file"], validate=True), self.definitions, self.store, self.clock)
+            return self.lab.state()
         if self.lab is None or data.get("session") != self.lab.id:
             raise ValueError("会话已结束，请返回目录。")
         if path == "/api/action":
@@ -478,10 +770,17 @@ class Application:
             self.lab.update_draft()
             return self.lab.state(data.get("product_cursor"))
         self.lab.sync()
+        if path == '/api/inspect_import':
+            from .web_import import inspect_import
+            return inspect_import(self.lab, b64decode(data['file'], validate=True))
         if path in ("/api/export", "/api/download"):
             self.lab.update_draft()
         if path == "/api/export":
             return self.lab.export(data)
         if path == "/api/download":
+            if data.get("scope") == "experiment":
+                return self.lab.portable_download()
+            if "snapshots" in data:
+                return self.lab.portable_download(data["snapshots"])
             return make_download(self.lab, data["products"])
         raise ValueError("未知请求。")

@@ -84,7 +84,7 @@ import {computed, onBeforeUnmount, onMounted, ref, watch} from 'vue'
 import {drawConnections} from '/draw.js'
 import type {Part, Edge} from './types'
 
-const props = defineProps<{parts: Part[]; edges?: Edge[]}>()
+const props = defineProps<{parts: Part[]; edges?: Edge[]; variants?: Record<string, string>}>()
 const nodes = computed(() => props.parts.map(part => ({part, port: ports.get(part.illustration ?? '')})))
 const figure = ref<HTMLElement>()
 const wiring = ref<HTMLCanvasElement>()
@@ -108,7 +108,7 @@ watch(() => props.edges, edges => {
     <div v-for="{part, port} in nodes" :key="part.id" class="rig-cell">
       <img v-if="port" :data-node="part.id" :data-illustration="part.illustration" :data-in-x="port.inX" :data-out-x="port.outX"
         :data-beam-y="port.beamY" :data-out-y="port.outY"
-        :src="'/rig-' + part.illustration + '.webp'" alt="" draggable="false">
+        :src="'/rig-' + (variants?.[part.id] ?? part.illustration) + '.webp'" alt="" draggable="false">
       <div v-else class="rig-symbol" :data-node="part.id">{{ part.label }}</div>
     </div>
   </div>

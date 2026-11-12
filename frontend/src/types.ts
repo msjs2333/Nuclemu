@@ -4,17 +4,20 @@ export interface Parameter {
 }
 export interface Device {
   id: string; label: string; kind: string; channels: number; calibration_parameters: string[]
+  input?: string | null
   background_conditions?: Record<string, number>
 }
 export interface Part {
   id: string; label: string; kind: string; description: string; parameters: string[]; device: string | null
   illustration?: string | null
+  output?: string | null
 }
 export interface Edge { source: string; target: string; kind: string; label: string }
 export interface Course {
   id: string; title: string; question: string; description: string; guide: string[]
   course?: string
   parameters: Parameter[]; devices: Device[]; components: Part[]; connections: Edge[]
+  outputs?: {id: string; label: string}[]
 }
 export interface Archive { id: string; title: string; time_s: number; updated: string }
 export interface Catalog { experiments: Course[]; drafts: Archive[]; archives: Archive[] }
@@ -33,10 +36,25 @@ export interface State {
   id: string; experiment: string; definition: Course; settings: Record<string, number>
   time_s: number; remaining_s: number | null; paused: boolean; running: boolean; frozen: boolean; speed: number
   dirty: boolean; readonly: boolean; recovered_s: number | null; device: string; selected: number | null
-  product: { segments: Segment[] }; calibration: Calibration | null
+  product: { segments: Segment[] }; calibration: Calibration | null; reference_calibration: Calibration | null
   product_cursor: string
+  measurement_end_s: number
   confirmation_id: number | null
   active_acquisition: number | null
+  any_running: boolean; clock_running: boolean; exposure_s: number | null
+  output_enabled: Record<string, boolean>
+  gates: Record<string, boolean>
+  snapshots: {id: number; device: string; acquisition: number; time_s: number; exposure_s: number; counts: number; settings: Record<string, number>[]; background_eligible: boolean}[]
+  imported_items: {id: string; device: string; title: string; acquisition: number; exposure_s: number; source: {package: string; item: string}}[]
+  clear_confirmation: {token: number; exposure_s: number} | null
+  readout_error: string | null
+  portable_loaded: boolean
+  portable_unresolved: Record<string, Record<string, unknown>>
+  cached_calibrations: {id: string; device: string; title: string}[]
+  counter_analysis: {index: number; net_rate?: number; uncertainty?: number; background_reference?: boolean; error?: string}[]
+  instrument: {device: string; acquisition: number | null; cycle: number | null;
+    counts: number[]; readable_exposure_s: number; stop_reason: string | null; clearing: boolean;
+    duration_s: number | null; count_limit: number | null; window_s: number} | null
   calibration_context: CalibrationContext
   calibrated_devices: string[]
   draft_error?: string
@@ -44,11 +62,12 @@ export interface State {
   unsaved: {
     measurements: {index: number; device: string; end_s: number}[]
     calibrations: string[]; analysis: boolean; settings: boolean; active_exposure: object | null
+    cached_items?: number
   }
   analysis: { roi: [number, number]; reference: number | null; background: number | null; energy_axis: boolean; rate_axis: boolean }
-  readout: {centroid?: number | null; energy_MeV?: number | null} | null
+  readout: {counts: number; exposure_s: number; roi_counts?: number; centroid?: number | null; energy_MeV?: number | null} | null
 }
 export type Page = 'setup' | 'instrument' | 'records'
 export type Act = (name: string, fields?: Record<string, unknown>, session?: string) => Promise<void>
 export type Open = {experiment: string} | {archive: string} | {draft: string}
-export interface Series { label: string; counts: number[]; divisor: number }
+export interface Series { label: string; counts: number[]; divisor: number; channelPosition?: (channel: number) => number }

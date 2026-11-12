@@ -127,25 +127,36 @@ def roi_centroid(counts, first, last):
     return weighted / total if total else None
 
 
-def _add_windows(segments, records):
+def _add_windows(segments, records, tails=None):
+    touched = []
+    if tails is None:
+        # One-shot consumers may append a preview to an existing product.
+        # Live views retain their own index and do not scan past segments.
+        tails = {tuple(s["readings"]): s for s in segments}
     for row in records:
-        if (not segments or row.acquisition != segments[-1]["acquisition"]
-                or row.settings != segments[-1]["settings"] or row.start_s != segments[-1]["end_s"]):
+        key = tuple(row.readings)
+        previous = tails.get(key)
+        if (previous is None or row.acquisition != previous["acquisition"]
+                or row.settings != previous["settings"] or row.start_s != previous["end_s"]):
             segments.append({"acquisition": row.acquisition, "start_s": row.start_s,
                              "end_s": row.end_s, "settings": dict(row.settings),
                              "readings": {key: list(values) for key, values in row.readings.items()}})
+            tails[key] = segments[-1]
+            touched.append(segments[-1])
         else:
-            segment = segments[-1]
+            segment = previous
+            touched.append(segment)
             segment["end_s"] = row.end_s
             for key, values in row.readings.items():
                 for i, value in enumerate(values):
                     segment["readings"][key][i] += value
+    return touched
 
 
 def collect(experiment, records, seed):
     """Combine consecutive windows within one acquisition at unchanged settings."""
     segments = []
-    _add_windows(segments, records)
+    _add_windows(segments, records, {})
     devices = {}
     for device in experiment.devices:
         info = {"kind": device.kind, "channels": device.channels}
@@ -156,6 +167,41 @@ def collect(experiment, records, seed):
             "segments": segments}
 
 
+def snapshot_product(experiment, snapshot, seed):
+    """Serialize one immutable instrument snapshot without sampling a model."""
+    product = collect(experiment, snapshot.segments, seed)
+    product["devices"] = {snapshot.device: product["devices"][snapshot.device]}
+    product["snapshot"] = {"id": snapshot.id, "device": snapshot.device,
+                           "acquisition": snapshot.acquisition,
+                           "time_s": snapshot.time_s, "exposure_s": snapshot.exposure_s}
+    return product
+
+
+def round_document(info):
+    """JSON-safe round metadata, deliberately without unsaved measurements."""
+    def changes(items):
+        return [dict(time_s=c.time_s, exposure_s=c.exposure_s, values=dict(c.values)) for c in items]
+    return dict(device=info.device, acquisition=info.acquisition, start_s=info.start_s,
+                end_s=info.end_s, exposure_s=info.exposure_s, status=info.status,
+                initial_settings=dict(info.initial_settings), changes=changes(info.changes),
+                duration_s=info.duration_s, count_limit=info.count_limit, window_s=info.window_s,
+                initial_outputs=dict(info.initial_outputs), output_changes=changes(info.output_changes),
+                initial_duration_s=info.initial_duration_s, initial_count_limit=info.initial_count_limit,
+                target_changes=[dict(time_s=c.time_s, exposure_s=c.exposure_s,
+                                     duration_s=c.duration_s, count_limit=c.count_limit)
+                                for c in info.target_changes])
+
+
+def configuration_document(session):
+    """Initial, effective and current configuration without sampling a model."""
+    return dict(initial_settings={p.key: p.value(p.default) for p in session.experiment.parameters},
+                initial_outputs={o.id: False for o in session.experiment.outputs},
+                history=[dict(sequence=c.sequence, time_s=c.time_s, kind=c.kind, values=dict(c.values))
+                         for c in session.configuration_history],
+                settings=dict(session.settings), output_enabled=dict(session.output_enabled),
+                time_s=session.time_s)
+
+
 class MeasurementView:
     """A live product for one session. Callers treat its contents as read-only."""
 
@@ -164,14 +210,35 @@ class MeasurementView:
             raise ValueError("Measurement seed must match the session.")
         self._session = session
         self._next_record = 0
+        self._tails = {}
+        self._segment_indices = {}
+        self._record_segments = []
+        self.changed_start = 0
         self._product = collect(session.experiment, (), session.seed)
 
     def product(self):
         records = self._session.records
         if self._next_record < len(records):
-            _add_windows(self._product["segments"], records[self._next_record:])
+            segments = self._product["segments"]
+            old_length = len(segments)
+            touched = _add_windows(segments, records[self._next_record:], self._tails)
+            for i in range(old_length, len(segments)):
+                self._segment_indices[id(segments[i])] = i
+            self.changed_start = min(self._segment_indices[id(s)] for s in touched)
+            self._record_segments.extend(self._segment_indices[id(s)] for s in touched)
             self._next_record = len(records)
         return self._product
+
+    def changed_start_since(self, record_count):
+        """Earliest segment touched after one client's completed-record cursor.
+
+        Work scales with records new to that client, including updates consumed
+        earlier by another client. The small index stores one integer per row.
+        """
+        self.product()
+        if type(record_count) is not int or not 0 <= record_count <= self._next_record:
+            raise ValueError("Measurement record cursor is outside this session")
+        return min(self._record_segments[record_count:], default=len(self._product["segments"]))
 
 
 def save_product(path, product, device=None, calibration=None):
@@ -197,7 +264,7 @@ def write_product(stream, format, product, device=None, calibration=None):
         if device:
             selected["devices"] = {device: devices[device]}
             selected["segments"] = [dict(s, readings={device: s["readings"][device]})
-                                    for s in product["segments"]]
+                                    for s in product["segments"] if device in s["readings"]]
         if calibration:
             field = "conditional_calibration" if calibration.conditions else "calibration"
             selected[field] = dict(unit="MeV", **calibration._fields())

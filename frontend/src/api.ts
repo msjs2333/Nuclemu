@@ -27,4 +27,13 @@ export async function downloadProducts(data: unknown, fallback: string) {
   link.click()
   window.setTimeout(() => URL.revokeObjectURL(url), 30000)
 }
+export function downloadExperiment(session: string) {
+  return downloadProducts({session, scope: 'experiment'}, 'experiment.nuclemu')
+}
+export async function filePayload(file: File) {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768))
+  return btoa(binary)
+}
 export function errorMessage(error: unknown) { return error instanceof Error ? error.message : String(error) }

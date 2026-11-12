@@ -79,7 +79,8 @@ class OptionalMetadataTests(unittest.TestCase):
     def test_beta_declares_background_independently_of_option_labels(self):
         beta = discover()["beta"]
         self.assertEqual(dict(beta.devices[0].background_conditions), {"source_present": 0})
-        self.assertEqual(beta.parameters[0].options, ((0, "本底"), (1, "有源")))
+        self.assertEqual({value for value, _ in beta.parameters[0].options}, {0, 1})
+        self.assertTrue(all(label for _, label in beta.parameters[0].options))
         self.assertEqual(discover()["alpha"].devices[0].background_conditions, ())
 
 

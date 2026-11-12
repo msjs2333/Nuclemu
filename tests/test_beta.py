@@ -10,8 +10,14 @@ from random import Random
 from statistics import mean, variance
 
 from nuclemu.core import Session
-from nuclemu.experiments.beta import EXPERIMENT, sample_counts
+from nuclemu.experiments.beta import DETECTOR_OUTPUT, EXPERIMENT, sample_counts
 from nuclemu.results import collect, net_count_rate, save_product
+
+
+def session_for_counter(seed):
+    session = Session(EXPERIMENT, seed=seed)
+    session.set_output(DETECTOR_OUTPUT, True)
+    return session
 
 
 class BetaAbsorptionTests(unittest.TestCase):
@@ -20,7 +26,7 @@ class BetaAbsorptionTests(unittest.TestCase):
             with self.subTest(foil_count=count):
                 settings = {"source_present": 1, "foil_count": count}
                 rng = Random(123)
-                windows = [sample_counts(settings, 0, 1, rng)["counter"][0] for _ in range(4096)]
+                windows = [sample_counts(settings, 0, 1, rng)[DETECTOR_OUTPUT][0] for _ in range(4096)]
                 self.assertAlmostEqual(mean(windows), expected_cps, delta=5 * math.sqrt(expected_cps / len(windows)))
                 self.assertAlmostEqual(variance(windows), expected_cps, delta=0.12 * expected_cps)
 
@@ -28,23 +34,23 @@ class BetaAbsorptionTests(unittest.TestCase):
         for foil_count in (0, 24):
             rng = Random(82)
             samples = [
-                sample_counts({"source_present": 0, "foil_count": foil_count}, 0, 10, rng)["counter"][0]
+                sample_counts({"source_present": 0, "foil_count": foil_count}, 0, 10, rng)[DETECTOR_OUTPUT][0]
                 for _ in range(2000)
             ]
             self.assertAlmostEqual(mean(samples), 20, delta=0.5)
 
     def test_acquire_background_then_sample_with_different_exposures(self):
-        session = Session(EXPERIMENT, seed=42)
+        session = session_for_counter(42)
         session.set("source_present", 0)
-        session.start()
+        session.start(device="counter")
         session.advance(19.5)
-        session.stop()
+        session.stop(device="counter")
         next_row = len(session.records)
         session.set("source_present", 1)
         session.set("foil_count", 4)
-        session.start()
+        session.start(device="counter")
         session.advance(7.25)
-        session.stop()
+        session.stop(device="counter")
         background = session.records[:next_row]
         sample = session.records[next_row:]
         self.assertTrue(all(row.settings["source_present"] == 0 for row in background))
@@ -59,7 +65,7 @@ class BetaAbsorptionTests(unittest.TestCase):
         self.assertAlmostEqual(standard_error, math.sqrt(ns / ts**2 + nb / tb**2))
 
     def test_absorption_curve_exports_preserve_counts_exposure_and_conditions(self):
-        session = Session(EXPERIMENT, seed=53)
+        session = session_for_counter(53)
         conditions = ((0, 0, 60), (1, 0, 20), (1, 4, 7.25),
                       (1, 8, 19.5), (1, 16, 30), (1, 24, 40))
         totals = []
@@ -67,9 +73,9 @@ class BetaAbsorptionTests(unittest.TestCase):
             session.set("source_present", source_present)
             session.set("foil_count", foil_count)
             first = len(session.records)
-            session.start()
+            session.start(device="counter")
             session.advance(duration)
-            session.stop()
+            session.stop(device="counter")
             totals.append(sum(row.readings["counter"][0] for row in session.records[first:]))
 
         product = collect(EXPERIMENT, session.records, seed=53)
@@ -89,7 +95,7 @@ class BetaAbsorptionTests(unittest.TestCase):
         for segment, row, (source, foils, exposure), count in zip(
             exported["segments"], rows, conditions, totals
         ):
-            settings = {"source_present": source, "foil_count": foils}
+            settings = {"source_present": source, "foil_count": foils, "foil_spec_um": 100}
             self.assertEqual(segment["settings"], settings)
             self.assertEqual(segment["readings"], {"counter": [count]})
             self.assertEqual(segment["end_s"] - segment["start_s"], exposure)
@@ -107,11 +113,11 @@ class BetaAbsorptionTests(unittest.TestCase):
                 self.assertAlmostEqual(error, math.sqrt(count / exposure**2 + totals[0] / 60**2))
 
     def test_zero_counts_and_negative_net_rate_are_valid_measurements(self):
-        session = Session(EXPERIMENT, seed=42)
+        session = session_for_counter(42)
         session.set("source_present", 0)
-        session.start()
+        session.start(device="counter")
         session.advance(0.001)
-        session.stop()
+        session.stop(device="counter")
         row = session.records[0]
         self.assertEqual(row.readings["counter"], (0,))
         self.assertEqual(net_count_rate(0, row.exposure_s, 0, 60), (0, 0))

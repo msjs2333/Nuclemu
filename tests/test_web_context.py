@@ -10,6 +10,7 @@ from nuclemu.catalog import discover
 from nuclemu.core import Device, Experiment, Parameter
 from nuclemu.results import Calibration
 from nuclemu.web_session import Application
+from tests.legacy_web_fixture import legacy_course
 
 
 class WebContextTests(unittest.TestCase):
@@ -23,10 +24,17 @@ class WebContextTests(unittest.TestCase):
         return self.app.request("/api/action", dict(session=self.app.lab.id, action=action, **data))
 
     def open(self, **data):
-        return self.app.open(dict(experiment="beta", seed=42, **data))
+        state = self.app.open(dict(experiment="beta", seed=42, **data))
+        self.call("output", output="beta_detector", enabled=True)
+        return state
+
+    def open_legacy(self):
+        definition = legacy_course("beta")
+        self.app = Application({definition.id: definition}, self.folder.name, lambda: self.now)
+        return self.app.open({"experiment": definition.id, "seed": 42})
 
     def test_old_round_cannot_touch_resumed_measurements_draft_or_a_new_confirmation(self):
-        self.open()
+        self.open_legacy()
         self.call("start", duration=60)
         self.now = 14.5
         first = self.call("freeze")["confirmation_id"]
@@ -51,6 +59,22 @@ class WebContextTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "退出确认"):
             self.call("save")
 
+    def test_course_confirmation_keeps_measurement_live_without_writing_a_draft(self):
+        self.open()
+        self.call("start", device="counter", duration=60)
+        self.now = 14.5
+        token = self.call("freeze")["confirmation_id"]
+        self.assertEqual(self.app.catalog()["drafts"], [])
+        self.call("continue", confirmation_id=token)
+        self.now += 1
+        state = self.app.state()
+        self.assertTrue(state["running"])
+        self.assertEqual(state["remaining_s"], 44.5)
+        self.assertEqual(self.app.catalog()["drafts"], [])
+        with self.assertRaisesRegex(ValueError, "已过期"):
+            self.call("discard", confirmation_id=token)
+        self.assertEqual(self.app.catalog()["drafts"], [])
+
     def test_missing_or_boolean_confirmation_is_not_a_valid_round(self):
         self.open()
         self.call("freeze")
@@ -63,7 +87,7 @@ class WebContextTests(unittest.TestCase):
         for finish in ("save", "discard"):
             with self.subTest(finish=finish):
                 self.app = Application(discover(), self.folder.name, lambda: self.now)
-                self.open()
+                self.open_legacy()
                 self.call("start", duration=60)
                 self.now += 14.5
                 token = self.call("freeze")["confirmation_id"]
@@ -83,10 +107,10 @@ class WebContextTests(unittest.TestCase):
                 self.assertIsNone(lab.confirmation_id)
 
     def test_completed_round_cannot_delete_a_new_session_or_its_draft(self):
-        opened = self.open()
+        opened = self.open_legacy()
         token = self.call("freeze")["confirmation_id"]
         self.call("discard", confirmation_id=token)
-        self.open()
+        self.app.open({"experiment": "legacy_beta", "seed": 42})
         self.call("start", duration=2)
         self.now = 1
         self.app.state()
@@ -180,13 +204,13 @@ class WebContextTests(unittest.TestCase):
         self.assertEqual(self.app.lab.work.lab.calibrations, {})
 
     def test_open_rejoins_only_the_same_live_or_archived_identity_without_unfreezing(self):
-        opened = self.open()
+        opened = self.open_legacy()
         token = self.call("freeze")["confirmation_id"]
-        repeated = self.app.open({"experiment": "beta"})
+        repeated = self.app.open({"experiment": "legacy_beta"})
         self.assertEqual(repeated["id"], opened["id"])
         self.assertEqual(repeated["confirmation_id"], token)
         self.assertTrue(repeated["frozen"])
-        for other in ({"experiment": "alpha"}, {"experiment": "beta", "seed": 1},
+        for other in ({"experiment": "alpha"}, {"experiment": "legacy_beta", "seed": 1},
                       {"archive": opened["id"]}):
             with self.subTest(other=other), self.assertRaises(ValueError):
                 self.app.open(other)
@@ -194,12 +218,12 @@ class WebContextTests(unittest.TestCase):
         archive = self.app.catalog()["archives"][0]["id"]
         viewed = self.app.open({"archive": archive})
         self.assertEqual(self.app.open({"archive": archive})["id"], viewed["id"])
-        for other in ({"experiment": "beta"}, {"draft": archive}, {"archive": "other"}):
+        for other in ({"experiment": "legacy_beta"}, {"draft": archive}, {"archive": "other"}):
             with self.subTest(other=other), self.assertRaises(ValueError):
                 self.app.open(other)
 
     def test_open_rejoins_the_same_recovered_draft_without_starting_a_live_session(self):
-        self.open()
+        self.open_legacy()
         self.call("start", duration=2)
         self.now = 1
         self.app.state()

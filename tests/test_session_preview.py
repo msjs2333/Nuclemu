@@ -1,20 +1,20 @@
 """Independent acquisition checks for provisional saves and apparatus bindings."""
 
-from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
 from nuclemu.catalog import describe, discover
 from nuclemu.core import Device, Experiment, Session
-from nuclemu.results import collect, save_product
+from nuclemu.results import collect, save_product, snapshot_product
+from legacy_web_fixture import legacy_course
 
 
 class SessionPreviewTests(unittest.TestCase):
     def test_repeated_preview_matches_stop_without_consuming_original_rng(self):
         for name in ("alpha", "beta"):
             with self.subTest(experiment=name):
-                session = Session(discover()[name], seed=187)
+                session = Session(legacy_course(name), seed=187)
                 session.start(2.25)
                 session.advance(1.375)
                 records = session.records.copy()
@@ -31,12 +31,13 @@ class SessionPreviewTests(unittest.TestCase):
                     first.readings[next(iter(first.readings))] = (0,)
                 session.stop()
                 self.assertEqual(session.records, [*records, first])
+                self.assertNotEqual(session._rng.getstate(), rng_state)
                 self.assertIsNone(session.remaining_s)
 
     def test_failed_real_save_can_continue_to_the_original_timed_endpoint(self):
         for name in ("alpha", "beta"):
             with self.subTest(experiment=name):
-                definition = discover()[name]
+                definition = legacy_course(name)
                 session = Session(definition, seed=442)
                 reference = Session(definition, seed=442)
                 for item in (session, reference):
@@ -66,7 +67,7 @@ class SessionPreviewTests(unittest.TestCase):
                 self.assertEqual(session.records, reference.records)
 
     def test_failed_preview_model_or_validation_leaves_the_live_session_untouched(self):
-        for failure in ("exception", "binding"):
+        for failure in ("exception", "binding", "counts"):
             with self.subTest(failure=failure):
                 fault = [False]
 
@@ -75,6 +76,8 @@ class SessionPreviewTests(unittest.TestCase):
                     if fault[0]:
                         if failure == "exception":
                             raise RuntimeError("injected acquisition failure")
+                        if failure == "counts":
+                            return {"counter": (-1,)}
                         return {"wrong-device": (count,)}
                     return {"counter": (count,)}
 
@@ -99,7 +102,7 @@ class SessionPreviewTests(unittest.TestCase):
                 self.assertEqual(session.records[-1].end_s, 2.25)
 
     def test_empty_preview_and_remaining_time_lifecycle(self):
-        session = Session(discover()["beta"])
+        session = Session(legacy_course("beta"))
         self.assertIsNone(session.preview_stop())
         self.assertIsNone(session.remaining_s)
         session.start()
@@ -124,10 +127,49 @@ class SessionPreviewTests(unittest.TestCase):
         self.assertIsNone(session.remaining_s)
         self.assertEqual(session.records[-1].end_s, 2.25)
 
+    def test_independent_courses_use_completed_snapshots_and_failed_save_keeps_live_sampling(self):
+        for name, device in (("alpha", "mca"), ("beta", "counter")):
+            with self.subTest(experiment=name):
+                definition = discover()[name]
+                session, reference = Session(definition, seed=442), Session(definition, seed=442)
+                for item in (session, reference):
+                    self.assertFalse(any(item.output_enabled.values()))
+                    item.set_output(definition.devices[0].input, True)
+                    item.advance(5)
+                    item.start(2.25, device=device)
+                    item.advance(1.375)
+                state = session.instrument(device)
+                records = session.records.copy()
+                rng = session._rng.getstate()
+                with self.assertRaisesRegex(ValueError, "Independent instruments"):
+                    session.preview_stop()
+                readable = session.snapshot(device, cache=False)
+                self.assertEqual(readable.exposure_s, 1)
+                self.assertEqual(state.exposure_s, 1.375)
+                self.assertEqual(state.remaining_s, .875)
+                self.assertEqual(session._rng.getstate(), rng)
+                self.assertEqual(session.records, records)
+                with TemporaryDirectory() as directory:
+                    destination = Path(directory) / "missing" / "measurement.json"
+                    def writer(snapshot):
+                        save_product(destination, snapshot_product(definition, snapshot, session.seed))
+                    with self.assertRaises(OSError):
+                        session.snapshot(device, writer=writer)
+                self.assertEqual(session.snapshots, ())
+                self.assertEqual(session.instrument(device), reference.instrument(device))
+                self.assertEqual(session.records, reference.records)
+                self.assertEqual(session._rng.getstate(), reference._rng.getstate())
+                for item in (session, reference):
+                    item.advance(2)
+                    self.assertFalse(item.instrument(device).running)
+                    self.assertEqual(item.instrument(device).exposure_s, 2.25)
+                self.assertEqual(session.records, reference.records)
+                self.assertEqual(session._rng.getstate(), reference._rng.getstate())
+
 
 class ApparatusIntegrationTests(unittest.TestCase):
     def test_controls_and_signal_links_reach_the_same_real_instrument(self):
-        for name, controls in (("alpha", {"foil_um": 5}),
+        for name, controls in (("alpha", {"foil_spec_um": 1, "foil_count": 5}),
                                ("beta", {"source_present": 0, "foil_count": 4})):
             with self.subTest(experiment=name):
                 definition = discover()[name]
@@ -141,26 +183,36 @@ class ApparatusIntegrationTests(unittest.TestCase):
                 signal = next(link for link in entry["connections"] if link["kind"] == "signal")
                 detector = parts[signal["source"]]
                 instrument = parts[signal["target"]]
-                self.assertEqual(detector["device"], instrument["device"])
-                for item in (session, reference):
-                    item.start(1.25)
-                    item.advance(0.375)
-                self.assertEqual(session.preview_stop(), reference.preview_stop())
-                session.stop()
-                reference.stop()
                 device = instrument["device"]
                 declared = next(d for d in entry["devices"] if d["id"] == device)
+                self.assertEqual(detector["output"], declared["input"])
+                self.assertIsNone(detector["device"])
+                session.set_output(detector["output"], True)
+                reference.set_output(definition.devices[0].input, True)
+                for item in (session, reference):
+                    item.start(1.25, device=device)
+                    item.advance(0.375)
+                session.stop(device=device)
+                reference.stop(device=device)
                 self.assertEqual(len(session.records[0].readings[device]), declared["channels"])
+                self.assertEqual(session.snapshot(device, cache=False).exposure_s, .375)
+                self.assertTrue(all(set(row.readings) == {device} for row in session.records))
                 self.assertEqual(session.records, reference.records)
                 # Describe is catalogue metadata and must not sample or run a gate.
                 self.assertEqual(entry, describe(definition))
 
     def test_legacy_multiple_instruments_keep_distinct_bindings(self):
-        base = discover()["beta"]
-        definition = replace(base, id="two-counters", components=(), connections=(),
-                             devices=(Device("left", "counter", "Left"),
-                                      Device("right", "counter", "Right")),
-                             model=lambda settings, start, end, rng: {"left": (3,), "right": (7,)})
+        # Load an actual old-style external module, with device-id readings and
+        # no independent-output metadata, rather than modifying a new course.
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "legacy_counters.py"
+            path.write_text(
+                "from nuclemu.core import Device, Experiment\n"
+                "def measure(settings, start, end, rng): return {'left': (3,), 'right': (7,)}\n"
+                "EXPERIMENT = Experiment('two-counters', 'Two counters', '', (), "
+                "(Device('left','counter','Left'), Device('right','counter','Right')), measure)\n",
+                encoding="utf-8")
+            definition = discover([directory])["two-counters"]
         entry = describe(definition)
         bindings = [p["device"] for p in entry["components"] if p["device"]]
         self.assertEqual(bindings, ["left", "right"])
@@ -169,6 +221,8 @@ class ApparatusIntegrationTests(unittest.TestCase):
         session.advance(0.25)
         preview = session.preview_stop()
         self.assertEqual([preview.readings[key][0] for key in bindings], [3, 7])
+        session.stop()
+        self.assertEqual(session.records, [preview])
 
 
 if __name__ == "__main__":

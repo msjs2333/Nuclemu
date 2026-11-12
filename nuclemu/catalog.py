@@ -10,20 +10,26 @@ from pkgutil import iter_modules
 from runpy import run_path
 
 from . import experiments
-from .core import Component, Experiment
+from .core import Component, Connection, Experiment
 
 
 def describe(experiment: Experiment) -> dict:
     """Return the public catalogue entry without constructing a session."""
     parts = experiment.components
+    links = experiment.connections
     if not parts:
         parts = tuple(Component(f"device-{d.id}", "instrument", d.label, device=d.id)
                       for d in experiment.devices)
+        outputs = tuple(Component(f"output-{o.id}", "detector", o.label, output=o.id)
+                        for o in experiment.outputs)
+        parts = (*outputs, *parts)
+        links = tuple(Connection(f"output-{d.input}", f"device-{d.id}", "signal", "探测输出")
+                      for d in experiment.devices if d.input is not None)
         if experiment.parameters:
             controls = Component("controls", "controls", "实验参数",
                                  parameters=tuple(p.key for p in experiment.parameters))
             parts = (controls, *parts)
-    return {
+    entry = {
         "id": experiment.id,
         "title": experiment.title,
         "course": experiment.course,
@@ -36,8 +42,11 @@ def describe(experiment: Experiment) -> dict:
         "devices": [dict(asdict(d), background_conditions=dict(d.background_conditions))
                     for d in experiment.devices],
         "components": [asdict(part) for part in parts],
-        "connections": [asdict(link) for link in experiment.connections],
+        "connections": [asdict(link) for link in links],
     }
+    if experiment.outputs:
+        entry["outputs"] = [asdict(output) for output in experiment.outputs]
+    return entry
 
 
 def discover(paths: Iterable[str | Path] = ()) -> dict[str, Experiment]:

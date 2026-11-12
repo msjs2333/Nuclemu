@@ -14,13 +14,13 @@ From the repository directory, use Python 3.11 or later to open the local workbe
 python -m nuclemu gui
 ```
 
-Select an experiment from the catalogue. Use the apparatus view to adjust the foil, open the instrument to acquire data, then compare and save measurements in the records view. The interface and models run locally.
+Select an experiment from the catalogue. In the apparatus view, choose the source and foil, switch on the detector output, then open the instrument. Save the readings you want to keep from the instrument panel. The interface and models run locally.
 
 For a scripted measurement, list the experiments, then acquire 10 seconds of background counts and 20 seconds with the source present behind four foils. The last option uses the first measurement to calculate the background-subtracted rate.
 
 ```sh
 python -m nuclemu list
-python -m nuclemu run beta --step 10,source_present=0 --step 20,source_present=1,foil_count=4 --background 1
+python -m nuclemu run beta --device counter --enable-output beta_detector --step 10,source_present=0 --step 20,source_present=1,foil_count=4 --background 1
 ```
 
 The workbench and CLI share the same simulation clock, instrument models and measured counts. Experiment authors can add trusted Python modules to the catalogue. The delivery plan describes ten further experiments.
@@ -32,7 +32,9 @@ The guides and design documents are in Chinese.
 | Document | Contents |
 |---|---|
 | [Workbench](docs/gui.md) · [Command line](docs/cli.md) | Acquisition, calibration, background subtraction and export |
-| [Alpha energy loss](docs/alpha.md) · [Beta absorption](docs/beta.md) | Physical models and limits of the two experiments |
+| Student handbook · [Alpha energy loss](docs/alpha.md) · [Beta absorption](docs/beta.md) | Experimental procedure, observed quantities and interpretation |
+| Teacher handbook · [Alpha energy loss](docs/teacher/alpha.md) · [Beta absorption](docs/teacher/beta.md) | Worked measurements, calibration and counting uncertainty |
+| Technical reference · [Alpha spectroscopy](docs/technical/alpha.md) · [Beta counting](docs/technical/beta.md) | Instrument settings, model limits and reproducible measurements |
 | [Delivery plan](docs/plan.md) | Scope, delivery sequence and acceptance criteria |
 | [Architecture and interfaces](docs/architecture.md) | Experiment modules, simulation time, instrument panels and measurement data |
 | [Experiment catalogue](docs/experiments.md) | Physics questions, measurement designs and requirements for all 12 experiments |

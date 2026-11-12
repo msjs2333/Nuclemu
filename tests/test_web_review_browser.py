@@ -47,12 +47,7 @@ class WebReviewBrowserTests(unittest.TestCase):
         expect(page.locator("#confirm")).to_be_visible()
 
     def start(self, seconds):
-        self.page.locator("[data-page='instrument']").click()
-        self.page.locator("#menu-acquisition").click()
-        self.page.locator("#duration").fill(str(seconds))
-        self.page.keyboard.press("Escape")
-        self.page.locator("#start").click()
-        expect(self.page.locator("#gate-status")).to_have_text("采集中")
+        fixtures.start_collection(self, seconds)
 
     @staticmethod
     def hold_poll(page, snapshot):
@@ -88,12 +83,18 @@ class WebReviewBrowserTests(unittest.TestCase):
         expect(other.locator("#error")).to_be_visible()
         expect(other.locator("#catalog")).to_be_visible()
         self.assertEqual(self.state()["id"], before["id"])
+        self.page.reload()
+        expect(self.page.locator("#gate-status")).to_have_attribute("data-running", "true")
+        self.assertEqual(self.state()["id"], before["id"])
+        self.assertEqual(self.server.app.catalog()["drafts"], [])
+        self.assertEqual(self.server.app.catalog()["archives"], [])
 
     def test_refresh_keeps_live_gate_without_draft_notice_and_explicit_draft_shows_time(self):
-        self.enter("alpha")
+        fixtures.install_legacy(self, 'alpha')
+        self.enter("legacy_alpha")
         self.start(10)
         self.now = 1.5
-        expect(self.page.locator("#time")).to_have_text("1.5 s")
+        self.assertEqual(self.state()["time_s"], 1.5)
         before = self.state()
         self.page.reload()
         expect(self.page.locator("#gate-status")).to_have_text("采集中")
@@ -117,9 +118,10 @@ class WebReviewBrowserTests(unittest.TestCase):
         expect(self.page.locator("#recovered")).to_have_text("正在查看已保存的实验。")
 
     def test_stale_save_and_discard_cannot_touch_resumed_gate_or_new_draft(self):
+        fixtures.install_legacy(self, 'alpha')
         peer = self.peer()
-        self.enter("alpha")
-        peer.locator("[data-experiment='alpha']").click()
+        self.enter("legacy_alpha")
+        peer.locator("[data-experiment='legacy_alpha']").click()
         expect(peer.locator("#workspace")).to_be_visible()
         self.start(10)
         self.now = .25
@@ -147,7 +149,8 @@ class WebReviewBrowserTests(unittest.TestCase):
             expect(peer.locator("#confirm")).not_to_be_visible()
 
     def test_save_failure_keeps_confirmation_for_retry(self):
-        self.enter("alpha")
+        fixtures.install_legacy(self, 'alpha')
+        self.enter("legacy_alpha")
         self.collect(1.25)
         self.start(10)
         self.now += .25
@@ -168,7 +171,7 @@ class WebReviewBrowserTests(unittest.TestCase):
         finally:
             self.server.app.store.write = write
         self.page.locator("#save-exit").click()
-        expect(self.page.locator("[data-experiment='alpha']")).to_be_focused()
+        expect(self.page.locator("[data-experiment='legacy_alpha']")).to_be_focused()
         self.assertIsNone(self.state())
 
     def test_visible_old_confirmation_does_not_adopt_a_new_round_from_polling(self):
@@ -203,13 +206,14 @@ class WebReviewBrowserTests(unittest.TestCase):
         self.assertFalse(self.state()["frozen"])
 
     def test_archive_request_cannot_join_live_experiment_of_same_name(self):
-        self.enter("alpha")
+        fixtures.install_legacy(self, 'alpha')
+        self.enter("legacy_alpha")
         self.collect(1)
         self.exit_dialog(self.page)
         self.page.locator("#save-exit").click()
         expect(self.page.locator("#catalog")).to_be_visible()
         peer = self.peer()
-        self.enter("alpha")
+        self.enter("legacy_alpha")
         live = self.state()
         peer.get_by_role("button", name="查看实验", exact=True).click()
         expect(peer.locator("#error")).to_be_visible()
@@ -223,7 +227,7 @@ class WebReviewBrowserTests(unittest.TestCase):
         self.page.get_by_role("button", name="查看实验", exact=True).click()
         expect(self.page.locator("#start")).to_be_disabled()
         archived = self.state()
-        fresh.locator("[data-experiment='alpha']").click()
+        fresh.locator("[data-experiment='legacy_alpha']").click()
         expect(fresh.locator("#error")).to_be_visible()
         self.assertEqual(self.state()["id"], archived["id"])
         self.assertTrue(self.state()["readonly"])
@@ -257,29 +261,37 @@ class WebReviewBrowserTests(unittest.TestCase):
     def test_explicit_apparatus_device_click_reasserts_displayed_instrument(self):
         peer = self.spectra()
         product = self.state()['product']
-        for selector in ("[data-part='device-left']", '#component > button'):
-            with self.subTest(selector=selector):
-                self.page.locator("[data-page='setup']").click()
-                release = self.hold_poll(self.page, self.state())
-                peer.locator('#device').select_option('right')
-                expect(peer.locator('#device')).to_have_value('right')
-                with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
-                                               r.request.post_data_json.get('action') == 'device') as selected:
-                    self.page.locator(selector).click()
-                self.assertTrue(selected.value.ok)
-                self.assertEqual(selected.value.request.post_data_json['device'], 'left')
-                expect(self.page.locator('#device')).to_be_focused()
-                expect(self.page.locator('#device')).to_have_value('left')
-                release()
-                expect(peer.locator('#device')).to_have_value('left')
-                current = self.state()
-                self.assertEqual(current['device'], 'left')
-                self.assertEqual(current['readout']['centroid'], 1)
-                self.assertEqual(current['product'], product)
+        for keyboard in (False, True):
+            self.page.locator("[data-page='setup']").click()
+            release = self.hold_poll(self.page, self.state())
+            peer.locator('#device').select_option('right')
+            expect(peer.locator('#device')).to_have_value('right')
+            part = self.page.locator("[data-part='device-left']")
+            if keyboard:
+                part.focus()
+                part.press('Enter')
+            else:
+                part.click()
+            expect(self.page.locator("#component h2")).to_have_text("左谱仪")
+            expect(self.page.locator("[data-page='setup']")).to_have_attribute('aria-current', 'page')
+            self.assertEqual(self.state()['device'], 'right')
+            with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
+                                           r.request.post_data_json.get('action') == 'device') as selected:
+                self.page.locator('#open-instrument').click()
+            self.assertTrue(selected.value.ok)
+            self.assertEqual(selected.value.request.post_data_json['device'], 'left')
+            expect(self.page.locator('#device')).to_be_focused()
+            expect(self.page.locator('#device')).to_have_value('left')
+            release()
+            expect(peer.locator('#device')).to_have_value('left')
+            current = self.state()
+            self.assertEqual(current['device'], 'left')
+            self.assertEqual(current['readout']['centroid'], 1)
+            self.assertEqual(current['product'], product)
         self.page.locator("[data-page='setup']").click()
         self.page.route('**/api/action', lambda route: route.fulfill(
             status=400, json={'error': 'device selection failed'}))
-        self.page.locator('#component > button').click()
+        self.page.locator('#open-instrument').click()
         expect(self.page.locator('#error')).to_contain_text('device selection failed')
         expect(self.page.locator("[data-page='setup']")).to_have_attribute('aria-current', 'page')
         expect(self.page.locator('#setup')).to_be_visible()
@@ -408,7 +420,7 @@ class WebReviewBrowserTests(unittest.TestCase):
                         device="left", channels=4, channel1=0, energy1=0, channel2=2, energy2=1,
                         conditions={"gain": 1})
         with self.page.expect_file_chooser() as pending:
-            self.page.locator("#cal-file").click()
+            self.page.locator("#load-calibration").click()
         pending.value.set_files({"name": "energy.json", "mimeType": "application/json",
                                  "buffer": json.dumps(document).encode()})
         self.page.wait_for_function("typeof window.finishFile === 'function'")
@@ -440,6 +452,7 @@ class WebReviewBrowserTests(unittest.TestCase):
         self.assertEqual(dict(self.server.app.lab.work.lab.calibrations["left"].conditions), {"gain": 1})
         self.pending_calibration_file()
         peer.locator("[data-page='setup']").click()
+        peer.locator("[data-part=controls]").click()
         peer.locator("#component input").fill("2")
         peer.locator("#component form button").click()
         expect(peer.locator("#message")).to_contain_text("已更新")
@@ -476,7 +489,7 @@ class WebReviewBrowserTests(unittest.TestCase):
         if self.page.locator("details.calibration-tools").get_attribute("open") is None:
             self.page.locator("details.calibration-tools > summary").click()
         with self.page.expect_file_chooser() as pending:
-            self.page.locator("#cal-file").click()
+            self.page.locator("#load-calibration").click()
         pending.value.set_files({"name": "energy.json", "mimeType": "application/json",
                                  "buffer": json.dumps(document).encode()})
         self.page.wait_for_function("typeof window.finishFile === 'function'")
@@ -490,6 +503,7 @@ class WebReviewBrowserTests(unittest.TestCase):
     def test_history_change_rejects_old_form_and_explicit_history_uses_its_gain(self):
         peer = self.spectra()
         peer.locator("[data-page='setup']").click()
+        peer.locator("[data-part=controls]").click()
         peer.locator("#component input").fill("2")
         peer.locator("#component form button").click()
         expect(peer.locator("#message")).to_contain_text("已更新")

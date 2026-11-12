@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import {nextTick, onBeforeUnmount, onMounted, ref, watch} from 'vue'
 
-type Command = 'file' | 'acquisition' | 'analysis' | 'display'
+type Command = 'file' | 'acquisition' | 'analysis' | 'display' | 'simulation'
 const commands: {id: Command; label: string}[] = [
   {id: 'file', label: '文件'}, {id: 'acquisition', label: '采集'},
   {id: 'analysis', label: '分析'}, {id: 'display', label: '显示'},
+  {id: 'simulation', label: '仿真'},
 ]
 const props = defineProps<{analysis: boolean; display: boolean}>()
 const opened = ref<Command | null>(null)

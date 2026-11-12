@@ -1,5 +1,5 @@
 import {onBeforeUnmount, onMounted, ref, shallowRef} from 'vue'
-import {api, ApiError, errorMessage} from './api'
+import {api, ApiError, errorMessage, filePayload} from './api'
 import type {Act, Catalog, Open, Page, State, Segment} from './types'
 
 type Snapshot = Omit<State, 'product'> & (
@@ -91,6 +91,14 @@ export function useSession() {
       enter(next, 'archive' in args || 'draft' in args ? 'instrument' : 'setup',
         'draft' in args ? next.recovered_s : null)
       history.pushState({id: next.id, page: page.value}, '', labUrl())
+    })
+  }
+  function openPackage(file: File) {
+    return serial(async () => {
+      if (state.value) throw Error('请先退出当前实验，再打开实验文件。')
+      const next = await api<Snapshot>('open_package', {file: await filePayload(file)})
+      enter(next, 'instrument')
+      history.pushState({id: next.id, page: 'instrument'}, '', labUrl())
     })
   }
   function askExit() {
@@ -208,5 +216,5 @@ export function useSession() {
     window.removeEventListener('pageshow', resume)
     window.removeEventListener('popstate', navigate)
   })
-  return {state, catalog, page, confirming, recovered, message, error, act, report, open, askExit, cancelExit, finish, setPage}
+  return {state, catalog, page, confirming, recovered, message, error, act, report, open, openPackage, askExit, cancelExit, finish, setPage}
 }

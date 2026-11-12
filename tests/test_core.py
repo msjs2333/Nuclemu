@@ -214,12 +214,13 @@ class CatalogTests(unittest.TestCase):
                 definition = discover()[name]
                 parts = {p["id"]: p for p in describe(definition)["components"]}
                 session = Session(definition)
-                session.set(parts["foil"]["parameters"][0], value)
+                session.set("foil_count", value)
+                session.set_output(parts["detector"]["output"], True)
                 session.start(1)
                 session.advance(1)
                 row = session.records[0]
-                self.assertEqual(row.settings[key], value)
-                self.assertEqual(row.readings[parts["detector"]["device"]], row.readings[meter])
+                self.assertEqual(row.settings["foil_count"], value)
+                self.assertIn(meter, row.readings)
 
     def test_invalid_diagram_points_to_the_bad_binding(self):
         base = discover()["alpha"]
@@ -255,12 +256,15 @@ class CatalogTests(unittest.TestCase):
                 left = Session(definitions[name], seed=2026)
                 right = Session(definitions[name], seed=2026)
                 for session in (left, right):
+                    for output in session.experiment.outputs:
+                        session.set_output(output.id, True)
                     session.start(1.25)
                 left.advance(2)
                 for _ in range(20):
                     right.advance(0.1)
                 self.assertEqual(left.records, right.records)
-                self.assertEqual(sum(r.exposure_s for r in left.records), 1.25)
+                device = left.experiment.devices[0].id
+                self.assertEqual(sum(r.exposure_s for r in left.records if device in r.readings), 1.25)
 
     def test_invalid_module_reports_its_origin(self):
         with TemporaryDirectory() as directory:

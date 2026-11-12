@@ -22,10 +22,10 @@ function prepare(canvas) {
   return {g,width,height};
 }
 
-function connect(g, start, end, kind, detour) {
+function connect(g, start, end, kind, detour, active=true, cableIndex=0) {
   const dx=end.x-start.x, dir=dx>=0?1:-1;
   const x1=start.x+dir*(dir>0?start.right:start.left), x2=end.x-dir*(dir>0?end.left:end.right);
-  const color=kind==="particle"?particle:accent;
+  const color=kind==="particle"?(active?particle:"#a9b1b8"):(cableIndex%2?"#65839b":accent);
   const y1=start.outY;
   const points=[[x1,y1]];
   if(detour && kind!=="particle") {
@@ -35,18 +35,29 @@ function connect(g, start, end, kind, detour) {
     points.push([(x1+x2)/2,y1],[(x1+x2)/2,end.y]);
   }
   points.push([x2,end.y]);
-  g.save(); g.setLineDash(kind==="particle"?[4,3]:[]); line(g,points,color,1.6);
-  g.setLineDash([]);line(g,[[x2-dir*4,end.y-3],[x2,end.y],[x2-dir*4,end.y+3]],color,1.6);g.restore();
+  g.save(); g.setLineDash(kind==="particle"?[4,3]:[]);
+  if(kind!=="particle") {
+    const sag=Math.max(20,Math.abs(x2-x1)*.16)+cableIndex*5;
+    g.beginPath();g.moveTo(x1,y1);g.bezierCurveTo(x1+(x2-x1)*.3,y1+sag,x2-(x2-x1)*.3,end.y+sag,x2,end.y);
+    g.strokeStyle=color;g.lineWidth=1.8;g.stroke();
+  } else line(g,points,color,1.6);
+  g.setLineDash([]);if(kind!=="particle"||active) line(g,[[x2-dir*4,end.y-3],[x2,end.y],[x2-dir*4,end.y+3]],color,1.6);g.restore();
+  if(kind!=="particle") {
+    g.save();g.fillStyle=color;
+    for(const [x,y] of [[x1,y1],[x2,end.y]]) {g.beginPath();g.arc(x,y,2.5,0,Math.PI*2);g.fill()}
+    g.restore();
+  }
 }
 
 function routes(g, edges, positions, labels=false) {
   const nodes = [...positions.values()];
+  let cableIndex=0;
   for(const edge of edges) {
     const src=positions.get(edge.source), dst=positions.get(edge.target);
     if(!src || !dst) continue;
     const detour=edge.kind!=="particle" && nodes.some(p=>p.x>Math.min(src.x,dst.x) && p.x<Math.max(src.x,dst.x));
-    connect(g,src,dst,edge.kind,detour);
-    if(labels && !detour && dst.x>src.x && edge.label) {
+    connect(g,src,dst,edge.kind,detour,edge.active!==false,edge.kind==="particle"?0:cableIndex++);
+    if(labels && !detour && dst.x>src.x && edge.label && edge.active!==false) {
       const start=src.x+src.right, end=dst.x-dst.left;
       g.save();
       g.font='13px "Nuclemu Lab Sans", "Noto Sans SC", "Microsoft YaHei", sans-serif';
@@ -100,19 +111,20 @@ export const margin={left:62,right:27,top:30,bottom:43};
 
 export function spectrumExtent(series,channels) {
   let first=channels, last=-1, maximum=0;
-  for(const {counts,divisor} of series) {
+  for(const {counts,divisor,channelPosition} of series) {
     if(!(divisor>0)) continue;
     for(let channel=0;channel<counts.length;channel++){
       const count=counts[channel];
       if(count<=0) continue;
-      first=Math.min(first,channel);
-      last=Math.max(last,channel);
+      const position=channelPosition?channelPosition(channel):channel;
+      first=Math.min(first,position);
+      last=Math.max(last,position);
       maximum=Math.max(maximum,count/divisor);
     }
   }
   if(last<first) return {range:[0,channels-1],maximum:0};
   const padding=Math.max(3,Math.ceil((last-first+1)*0.08));
-  return {range:[Math.max(0,first-padding),Math.min(channels-1,last+padding)],maximum};
+  return {range:[Math.max(0,Math.floor(first-padding)),Math.min(channels-1,Math.ceil(last+padding))],maximum};
 }
 
 export function pointerChannels(canvas, [first, last]) {
@@ -204,10 +216,15 @@ export function drawSpectrum(canvas,series,n,roi,energy,label,range,maximum) {
     if(!(item.divisor>0))return;
     g.beginPath();g.strokeStyle=index?"#c65b35":accent;
     g.lineWidth=index?1.4:1.7;g.setLineDash(index?[5,3]:[]);
-    if(first===last) g.moveTo(x(first),bottom);
-    else g.moveTo(left,y(item.counts[first]/item.divisor));
-    for(let channel=first;channel<=last;channel++) g.lineTo(x(channel),y(item.counts[channel]/item.divisor));
+    g.save();g.beginPath();g.rect(left,top,right-left,bottom-top);g.clip();g.beginPath();
+    let started=false;
+    for(let channel=0;channel<item.counts.length;channel++) {
+      const position=item.channelPosition?item.channelPosition(channel):channel;
+      const point=[x(position),y(item.counts[channel]/item.divisor)];
+      if(!started){g.moveTo(...point);started=true}else g.lineTo(...point);
+    }
     g.stroke();
+    g.restore();
   });
   g.setLineDash([]);g.textAlign="center";g.fillStyle="#101010";
   for(const tick of ticks){

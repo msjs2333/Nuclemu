@@ -43,6 +43,8 @@ class WebEditBrowserTests(unittest.TestCase):
         self.enter('edit-review')
         peer.locator("[data-experiment='edit-review']").click()
         expect(peer.locator('#workspace')).to_be_visible()
+        self.page.locator('[data-part=controls]').click()
+        peer.locator('[data-part=controls]').click()
         return peer
 
     def apply(self, page):
@@ -143,15 +145,19 @@ class WebEditBrowserTests(unittest.TestCase):
         self.now = .25
         peer.locator('#stop').click()
         expect(peer.locator('#start')).to_be_enabled()
+        paused = self.state()
         peer.locator('#start').click()
         expect(peer.locator('#stop')).to_be_enabled()
         self.now += .375
         before = self.state()
-        self.assertNotEqual(before['active_acquisition'], original['active_acquisition'])
+        self.assertEqual(before['active_acquisition'], original['active_acquisition'])
+        self.assertNotEqual(before['instrument']['cycle'], original['instrument']['cycle'])
         with self.page.expect_response(lambda r: r.url.endswith('/api/action')) as rejected:
             self.page.locator('#stop').click()
         self.assertEqual(rejected.value.status, 400)
+        self.assertEqual(rejected.value.request.post_data_json['device'], original['device'])
         self.assertEqual(rejected.value.request.post_data_json['acquisition'], original['active_acquisition'])
+        self.assertEqual(rejected.value.request.post_data_json['cycle'], original['instrument']['cycle'])
         after = self.state()
         self.assertTrue(after['running'])
         self.assertEqual(after['remaining_s'], before['remaining_s'])
@@ -162,8 +168,10 @@ class WebEditBrowserTests(unittest.TestCase):
         final = self.state()
         self.assertFalse(final['running'])
         self.assertIsNone(final['active_acquisition'])
+        self.assertEqual(final['instrument']['acquisition'], original['instrument']['acquisition'])
+        self.assertEqual(final['instrument']['exposure_s'] - paused['instrument']['exposure_s'], .375)
         self.assertEqual(final['product']['segments'][-1]['end_s'] -
-                         final['product']['segments'][-1]['start_s'], .375)
+                         final['product']['segments'][-1]['start_s'], .625)
 
 
 if __name__ == '__main__':

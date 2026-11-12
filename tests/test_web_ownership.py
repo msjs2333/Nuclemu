@@ -8,7 +8,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from nuclemu.catalog import discover
+from tests.legacy_web_fixture import legacy_course
 from nuclemu.web_session import Application
 
 
@@ -16,14 +16,15 @@ class ArchiveOwnershipTests(unittest.TestCase):
     def setUp(self):
         self.folder = TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)
-        self.definitions = discover()
+        definition = legacy_course("alpha")
+        self.definitions = {definition.id: definition}
         self.services(Path(self.folder.name))
 
     def services(self, directory):
         self.now = 0
         self.a = Application(self.definitions, directory, clock=lambda: self.now)
         self.b = Application(self.definitions, directory, clock=lambda: self.now)
-        self.a.open({"experiment": "alpha", "seed": 187})
+        self.a.open({"experiment": "legacy_alpha", "seed": 187})
 
     def act(self, app, action, **data):
         return app.request("/api/action", dict(session=app.lab.id, action=action, **data))
