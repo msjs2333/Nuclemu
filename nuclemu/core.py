@@ -101,10 +101,12 @@ class Component:
     illustration: str | None = None
     output: str | None = None
     devices: tuple[str, ...] = ()
+    outputs: tuple[str, ...] = ()
 
     def __post_init__(self):
         object.__setattr__(self, "parameters", tuple(self.parameters))
         object.__setattr__(self, "devices", tuple(self.devices))
+        object.__setattr__(self, "outputs", tuple(self.outputs))
 
 
 @dataclass(frozen=True)
@@ -150,6 +152,7 @@ class Experiment:
     normalize_settings: Callable[[Settings], Settings] | None = None
     particle_flow: Callable[[Settings], Mapping] | None = None
     short_code: str | None = None
+    restore_definition: Callable[[Mapping], "Experiment"] | None = None
 
     def __post_init__(self) -> None:
         if not self.id or not self.title or not callable(self.model):
@@ -159,6 +162,8 @@ class Experiment:
             raise ValueError(f"{self.id}: normalize_settings must be callable")
         if self.particle_flow is not None and not callable(self.particle_flow):
             raise ValueError(f"{self.id}: particle_flow must be callable")
+        if self.restore_definition is not None and not callable(self.restore_definition):
+            raise ValueError(f"{self.id}: restore_definition must be callable")
         if not isinstance(self.course, str) or not self.course.strip():
             raise ValueError(f"{self.id}: course must be nonempty text")
         object.__setattr__(self, "parameters", tuple(self.parameters))
@@ -236,6 +241,7 @@ class Experiment:
         assigned_parameters = set()
         assigned_devices = set()
         output_ids = {output.id for output in self.outputs}
+        grouped_outputs = set()
         for part in self.components:
             if not part.id or part.id in component_ids or not part.label or not part.kind:
                 raise ValueError(f"{self.id}: invalid or duplicate component {part.id!r}")
@@ -254,6 +260,12 @@ class Experiment:
             assigned_devices.update(part.devices)
             if part.output is not None and part.output not in output_ids:
                 raise ValueError(f"{self.id}/{part.id}: unknown output {part.output!r}")
+            if part.outputs:
+                group = set(part.outputs)
+                if (len(group) != len(part.outputs) or not group <= output_ids
+                        or part.output not in group or group & grouped_outputs):
+                    raise ValueError(f"{self.id}/{part.id}: outputs must bind distinct declared outputs including output, without overlapping groups")
+                grouped_outputs.update(group)
         if self.components and (parameter_keys != assigned_parameters or device_ids != assigned_devices):
             missing = sorted((parameter_keys - assigned_parameters) | (device_ids - assigned_devices))
             raise ValueError(f"{self.id}: missing apparatus binding for {', '.join(missing)}")

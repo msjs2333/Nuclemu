@@ -13,6 +13,16 @@ from . import experiments
 from .core import Component, Connection, Experiment, resolve_short_code
 
 
+def resolve_saved_experiment(current: Experiment, saved_info: dict) -> Experiment:
+    """Let a trusted course select a historical model before binding checks."""
+    if saved_info.get("id") != current.id:
+        raise ValueError("Saved definition belongs to a different experiment")
+    restored = current if current.restore_definition is None else current.restore_definition(saved_info)
+    if not isinstance(restored, Experiment) or restored.id != current.id:
+        raise ValueError("The course must restore an Experiment with the same id")
+    return restored
+
+
 def describe(experiment: Experiment) -> dict:
     """Return the public catalogue entry without constructing a session."""
     parts = experiment.components

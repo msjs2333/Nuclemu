@@ -177,6 +177,10 @@ class InstrumentAcquisition:
         self.session = session
         self.gates = {d.id: _Gate() for d in session.experiment.devices}
         self.enabled = {o.id: False for o in session.experiment.outputs}
+        self._output_groups = {key: (key,) for key in self.enabled}
+        for part in session.experiment.components:
+            if part.outputs:
+                self._output_groups.update((key, part.outputs) for key in part.outputs)
         self.begin = session._time
         self.next_window = None
         self.snapshots = []
@@ -317,14 +321,16 @@ class InstrumentAcquisition:
             raise ValueError(f"Unknown detector output: {output}")
         if type(enabled) is not bool:
             raise ValueError("Detector output switch must be boolean")
-        if enabled == self.enabled[output]:
+        changes = {key: enabled for key in self._output_groups[output]
+                   if enabled != self.enabled[key]}
+        if not changes:
             return
         # Check clock resolution before committing the new switch position.
         if enabled and not self.clock_running:
             self.session._future_time(1)
         self.flush()
-        self.enabled[output] = enabled
-        change = self._configuration_change("output", {output: enabled})
+        self.enabled.update(changes)
+        change = self._configuration_change("output", changes)
         for device, g in self.gates.items():
             if g.current:
                 g.output_changes.append(SettingChange(self.session.time_s, self.state(device).exposure_s,
