@@ -1,6 +1,5 @@
 """Physical counter bindings remain stable when course devices are reordered."""
 
-from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -9,13 +8,14 @@ from threading import Thread
 import unittest
 
 import test_catalog_records_browser as fixtures
-from nuclemu.core import Component, Device
-from nuclemu.experiments.beta import EXPERIMENT, DETECTOR_OUTPUT
+from nuclemu.core import Component, Device, Experiment, SignalOutput
 from nuclemu.exchange import load_item, load_package
 from nuclemu.web import make_server
 
 if fixtures.sync_playwright:
     from playwright.sync_api import expect
+
+DETECTOR_OUTPUT = 'identity-pulses'
 
 
 def ordered_counter_course():
@@ -23,13 +23,14 @@ def ordered_counter_course():
     def pulses(settings, start, end, rng):
         return {DETECTOR_OUTPUT: (round(10 * (end - start)),)}
 
-    by_id = {device.id: device for device in EXPERIMENT.devices}
     solo = Device('solo', 'counter', '计数窗', input=DETECTOR_OUTPUT)
-    return replace(EXPERIMENT, id='counter-ordering', title='计数器绑定顺序核对', short_code='ORDER',
-        devices=(replace(by_id['counter_b'], label='计数窗'), solo, replace(by_id['counter'], label='计数窗')),
-        components=tuple(replace(part, label='双窗计数器') if part.id == 'counter' else part
-                         for part in EXPERIMENT.components) +
-                   (Component('solo-instrument', 'instrument', '独立计数器', device='solo'),), model=pulses)
+    return Experiment('counter-ordering', '计数器绑定顺序核对', '恒定脉冲输入的设备绑定核对', (),
+        (Device('counter_b', 'counter', '计数窗', input=DETECTOR_OUTPUT), solo,
+         Device('counter', 'counter', '计数窗', input=DETECTOR_OUTPUT)), pulses,
+        outputs=(SignalOutput(DETECTOR_OUTPUT, '恒定脉冲输出'),), short_code='ORDER',
+        components=(Component('input', 'detector', '脉冲输入', output=DETECTOR_OUTPUT),
+                    Component('counter', 'instrument', '双窗计数器', device='counter', devices=('counter', 'counter_b')),
+                    Component('solo-instrument', 'instrument', '独立计数器', device='solo')))
 
 
 @unittest.skipUnless(fixtures.sync_playwright, 'Install Playwright to run desktop checks')
@@ -108,6 +109,10 @@ class CounterIdentityBrowserTests(unittest.TestCase):
             self.assertTrue(download.value.suggested_filename.endswith('_' + suffix + '.csv'))
             path = Path(self.folder.name, download.value.suggested_filename)
             download.value.save_as(path)
+            if os.environ.get('NUCLEMU_REVIEW_OUTPUT'):
+                directory = Path(os.environ['NUCLEMU_REVIEW_OUTPUT'])
+                directory.mkdir(parents=True, exist_ok=True)
+                (directory / path.name).write_bytes(path.read_bytes())
             document = load_item(path.read_bytes())['items'][0]['document']
             self.assertEqual(document['snapshot']['device'], device)
             self.assertEqual(document['snapshot']['exposure_s'], exposure)

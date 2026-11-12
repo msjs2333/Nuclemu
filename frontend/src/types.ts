@@ -42,6 +42,7 @@ export interface State {
   dirty: boolean; readonly: boolean; recovered_s: number | null; device: string; selected: number | null
   product: { segments: Segment[] }; calibration: Calibration | null; reference_calibration: Calibration | null
   product_cursor: string
+  window_cursor: string
   selected_item_id: string | null; reference_item_id: string | null
   selected_observation: SavedObservation | null; reference_observation: SavedObservation | null
   saved_measurements: {id: string; device: string; title: string; exposure_s: number; settings: Record<string, number>[]; calibration_id: string | null}[]

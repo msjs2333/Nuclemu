@@ -2,9 +2,12 @@ import {onBeforeUnmount, onMounted, ref, shallowRef} from 'vue'
 import {api, ApiError, errorMessage, filePayload} from './api'
 import type {Act, Catalog, Open, Page, State, Segment} from './types'
 
-type Snapshot = Omit<State, 'product'> & (
+type Snapshot = Omit<State, 'product' | 'counter_windows'> & (
   {product: State['product']; product_delta?: never} |
   {product?: never; product_delta: {start: number; segments: Segment[]}}
+) & (
+  {counter_windows: State['counter_windows']; counter_windows_delta?: never} |
+  {counter_windows?: never; counter_windows_delta: Record<string, {start: number; windows: State['counter_windows'][string]}>}
 )
 
 function stable<T>(previous: T, next: T): T {
@@ -21,6 +24,7 @@ export function useSession() {
   let confirmationId: number | null = null, dismissedConfirmationId: number | null = null
   let tail: Promise<unknown> = Promise.resolve(), pending = 0, revision = 0, polling = false
   let interval: number
+  let pollError = ''
 
   function accept(next: Snapshot) {
     const prev = state.value?.id === next.id ? state.value : null
@@ -30,6 +34,17 @@ export function useSession() {
       const {start, segments} = next.product_delta
       product = segments.length || start !== prev.product.segments.length
         ? {...prev.product, segments: prev.product.segments.slice(0, start).concat(segments)} : prev.product
+    }
+    let counterWindows = next.counter_windows
+    if (!counterWindows) {
+      if (!prev || !next.counter_windows_delta) throw Error('计数窗记录已改变，请刷新实验。')
+      counterWindows = prev.counter_windows
+      for (const [device, change] of Object.entries(next.counter_windows_delta)) {
+        const previous = counterWindows[device] ?? []
+        if (change.start < 0 || change.start > previous.length) throw Error('计数窗记录已改变，请刷新实验。')
+        if (counterWindows === prev.counter_windows) counterWindows = {...counterWindows}
+        counterWindows[device] = previous.slice(0, change.start).concat(change.windows)
+      }
     }
     if (prev) {
       next.definition = prev.definition
@@ -41,7 +56,7 @@ export function useSession() {
       next.readout = stable(prev.readout, next.readout)
       next.particle_flow = stable(prev.particle_flow, next.particle_flow)
     }
-    state.value = {...next, product}
+    state.value = {...next, product, counter_windows: counterWindows}
     if (!next.frozen) {
       confirming.value = false
       confirmationId = dismissedConfirmationId = null
@@ -65,7 +80,7 @@ export function useSession() {
   async function action(name: string, fields: Record<string, unknown> = {}, session = state.value?.id) {
     const s = state.value
     if (!s || s.id !== session) throw Error('实验已变更，请重新执行操作。')
-    const next = await api<Snapshot | null>('action', {session: s.id, product_cursor: s.product_cursor, action: name, ...fields})
+    const next = await api<Snapshot | null>('action', {session: s.id, product_cursor: s.product_cursor, window_cursor: s.window_cursor, action: name, ...fields})
     if (next) accept(next)
   }
   const act: Act = (name, fields, session = state.value?.id) => {
@@ -193,12 +208,17 @@ export function useSession() {
     const tag = revision
     polling = true
     try {
-      const query = new URLSearchParams({session: current.id, product_cursor: current.product_cursor})
+      const query = new URLSearchParams({session: current.id, product_cursor: current.product_cursor, window_cursor: current.window_cursor})
       const result = await api<Snapshot>('state?' + query)
-      if (revision === tag && state.value?.id === current.id) accept(result)
+      if (revision === tag && state.value?.id === current.id) {
+        accept(result)
+        if (error.value === pollError) error.value = ''
+        pollError = ''
+      }
     } catch (e) {
       if (revision === tag) {
-        error.value = errorMessage(e)
+        pollError = errorMessage(e)
+        error.value = pollError
         if (e instanceof ApiError && e.status === 400) {
           // Another tab may have closed this session. Return to the catalogue
           // without applying its queued commands to a different session.

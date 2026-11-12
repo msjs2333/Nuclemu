@@ -69,7 +69,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     elif route == "/api/state":
                         query = parse_qs(url.query)
                         data = self.server.app.state(**{key: query[key][0] for key in
-                                                       ("session", "product_cursor") if key in query})
+                                                       ("session", "product_cursor", "window_cursor") if key in query})
                     else:
                         self.payload(404, {"error": "未知请求。"})
                         return

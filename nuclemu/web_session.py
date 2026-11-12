@@ -99,6 +99,7 @@ class WebLab:
         self._snapshot_summaries = []
         self._counter_analysis_key = None
         self._counter_analysis = []
+        self._counter_window_cache = {}
         self.exchange = WebExchange()
         self.portable_loaded = False
         self.product_generation = 0
@@ -350,7 +351,51 @@ class WebLab:
         if action == "save" and self.frozen and data.get("exit") is not True:
             raise ValueError("请先完成当前退出确认。")
 
-    def state(self, product_cursor=None):
+    def counter_window_payload(self, cursor, instruments):
+        """Send each client's new windows and its replaceable unfinished tail."""
+        try:
+            supplied = json.loads(cursor) if cursor else None
+        except (TypeError, ValueError):
+            supplied = None
+        incremental = (isinstance(supplied, dict) and supplied.get('session') == self.id
+                       and isinstance(supplied.get('devices'), dict))
+        windows, updates, positions = {}, {}, {}
+        for device in self.work.session.experiment.devices:
+            if device.kind != 'counter' or device.id not in instruments:
+                continue
+            state = instruments[device.id]
+            epoch = state['acquisition']
+            signature = (epoch, state['readable_exposure_s'], state['window_s'], state['next_window_s'])
+            cached = self._counter_window_cache.get(device.id)
+            if cached is None or cached['epoch'] != epoch:
+                cached = dict(epoch=epoch, signature=None, complete=0, revision=0, rows=[])
+                self._counter_window_cache[device.id] = cached
+            if cached['signature'] != signature:
+                rows = self.work.session.instrument_windows(device.id)
+                start = cached['complete']
+                cached['rows'] = cached['rows'][:start] + [window_state(row) for row in rows[start:]]
+                cached['complete'] = len(rows) - (1 if rows and not rows[-1].complete else 0)
+                cached['signature'] = signature
+                cached['revision'] += 1
+            position = [epoch, cached['complete'], cached['revision']]
+            positions[device.id] = position
+            windows[device.id] = cached['rows']
+            if not incremental:
+                continue
+            old = supplied['devices'].get(device.id)
+            valid = (isinstance(old, list) and len(old) == 3 and old[0] == epoch and type(old[0]) is type(epoch)
+                     and type(old[1]) is int and 0 <= old[1] <= cached['complete']
+                     and type(old[2]) is int and 0 <= old[2] <= cached['revision'])
+            if valid and old == position:
+                continue
+            start = old[1] if valid else 0
+            updates[device.id] = dict(start=start, windows=cached['rows'][start:])
+        next_cursor = json.dumps(dict(session=self.id, devices=positions), separators=(',', ':'))
+        if incremental:
+            return dict(window_cursor=next_cursor, counter_windows_delta=updates)
+        return dict(window_cursor=next_cursor, counter_windows=windows)
+
+    def state(self, product_cursor=None, window_cursor=None):
         w = self.work
         analysis = self.analysis[w.device.id]
         calibration = self.selected_calibration()
@@ -412,8 +457,7 @@ class WebLab:
                     instruments=instruments,
                     particle_flow=({key: flow[key] for key in ('thickness_um', 'areal_density_g_cm2') if key in flow}
                                    if flow is not None else None),
-                    counter_windows={d.id: [window_state(row) for row in w.session.instrument_windows(d.id)]
-                                     for d in w.session.experiment.devices if d.kind == 'counter'} if instrument else {},
+                    **self.counter_window_payload(window_cursor, instruments),
                     snapshots=self._snapshot_summaries,
                     imported_items=self._imported_items,
                     cached_calibrations=[dict(id=item['id'], device=item['document']['device'], title=item['title'])
@@ -936,13 +980,13 @@ class Application:
             self.lab = WebLab(e, describe(e), data.get("seed", 0), self.store, self.clock)
         return self.lab.state()
 
-    def state(self, session=None, product_cursor=None):
+    def state(self, session=None, product_cursor=None, window_cursor=None):
         if session is not None and (self.lab is None or session != self.lab.id):
             raise ValueError("会话已结束，请返回目录。")
         if self.lab is not None:
             self.lab.sync()
             self.lab.update_draft()
-            return self.lab.state(product_cursor)
+            return self.lab.state(product_cursor, window_cursor)
         return None
 
     def request(self, path, data):
@@ -967,7 +1011,7 @@ class Application:
                 self.lab = None
                 return None
             self.lab.update_draft()
-            return self.lab.state(data.get("product_cursor"))
+            return self.lab.state(data.get("product_cursor"), data.get('window_cursor'))
         self.lab.sync()
         if path == '/api/inspect_import':
             from .web_import import inspect_import
