@@ -23,6 +23,18 @@ class IndependentWebTests(unittest.TestCase):
     def call(self, action, **fields):
         return self.app.request('/api/action', dict(session=self.app.lab.id, action=action, **fields))
 
+    def test_student_apparatus_state_only_exposes_foil_dimensions(self):
+        for course in ('alpha', 'beta'):
+            with self.subTest(course=course):
+                app = Application(discover(), self.folder.name, lambda: 0)
+                app.open({'experiment': course})
+                state = app.request('/api/action', dict(session=app.lab.id, action='configure',
+                                    values={'foil_count': 2, 'source_present': 1}))
+                model = app.lab.work.session.particle_flow
+                self.assertIn('transmitted_rate_s', model)
+                self.assertEqual(state['particle_flow'], {
+                    key: model[key] for key in ('thickness_um', 'areal_density_g_cm2')})
+
     def test_idle_b_can_open_and_stop_without_closing_a(self):
         self.call('output', output='detector', enabled=True)
         self.call('start', device='a', duration=10)

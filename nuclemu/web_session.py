@@ -371,6 +371,7 @@ class WebLab:
                         except ValueError as error:
                             rows.append(dict(index=i, error=analysis_error(error)))
                 self._counter_analysis, self._counter_analysis_key = rows, key
+        flow = w.session.particle_flow
         result = dict(id=self.id, experiment=w.current, definition=self.info,
                     seed=w.seed, settings=self.settings(), time_s=self.time_s(),
                     running=instrument.running if instrument else w.session.running,
@@ -378,7 +379,8 @@ class WebLab:
                     output_enabled=dict(w.session.output_enabled),
                     instrument=asdict(instrument) if instrument else None,
                     instruments=instruments,
-                    particle_flow=w.session.particle_flow,
+                    particle_flow=({key: flow[key] for key in ('thickness_um', 'areal_density_g_cm2') if key in flow}
+                                   if flow is not None else None),
                     counter_windows={d.id: [window_state(row) for row in w.session.instrument_windows(d.id)]
                                      for d in w.session.experiment.devices if d.kind == 'counter'} if instrument else {},
                     snapshots=self._snapshot_summaries,

@@ -64,7 +64,7 @@ export interface State {
     duration_s: number | null; count_limit: number | null; window_s: number; next_window_s?: number | null} | null
   instruments: Record<string, NonNullable<State['instrument']> & {running: boolean; exposure_s: number; remaining_s: number | null}>
   counter_windows: Record<string, {number: number; start_exposure_s: number; end_exposure_s: number; counts: number[]; complete: boolean; parts: {start_s: number; end_s: number; settings: Record<string, number>}[]}[]>
-  particle_flow: {kind: string; material: string; thickness_um: number; areal_density_g_cm2: number; incident_rate_s: number; transmitted_rate_s: number; lines?: {incident_MeV: number; residual_MeV: number; incident_rate_s: number; transmitted_rate_s: number}[]} | null
+  particle_flow: {thickness_um?: number; areal_density_g_cm2?: number} | null
   calibration_context: CalibrationContext
   calibrated_devices: string[]
   draft_error?: string
