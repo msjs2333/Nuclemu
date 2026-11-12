@@ -5,10 +5,28 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from math import isfinite
 from pathlib import Path
+from uuid import UUID
 
 from .catalog import discover
 from .core import Session, _UNCHANGED
 from .results import Calibration, MeasurementView, net_count_rate, roi_centroid, save_product, snapshot_product
+
+
+def _source_namespace(source):
+    """A decoded package:item UUID retains its package's physical timeline.
+
+    Arbitrary source labels are opaque; a colon alone does not identify a
+    package/item pair. Explicit per-segment origins survive later containers.
+    """
+    if isinstance(source, str):
+        parts = source.rsplit(':', 1)
+        try:
+            if len(parts) == 2:
+                UUID(parts[1])
+            return str(UUID(parts[0]))
+        except ValueError:
+            pass
+    return source
 
 
 @dataclass
@@ -25,6 +43,7 @@ class _Lab:
     device: str
     selected: int | None = None
     background: int | None = None
+    source: str | None = None
     calibrations: dict = field(default_factory=dict)
     files: list = field(default_factory=list)
 
@@ -213,7 +232,17 @@ class Workbench:
 
     def _measurement_origin(self, index):
         origin = getattr(self.lab.view, "measurement_origin", None)
-        return self.session if origin is None else origin(index)
+        if origin is not None:
+            return origin(index)
+        return self.lab.source if self.lab.source is not None else self.session
+
+    def bind_source(self, source):
+        """Associate this lab's native timeline with its captured package ID."""
+        if not isinstance(source, str) or not source:
+            raise ValueError("Measurement source must be a nonempty identity")
+        if self.lab.source is not None and self.lab.source != source:
+            raise ValueError("The native measurement source is already bound")
+        self.lab.source = source
 
     def readout_snapshot(self, snapshot, first=0, last=None, *, calibration=None):
         """Read a whole saved spectrum, retaining every contributing condition."""
@@ -248,22 +277,39 @@ class Workbench:
             result["energy_MeV"] = calibration.energy(center) if calibration and center is not None else None
         elif self.device.kind == "counter" and self.lab.background is not None:
             background = self.product()["segments"][self.lab.background]
-            intervals = ([(row.start_s, row.end_s) for row in self.snapshot(cache=False).segments]
-                         if cumulative_acquisition is not None else [(segment["start_s"], segment["end_s"])])
+            if cumulative_acquisition is not None:
+                source = self._measurement_origin(None)
+                intervals = [(row.origin if row.origin is not None else source, row.start_s, row.end_s)
+                             for row in self.snapshot(cache=False).segments]
+            else:
+                source = segment.get("origin")
+                if source is None:
+                    source = self._measurement_origin(measurement_index)
+                intervals = [(source, segment["start_s"], segment["end_s"])]
+            reference_source = background.get("origin")
+            if reference_source is None:
+                reference_source = self._measurement_origin(self.lab.background)
             background_interval = background["start_s"], background["end_s"]
             same_observation = (background is segment
-                                and intervals == [background_interval]
-                                and list(counts) == background["readings"][self.device.id])
+                                and [(start, end) for _, start, end in intervals] == [background_interval]
+                                and list(counts) == background["readings"][self.device.id]
+                                and (cumulative_acquisition is None or all(
+                                    source is not None and _source_namespace(source) == _source_namespace(reference_source)
+                                    for source, _, _ in intervals)))
             if same_observation:
                 result["background_reference"] = True
             else:
-                source = self._measurement_origin(measurement_index)
-                reference_source = self._measurement_origin(self.lab.background)
-                if source is None or reference_source is None:
+                if reference_source is None or any(source is None for source, _, _ in intervals):
                     raise ValueError("Measurement source is unknown; independent background subtraction is unavailable")
-                if source == reference_source and any(
-                        max(start, background_interval[0]) < min(end, background_interval[1])
-                        for start, end in intervals):
+                # A plain in-memory view has no binding from its Session to
+                # a package UUID. Different labels here do not prove independence.
+                if any((source is self.session) != (reference_source is self.session)
+                       for source, _, _ in intervals):
+                    raise ValueError("Measurement source is unlinked; independent background subtraction is unavailable")
+                reference_source = _source_namespace(reference_source)
+                if any(_source_namespace(source) == reference_source
+                       and max(start, background_interval[0]) < min(end, background_interval[1])
+                       for source, start, end in intervals):
                     raise ValueError("Measurement includes the background exposure; select a nonoverlapping sample segment")
                 result["net_rate"], result["uncertainty"] = net_count_rate(
                     result["counts"], exposure, sum(background["readings"][self.device.id]),

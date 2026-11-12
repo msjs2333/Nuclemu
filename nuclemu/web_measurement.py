@@ -10,6 +10,8 @@ def inspect_measurement(lab, device, raw=None):
         raise ValueError('请在可继续采集的实验中载入测量数据。')
     if device not in lab.analysis:
         raise ValueError('请选择有效的仪器或窗。')
+    if lab.exchange.document is not None:
+        lab.work.bind_source(lab.exchange.document['id'])
     source = lab.exchange.document if raw is None else (
         load_package(raw) if raw.startswith((b'PK', b'SQLite format 3')) else load_item(raw))
     if source is None:

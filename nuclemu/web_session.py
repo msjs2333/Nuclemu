@@ -110,6 +110,11 @@ class WebLab:
         self.saved_analysis = {}
         self._decoded_items = {}
 
+    def _refresh_exchange(self, **fields):
+        document = self.exchange.refresh(self.work.session, **fields)
+        self.work.bind_source(document['id'])
+        return document
+
     def portable_download(self, selections=None):
         if self.readonly or not self.work.session.experiment.outputs:
             raise ValueError("此历史记录请使用旧库转存入口；当前可携文件用于显式保存的仪器读数。")
@@ -117,7 +122,7 @@ class WebLab:
         for device, index in getattr(self, 'portable_default_selection', {}).items():
             if analysis[device]['selected'] == index:
                 analysis[device]['selected'] = None
-        self.exchange.refresh(self.work.session, device=self.work.device.id, definition=self.info,
+        self._refresh_exchange(device=self.work.device.id, definition=self.info,
                               product=self.work.product(), analysis=analysis,
                               item_indices=getattr(self.work.lab.view, 'item_indices', None),
                               preserved_analysis=getattr(self, 'portable_preserved_analysis', None), identity_analysis=self.saved_analysis)
@@ -127,7 +132,7 @@ class WebLab:
         calibration = self.selected_calibration()
         if calibration is None:
             raise ValueError("请先应用适用的能量刻度。")
-        doc = self.exchange.refresh(self.work.session, device=self.work.device.id, definition=self.info,
+        doc = self._refresh_exchange(device=self.work.device.id, definition=self.info,
                                     product=self.work.product(), analysis=self.analysis,
                                     item_indices=getattr(self.work.lab.view, 'item_indices', None),
                                     preserved_analysis=getattr(self, 'portable_preserved_analysis', None), identity_analysis=self.saved_analysis)
@@ -142,7 +147,7 @@ class WebLab:
     def bind_saved_calibration(self, snapshot):
         calibration = (self._live_calibrations.get(snapshot.device) if snapshot.device in self._saved_calibration_devices
                        else self.work.lab.calibrations.get(snapshot.device))
-        doc = self.exchange.refresh(self.work.session, device=self.work.device.id, definition=self.info,
+        doc = self._refresh_exchange(device=self.work.device.id, definition=self.info,
                                     product=self.work.product(), analysis=self.analysis,
                                     item_indices=getattr(self.work.lab.view, 'item_indices', None),
                                     preserved_analysis=getattr(self, 'portable_preserved_analysis', None), identity_analysis=self.saved_analysis)
