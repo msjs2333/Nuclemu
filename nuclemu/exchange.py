@@ -16,6 +16,7 @@ from math import isclose, isfinite
 from pathlib import Path
 import sqlite3
 from tempfile import NamedTemporaryFile
+from threading import Lock
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4, uuid5
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
 FORMAT = "nuclemu.experiment/1"
 ITEM_FORMAT = "nuclemu.item/1"
 PACKAGE_FORMAT = "nuclemu.package/1"
+_csv_field_limit_lock = Lock()
 
 
 def _json(value):
@@ -587,6 +589,12 @@ def _load_item(source):
         metadata, body = text.split("\n", 1)
         bundle = json.loads(metadata[2:])
         product = bundle["items"][0]["document"]
+        # A long measured window can contain many condition parts in one cell.
+        # The complete input is already in memory; no field can exceed its body.
+        # csv's limit is process-wide, so concurrent Web reads only raise it.
+        with _csv_field_limit_lock:
+            if len(body) > csv.field_size_limit():
+                csv.field_size_limit(len(body))
         reader = csv.DictReader(StringIO(body))
         if "window" in (reader.fieldnames or ()):
             seen = set()
@@ -616,7 +624,7 @@ def _load_item(source):
             return _load_item((_json(bundle)+"\n").encode("utf-8"))
         segments, seen = [], set()
         groups = {}
-        for row in csv.DictReader(StringIO(body)):
+        for row in reader:
             if row["experiment"] != product["experiment"]:
                 raise ValueError("CSV experiment disagrees with its saved metadata")
             device, channel = row["device"], int(row["channel"])
