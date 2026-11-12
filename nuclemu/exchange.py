@@ -5,21 +5,28 @@ Neither saving a package nor opening one samples a model or settles a gate.
 """
 
 from contextlib import closing
+from collections.abc import Mapping
 from copy import deepcopy
+from dataclasses import dataclass, replace
 import csv
 from io import BytesIO, StringIO
 from hashlib import sha256
 import json
 from math import isclose, isfinite
 from pathlib import Path
-import re
 import sqlite3
 from tempfile import NamedTemporaryFile
+from types import MappingProxyType
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4, uuid5
 from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 from .catalog import describe
+from .download_names import calibration_label, download_prefix, measurement_label
 from .results import Calibration, configuration_document, round_document, snapshot_product, write_product
+
+if TYPE_CHECKING:
+    from .acquisition import Snapshot
 
 
 FORMAT = "nuclemu.experiment/1"
@@ -51,7 +58,7 @@ def capture_session(session, previous=None, *, definition=None, device=None, ana
     if previous is not None and doc["definition"]["id"] != session.experiment.id:
         raise ValueError("Cannot capture a different experiment into this package")
     doc.update(definition=_copy(definition if definition is not None else describe(session.experiment)),
-               seed=session.seed, configuration=configuration_document(session),
+               seed=session.seed, random_stream=session.random_stream, configuration=configuration_document(session),
                rounds=[round_document(r) for r in session.rounds],
                device=device or doc.get("device", session.experiment.devices[0].id),
                instruments={})
@@ -59,7 +66,7 @@ def capture_session(session, previous=None, *, definition=None, device=None, ana
         state = session.instrument(d.id)
         doc["instruments"][d.id] = {key: getattr(state, key) for key in (
             "running", "acquisition", "exposure_s", "remaining_s", "cycle", "count_limit",
-            "duration_s", "window_s", "stop_reason", "clearing")}
+            "duration_s", "window_s", "next_window_s", "stop_reason", "clearing")}
     if analysis is not None:
         doc["analysis"] = _copy(analysis)
     known = {item["id"] for item in doc["items"]}
@@ -128,13 +135,19 @@ def _check_product(product):
         raise ValueError("A saved measurement requires actual exposure")
     if any(type(d["channels"]) is not int or d["channels"] < 1 for d in devices.values()):
         raise ValueError("Instrument channels must be positive integers")
-    exposure = 0
+    exposure, previous_end = 0, {}
     for segment in product["segments"]:
+        if segment.get("origin") is not None and (not isinstance(segment["origin"], str) or not segment["origin"]):
+            raise ValueError("Invalid measurement origin")
         start, end = segment["start_s"], segment["end_s"]
         _number(start, "measurement start")
         _number(end, "measurement end")
         if end <= start or not segment["readings"]:
             raise ValueError("A saved measurement requires positive exposure")
+        origin = segment.get("origin")
+        if start < previous_end.get(origin, 0):
+            raise ValueError("Measurement segments overlap within one source timeline")
+        previous_end[origin] = end
         for key, counts in segment["readings"].items():
             if key not in devices or len(counts) != devices[key]["channels"]:
                 raise ValueError("Measurement channels do not match the instrument")
@@ -144,13 +157,88 @@ def _check_product(product):
     snapshot = product.get("snapshot")
     if snapshot is not None:
         device = snapshot["device"]
+        if any(type(snapshot[key]) is not int or snapshot[key] < 1 for key in ("id", "acquisition")):
+            raise ValueError("Invalid snapshot identity")
+        if snapshot.get("source") is not None and (not isinstance(snapshot["source"], str) or not snapshot["source"]):
+            raise ValueError("Invalid snapshot source identity")
         _number(snapshot["exposure_s"], "snapshot exposure", positive=True)
         _number(snapshot["time_s"], "snapshot time")
         if (set(devices) != {device}
                 or any(set(s["readings"]) != {device} for s in product["segments"])
+                or any(s["acquisition"] != snapshot["acquisition"] for s in product["segments"])
                 or not isclose(exposure, snapshot["exposure_s"], rel_tol=1e-10, abs_tol=1e-10)
-                or max(s["end_s"] for s in product["segments"]) > snapshot["time_s"]):
+                or any(s["end_s"] > snapshot["time_s"] for s in product["segments"] if s.get("origin") is None)):
             raise ValueError("Snapshot cutoff exposure does not match its saved data")
+    windows = product.get("windows", [])
+    prefix = product.get("window_prefix", {"exposure_s": 0, "counts": []})
+    _number(prefix["exposure_s"], "window prefix exposure")
+    prefix_counts = prefix["counts"]
+    if prefix["exposure_s"]:
+        if (snapshot is None or len(prefix_counts) != devices[snapshot["device"]]["channels"]
+                or any(type(c) is not int or c < 0 for c in prefix_counts)
+                or prefix["exposure_s"] > snapshot["exposure_s"]):
+            raise ValueError("Invalid unknown window prefix")
+    if windows:
+        if snapshot is None:
+            raise ValueError("Instrument windows require a snapshot")
+        end_exposure = prefix["exposure_s"]
+        totals = list(prefix_counts) if end_exposure else [0] * devices[snapshot["device"]]["channels"]
+        for number, window in enumerate(windows, 1):
+            if (window["device"] != snapshot["device"] or window["number"] != number
+                    or type(window["number"]) is not int or window["acquisition"] != snapshot["acquisition"]
+                    or type(window["complete"]) is not bool
+                    or not isclose(window["start_exposure_s"], end_exposure, abs_tol=1e-10)
+                    or (not window["complete"] and number != len(windows))):
+                raise ValueError("Invalid instrument window sequence")
+            end_exposure = window["end_exposure_s"]
+            part_product = dict(product, segments=window["parts"])
+            part_product.pop("windows", None)
+            part_product.pop("window_prefix", None)
+            part_product["snapshot"] = dict(snapshot, exposure_s=end_exposure-window["start_exposure_s"])
+            _check_product(part_product)
+            counts = [sum(p["readings"][snapshot["device"]][i] for p in window["parts"])
+                      for i in range(len(totals))]
+            if counts != window["counts"]:
+                raise ValueError("Window totals disagree with measured parts")
+            totals = [a+b for a,b in zip(totals, counts)]
+        expected = [sum(p["readings"][snapshot["device"]][i] for p in product["segments"])
+                    for i in range(len(totals))]
+        if totals != expected or not isclose(end_exposure, snapshot["exposure_s"], abs_tol=1e-10):
+            raise ValueError("Instrument windows disagree with saved measurement")
+        remaining, suffix = prefix["exposure_s"], []
+        prefix_total = [0] * len(totals)
+        for segment in product["segments"]:
+            if remaining > 1e-10:
+                remaining -= segment["end_s"]-segment["start_s"]
+                prefix_total = [a+b for a,b in zip(prefix_total, segment["readings"][snapshot["device"]])]
+            else:
+                suffix.append(segment)
+        if (abs(remaining) > 1e-10 or (prefix["exposure_s"] and prefix_total != prefix_counts)
+                or _coalesce([p for w in windows for p in w["parts"]]) != _coalesce(suffix)):
+            raise ValueError("Window conditions disagree with saved measurement")
+    elif prefix["exposure_s"] and (not isclose(prefix["exposure_s"], snapshot["exposure_s"], abs_tol=1e-10)
+            or prefix_counts != [sum(s["readings"][snapshot["device"]][i] for s in product["segments"])
+                                 for i in range(len(prefix_counts))]):
+        raise ValueError("Unknown window prefix disagrees with saved measurement")
+
+
+def _coalesce(rows):
+    """Compare the two saved views without merging different source timelines."""
+    merged = []
+    for row in rows:
+        row = _copy(row)
+        if row.get("origin") is None:
+            row.pop("origin", None)
+        previous = merged[-1] if merged else None
+        if (previous is not None and previous["end_s"] == row["start_s"]
+                and all(previous.get(k) == row.get(k) for k in ("settings", "acquisition", "origin"))
+                and previous["readings"].keys() == row["readings"].keys()):
+            previous["end_s"] = row["end_s"]
+            for key, values in row["readings"].items():
+                previous["readings"][key] = [a+b for a,b in zip(previous["readings"][key], values)]
+        else:
+            merged.append(row)
+    return merged
 
 
 def validate_document(doc):
@@ -312,14 +400,82 @@ def load_package(source):
     return doc
 
 
+def _snapshot(product):
+    from .acquisition import InstrumentWindow, Snapshot
+    from .core import Measurement
+
+    def parts(rows):
+        return tuple(Measurement(s["start_s"], s["end_s"], MappingProxyType(dict(s["settings"])),
+            MappingProxyType({key: tuple(counts) for key, counts in s["readings"].items()}), s["acquisition"], s.get("origin"))
+            for s in rows)
+    metadata = product["snapshot"]
+    device = metadata["device"]
+    segments = parts(product["segments"])
+    counts = tuple(sum(s.readings[device][i] for s in segments)
+                   for i in range(product["devices"][device]["channels"]))
+    windows = tuple(InstrumentWindow(w["device"], w["number"], w["acquisition"],
+        w["start_exposure_s"], w["end_exposure_s"], tuple(w["counts"]), parts(w["parts"]), w["complete"], w.get("window_s"))
+        for w in product.get("windows", ()))
+    prefix = product.get("window_prefix", {"exposure_s": 0, "counts": []})
+    return Snapshot(metadata["id"], device, metadata["acquisition"], metadata["time_s"],
+                    metadata["exposure_s"], counts, segments, windows, metadata.get("source"),
+                    prefix["exposure_s"], tuple(prefix["counts"]))
+
+
+@dataclass(frozen=True)
+class DecodedMeasurement:
+    snapshot: "Snapshot"
+    calibration: Calibration | None
+    source: Mapping[str, str]
+    item_id: str
+    title: str
+
+
+def decode_measurement(source, experiment, device, item_id=None):
+    """Validate a saved measurement for loading, without changing a live session."""
+    if not isinstance(source, dict):
+        raw = source if isinstance(source, bytes) else Path(source).read_bytes()
+        source = load_package(raw) if raw.startswith((b"PK", b"SQLite format 3")) else load_item(raw)
+    if source.get("format") == FORMAT:
+        validate_document(source)
+        bundle = source
+    elif source.get("format") == ITEM_FORMAT:
+        bundle = load_item((_json(source)+"\n").encode("utf-8"))
+    else:
+        raise ValueError("Expected a portable experiment or saved item")
+    candidates = [i for i in bundle["items"] if i["kind"] == "measurement"]
+    if item_id is None:
+        if len(candidates) != 1:
+            raise ValueError("Select one measurement item explicitly")
+        item = candidates[0]
+    else:
+        item = next((i for i in candidates if i["id"] == item_id), None)
+        if item is None:
+            raise ValueError("Selected measurement is not in the source")
+    bound = next((d for d in experiment.devices if d.id == device), None)
+    product = item["document"]
+    saved = product["devices"].get(device)
+    archived = next((d for d in bundle["definition"]["devices"] if d["id"] == device), None)
+    if (product["experiment"] != experiment.id or bound is None or saved is None
+            or product["snapshot"]["device"] != device or archived is None
+            or (saved["kind"], saved["channels"], archived.get("input")) !=
+               (bound.kind, bound.channels, bound.input)):
+        raise ValueError("Measurement does not match the target experiment and instrument")
+    cal = (Calibration.from_document(_item(bundle, item["calibration_id"])["document"])
+           if item.get("calibration_id") else None)
+    snapshot = replace(_snapshot(product), source=f"{item['source']['package']}:{item['source']['item']}")
+    return DecodedMeasurement(snapshot, cal, MappingProxyType(dict(item["source"])),
+                              item["id"], item["title"])
+
+
 def reopen_session(doc, experiment, *, seed=None):
     """Create a fresh idle live session with archived metadata and saved snapshots.
 
-    No RNG state or unsaved readings are restored. Legacy definitions remain
+    A new derived random stream starts; unsaved readings are not restored. Legacy definitions remain
     readable, but must be imported as references into a new compatible course.
     """
-    from .acquisition import ConfigurationChange, RoundInfo, SettingChange, Snapshot, TargetChange
-    from .core import Measurement, Session
+    from .acquisition import ConfigurationChange, RoundInfo, SettingChange, TargetChange, WindowChange
+    from .core import Session
 
     validate_document(doc)
     if doc.get("legacy") or experiment.id != doc["definition"]["id"]:
@@ -336,6 +492,7 @@ def reopen_session(doc, experiment, *, seed=None):
         for key in ("changes", "output_changes"):
             values[key] = tuple(SettingChange(**v) for v in row.get(key, ()))
         values["target_changes"] = tuple(TargetChange(**v) for v in row.get("target_changes", ()))
+        values["window_changes"] = tuple(WindowChange(**v) for v in row.get("window_changes", ()))
         rounds.append(RoundInfo(**values))
     snapshots = []
     for item in doc["items"]:
@@ -343,22 +500,16 @@ def reopen_session(doc, experiment, *, seed=None):
                 or item["source"]["item"] != item["id"]):
             continue
         product = item["document"]
-        metadata = product["snapshot"]
-        segments = tuple(Measurement(s["start_s"], s["end_s"], s["settings"],
-            {key: tuple(counts) for key, counts in s["readings"].items()}, s["acquisition"])
-            for s in product["segments"])
-        device = metadata["device"]
-        counts = tuple(sum(s.readings[device][i] for s in segments)
-                       for i in range(product["devices"][device]["channels"]))
-        snapshots.append(Snapshot(metadata["id"], device, metadata["acquisition"],
-                                  metadata["time_s"], metadata["exposure_s"], counts, segments))
+        snapshots.append(_snapshot(product))
     configuration = doc["configuration"]
     history = tuple(ConfigurationChange(**change) for change in configuration.get("history", ()))
     return Session.reopen(experiment, doc["seed"] if seed is None else seed,
                           settings=configuration["settings"], time_s=configuration["time_s"],
                           rounds=rounds, snapshots=snapshots, configuration_history=history,
-                          acquisition_settings={key: {field: value[field] for field in
-                              ("duration_s", "count_limit", "window_s")}
+                          random_stream=doc.get("random_stream"),
+                          acquisition_settings={key: dict(duration_s=value["duration_s"],
+                              count_limit=value["count_limit"],
+                              window_s=value.get("next_window_s") if value.get("next_window_s") is not None else value["window_s"])
                               for key, value in doc.get("instruments", {}).items()})
 
 
@@ -386,13 +537,38 @@ def export_item(doc, identity, format="json"):
     if format != "csv" or bundle["items"][0]["kind"] != "measurement":
         raise ValueError("Measurements support CSV/JSON; calibrations support JSON")
     product = bundle["items"][0]["document"]
+    if product.get("windows"):
+        header = deepcopy(bundle)
+        for window in header["items"][0]["document"]["windows"]:
+            del window["counts"], window["parts"]
+        output = StringIO(newline="")
+        output.write("# " + _json(header) + "\n")
+        writer = csv.writer(output)
+        writer.writerow(("experiment", "device", "window", "channel", "counts", "exposure_s", "parts"))
+        for window in product["windows"]:
+            for channel, count in enumerate(window["counts"]):
+                writer.writerow((product["experiment"], window["device"], window["number"], channel,
+                    count, window["end_exposure_s"]-window["start_exposure_s"],
+                    _json(window["parts"]) if channel == 0 else ""))
+        return output.getvalue().encode("utf-8")
     header = deepcopy(bundle)
     del header["items"][0]["document"]["segments"]
     output = StringIO(newline="")
     output.write("# " + _json(header) + "\n")
     calibration = (Calibration.from_document(bundle["items"][1]["document"])
                    if len(bundle["items"]) == 2 else None)
-    write_product(output, "csv", product, calibration=calibration)
+    body = StringIO(newline="")
+    write_product(body, "csv", product, calibration=calibration)
+    if any(s.get("origin") is not None for s in product["segments"]):
+        rows = csv.DictReader(StringIO(body.getvalue()))
+        writer = csv.DictWriter(output, fieldnames=[*rows.fieldnames, "origin"])
+        writer.writeheader()
+        origins = (s.get("origin", "") for s in product["segments"]
+                   for counts in s["readings"].values() for _ in counts)
+        for row, origin in zip(rows, origins):
+            writer.writerow(dict(row, origin=origin))
+    else:
+        output.write(body.getvalue())
     return output.getvalue().encode("utf-8")
 
 
@@ -411,19 +587,48 @@ def _load_item(source):
         metadata, body = text.split("\n", 1)
         bundle = json.loads(metadata[2:])
         product = bundle["items"][0]["document"]
+        reader = csv.DictReader(StringIO(body))
+        if "window" in (reader.fieldnames or ()):
+            seen = set()
+            windows = product["windows"]
+            for window in windows:
+                window["counts"] = [None] * product["devices"][window["device"]]["channels"]
+            for row in reader:
+                number, channel = int(row["window"]), int(row["channel"])
+                if not 1 <= number <= len(windows):
+                    raise ValueError("CSV has an invalid window")
+                window = windows[number-1]
+                if row["experiment"] != product["experiment"]:
+                    raise ValueError("CSV experiment disagrees with its saved metadata")
+                if (row["device"] != window["device"]
+                        or not 0 <= channel < len(window["counts"]) or (number, channel) in seen
+                        or not isclose(float(row["exposure_s"]),
+                            window["end_exposure_s"]-window["start_exposure_s"], abs_tol=1e-10)):
+                    raise ValueError("CSV window disagrees with its metadata")
+                seen.add((number, channel))
+                window["counts"][channel] = int(row["counts"])
+                if channel == 0:
+                    window["parts"] = json.loads(row["parts"])
+                elif row["parts"]:
+                    raise ValueError("CSV window parts must occur once")
+            if any(any(c is None for c in w["counts"]) for w in windows):
+                raise ValueError("CSV does not contain every window channel")
+            return _load_item((_json(bundle)+"\n").encode("utf-8"))
         segments, seen = [], set()
         groups = {}
         for row in csv.DictReader(StringIO(body)):
             if row["experiment"] != product["experiment"]:
                 raise ValueError("CSV experiment disagrees with its saved metadata")
             device, channel = row["device"], int(row["channel"])
-            key = (device, float(row["start_s"]), float(row["end_s"]), row["settings"], int(row["acquisition"]))
+            key = (device, float(row["start_s"]), float(row["end_s"]), row["settings"], int(row["acquisition"]), row.get("origin") or None)
             counts = groups.get(key)
             if counts is None:
                 counts = [None] * product["devices"][device]["channels"]
                 groups[key] = counts
                 segments.append(dict(start_s=key[1], end_s=key[2], settings=json.loads(key[3]),
                                      acquisition=key[4], readings={device: counts}))
+                if key[5] is not None:
+                    segments[-1]["origin"] = key[5]
             if not 0 <= channel < len(counts) or (key, channel) in seen:
                 raise ValueError("CSV has duplicate or invalid instrument channels")
             if not isclose(float(row["exposure_s"]), key[2] - key[1], rel_tol=1e-10):
@@ -485,26 +690,28 @@ def batch_download(doc, selections):
     """Return (filename, MIME type, bytes), sharing one selection contract with Web."""
     if not selections:
         raise ValueError("Select saved items to download")
+    prefix = download_prefix(doc["definition"])
     files = []
     for choice in selections:
         identity, format = choice["id"], choice["format"]
         item = _item(doc, identity)
-        stem = re.sub(r"[^\w.-]+", "_", item["title"]).strip(".") or "measurement"
-        files.append((f"{stem}-{identity[:8]}.{format}", export_item(doc, identity, format)))
+        device = item["document"].get("snapshot", {}).get("device", item["document"].get("device", "instrument"))
+        label = (calibration_label(doc["definition"], device) if item["kind"] == "calibration"
+                 else measurement_label(doc["definition"], device))
+        files.append((f"{prefix}_{label}.{format}", export_item(doc, identity, format)))
     if len(files) == 1:
         name, data = files[0]
         return name, "text/csv; charset=utf-8" if name.endswith(".csv") else "application/json", data
     output = BytesIO()
     with ZipFile(output, "w") as archive:
         for index, (name, data) in enumerate(files, 1):
-            archive.writestr(f"{index}-{name}", data)
-    return "nuclemu-saved-items.zip", "application/zip", output.getvalue()
+            archive.writestr(f"{prefix}_{index:03d}_{name[len(prefix)+1:]}", data)
+    return f"{prefix}_records.zip", "application/zip", output.getvalue()
 
 
 def package_download(doc):
     """Return the full experiment download, independent of checkbox selections."""
-    stem = re.sub(r"[^\w.-]+", "_", doc["definition"]["id"]).strip(".") or "experiment"
-    return f"nuclemu-{stem}-experiment.nuclemu", "application/zip", package_bytes(doc)
+    return f"{download_prefix(doc['definition'])}.nuclemu", "application/zip", package_bytes(doc)
 
 
 def save_item(path, doc, identity, format=None):

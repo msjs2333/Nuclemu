@@ -66,13 +66,17 @@ def parser():
             exposure.add_argument("--step", action="append", metavar="SECONDS[,KEY=VALUE,...]",
                                   help="timed gate; settings persist into later steps (repeatable)")
             command.add_argument("--seed", type=int, default=0)
+            command.add_argument("--change", action="append", default=[], metavar="SECONDS,KEY=VALUE,...",
+                                 help="change settings within one --duration round, without closing gates")
+            command.add_argument("--window", action="append", default=[], metavar="DEVICE=SECONDS",
+                                 help="instrument window length (repeatable)")
             command.add_argument("--device", metavar="KIND:ID", help="select one device by id, unique kind, or kind:id")
             command.add_argument("--enable-output", action="append", default=[], metavar="ID",
                                  help="enable a declared detector output before acquisition (repeatable)")
             command.add_argument("--roi", metavar="FIRST:LAST", help="inclusive spectrum channels")
             command.add_argument("--calibration", metavar="FILE", help="load a two-point energy calibration")
-            command.add_argument("--background", type=int, metavar="SEGMENT",
-                                 help="1-based background segment for counter net rates")
+            command.add_argument("--background", type=int, metavar="STEP",
+                                 help="1-based independent measurement step for counter net rates")
             command.add_argument("--output", action="append", default=[], metavar="FILE",
                                  help="export the measured product to .csv or .json (repeatable)")
             command.add_argument("--package", metavar="FILE", help="save completed steps as a portable .nuclemu experiment")
@@ -168,13 +172,28 @@ def _run(args, experiment):
     if args.background is not None and experiment.outputs and len(devices) > 1:
         raise ValueError("Select one instrument with --device when using --background")
     steps = [_step(step) for step in args.step] if args.step else [_step(str(args.duration))]
+    changes = [_step(change) for change in args.change]
+    if changes and (args.step or args.background is not None):
+        raise ValueError("--change requires one --duration round without --background")
+    if any(not settings or time >= steps[0][0] for time, settings in changes):
+        raise ValueError("Each change requires settings and a time strictly inside the duration")
+    if len({time for time, _ in changes}) != len(changes):
+        raise ValueError("Combine settings at the same change time into one --change")
+    changes.sort(key=lambda change: change[0])
     if args.background is not None and not 1 <= args.background <= len(steps):
         raise ValueError("Background segment is outside the acquisition plan")
     session = Session(experiment, seed=args.seed)
     session.configure(dict(_assignment(setting) for setting in args.set))
     for output in args.enable_output:
         session.set_output(output, True)
+    for setting in args.window:
+        selector, seconds = _assignment(setting)
+        instrument = _device(experiment, selector)
+        if instrument not in devices:
+            raise ValueError("Window requires an instrument in the acquisition plan")
+        session.configure_acquisition(instrument.id, window_s=seconds)
     view = MeasurementView(session)
+    saved_steps = []
     for index, (duration, settings) in enumerate(steps):
         if index and experiment.outputs:
             session.clear(device=selected.id if selected else None)
@@ -183,10 +202,14 @@ def _run(args, experiment):
             session.start(duration, device=selected.id if selected else None)
         else:
             session.start(duration)
-        session.advance(duration)
+        elapsed = 0
+        for time, values in changes:
+            session.advance(time-elapsed)
+            session.configure(dict(values))
+            elapsed = time
+        session.advance(duration-elapsed)
         if args.package:
-            for instrument in devices:
-                session.snapshot(instrument.id)
+            saved_steps.append({instrument.id: session.snapshot(instrument.id).id for instrument in devices})
     product = view.product()
     if selected:
         product = dict(product, segments=[s for s in product["segments"] if selected.id in s["readings"]])
@@ -221,6 +244,16 @@ def _run(args, experiment):
     if args.package:
         from .exchange import bind_calibration, cache_calibration, capture_session, save_package
         document = capture_session(session, device=selected.id if selected else None)
+        if args.background is not None:
+            counter = next(d for d in devices if d.kind == "counter")
+            item_ids = {(item["document"]["snapshot"]["device"], item["document"]["snapshot"]["id"]): item["id"]
+                        for item in document["items"] if item["kind"] == "measurement"}
+            background_step = args.background - 1
+            sample_step = next((i for i in reversed(range(len(steps))) if i != background_step), background_step)
+            document["analysis"][counter.id] = dict(
+                background=item_ids[counter.id, saved_steps[background_step][counter.id]],
+                selected=item_ids[counter.id, saved_steps[sample_step][counter.id]], reference=None,
+                roi=[0, counter.channels - 1], energy_axis=False, rate_axis=False)
         if calibration:
             identity = cache_calibration(document, calibration)
             for item in document["items"]:

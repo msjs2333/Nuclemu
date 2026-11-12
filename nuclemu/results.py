@@ -137,11 +137,14 @@ def _add_windows(segments, records, tails=None):
         key = tuple(row.readings)
         previous = tails.get(key)
         if (previous is None or row.acquisition != previous["acquisition"]
+                or row.origin != previous.get("origin")
                 or row.settings != previous["settings"] or row.start_s != previous["end_s"]):
             segments.append({"acquisition": row.acquisition, "start_s": row.start_s,
                              "end_s": row.end_s, "settings": dict(row.settings),
                              "readings": {key: list(values) for key, values in row.readings.items()}})
             tails[key] = segments[-1]
+            if row.origin is not None:
+                segments[-1]["origin"] = row.origin
             touched.append(segments[-1])
         else:
             segment = previous
@@ -174,6 +177,19 @@ def snapshot_product(experiment, snapshot, seed):
     product["snapshot"] = {"id": snapshot.id, "device": snapshot.device,
                            "acquisition": snapshot.acquisition,
                            "time_s": snapshot.time_s, "exposure_s": snapshot.exposure_s}
+    if snapshot.source is not None:
+        product["snapshot"]["source"] = snapshot.source
+    if snapshot.window_prefix_exposure_s:
+        product["window_prefix"] = dict(exposure_s=snapshot.window_prefix_exposure_s,
+                                         counts=list(snapshot.window_prefix_counts))
+    product["windows"] = [dict(device=w.device, number=w.number, acquisition=w.acquisition,
+                               start_exposure_s=w.start_exposure_s, end_exposure_s=w.end_exposure_s,
+                               counts=list(w.counts), complete=w.complete,
+                               window_s=w.window_s,
+                               parts=[dict(start_s=p.start_s, end_s=p.end_s, settings=dict(p.settings),
+                                           readings={k:list(v) for k,v in p.readings.items()}, acquisition=p.acquisition,
+                                           **({"origin": p.origin} if p.origin is not None else {}))
+                                      for p in w.parts]) for w in snapshot.windows]
     return product
 
 
@@ -184,6 +200,11 @@ def round_document(info):
     return dict(device=info.device, acquisition=info.acquisition, start_s=info.start_s,
                 end_s=info.end_s, exposure_s=info.exposure_s, status=info.status,
                 initial_settings=dict(info.initial_settings), changes=changes(info.changes),
+                random_stream=None if info.random_stream is None else dict(info.random_stream),
+                loaded_exposure_s=info.loaded_exposure_s, loaded_source=info.loaded_source,
+                initial_window_s=info.initial_window_s,
+                window_changes=[dict(time_s=c.time_s, exposure_s=c.exposure_s, window_s=c.window_s,
+                                     effective_exposure_s=c.effective_exposure_s) for c in info.window_changes],
                 duration_s=info.duration_s, count_limit=info.count_limit, window_s=info.window_s,
                 initial_outputs=dict(info.initial_outputs), output_changes=changes(info.output_changes),
                 initial_duration_s=info.initial_duration_s, initial_count_limit=info.initial_count_limit,

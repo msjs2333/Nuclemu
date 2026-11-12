@@ -16,7 +16,7 @@ from .results import Calibration, _add_windows, write_product
 from .web_download import make_download
 from .web_store import ArchiveStore
 from .web_exchange import WebExchange
-from .exchange import cache_calibration, bind_calibration, load_item
+from .exchange import cache_calibration, bind_calibration, load_item, decode_measurement
 
 
 def analysis_error(error):
@@ -26,6 +26,16 @@ def analysis_error(error):
     if 'Measurement source is unknown' in message:
         return '记录来源不明确，暂不能按独立测量扣除本底。'
     return message
+
+
+def window_state(row):
+    """Serialize immutable settings without copying their mapping proxies."""
+    return dict(device=row.device, number=row.number, acquisition=row.acquisition,
+                start_exposure_s=row.start_exposure_s, end_exposure_s=row.end_exposure_s,
+                counts=list(row.counts), complete=row.complete,
+                parts=[dict(start_s=part.start_s, end_s=part.end_s,
+                            settings=dict(part.settings), readings={k: list(v) for k, v in part.readings.items()})
+                       for part in row.parts])
 
 
 class ArchivedView:
@@ -96,6 +106,9 @@ class WebLab:
         self._imported_items = []
         self._live_calibrations = {}
         self._saved_calibration_devices = set()
+        self.saved_selection = {}
+        self.saved_analysis = {}
+        self._decoded_items = {}
 
     def portable_download(self, selections=None):
         if self.readonly or not self.work.session.experiment.outputs:
@@ -107,32 +120,34 @@ class WebLab:
         self.exchange.refresh(self.work.session, device=self.work.device.id, definition=self.info,
                               product=self.work.product(), analysis=analysis,
                               item_indices=getattr(self.work.lab.view, 'item_indices', None),
-                              preserved_analysis=getattr(self, 'portable_preserved_analysis', None))
+                              preserved_analysis=getattr(self, 'portable_preserved_analysis', None), identity_analysis=self.saved_analysis)
         return self.exchange.download_package() if selections is None else self.exchange.download_selected(selections)
 
     def cache_calibration(self):
-        calibration = self.work.active_calibration()
+        calibration = self.selected_calibration()
         if calibration is None:
             raise ValueError("请先应用适用的能量刻度。")
         doc = self.exchange.refresh(self.work.session, device=self.work.device.id, definition=self.info,
                                     product=self.work.product(), analysis=self.analysis,
                                     item_indices=getattr(self.work.lab.view, 'item_indices', None),
-                                    preserved_analysis=getattr(self, 'portable_preserved_analysis', None))
+                                    preserved_analysis=getattr(self, 'portable_preserved_analysis', None), identity_analysis=self.saved_analysis)
         identity = cache_calibration(doc, calibration)
         for item in doc['items']:
             if (item['kind'] == 'measurement' and not item.get('calibration_id') and calibration.device in item['document']['devices']
                     and all(calibration.applies_to(s['settings']) for s in item['document']['segments'])):
                 bind_calibration(doc, item['id'], identity)
         self.exchange.document = doc
+        self._decoded_items.clear()
 
     def bind_saved_calibration(self, snapshot):
-        calibration = self.work.active_calibration()
-        if calibration is None or self.exchange.document is None:
-            return
+        calibration = (self._live_calibrations.get(snapshot.device) if snapshot.device in self._saved_calibration_devices
+                       else self.work.lab.calibrations.get(snapshot.device))
         doc = self.exchange.refresh(self.work.session, device=self.work.device.id, definition=self.info,
                                     product=self.work.product(), analysis=self.analysis,
                                     item_indices=getattr(self.work.lab.view, 'item_indices', None),
-                                    preserved_analysis=getattr(self, 'portable_preserved_analysis', None))
+                                    preserved_analysis=getattr(self, 'portable_preserved_analysis', None), identity_analysis=self.saved_analysis)
+        if calibration is None or not all(calibration.applies_to(row.settings) for row in snapshot.segments):
+            return
         saved = next((item for item in reversed(doc['items']) if item['kind'] == 'calibration'
                       and item['document'] == calibration.document()), None)
         if saved:
@@ -142,6 +157,7 @@ class WebLab:
                         and item['source']['package'] == doc['id'] and item['source']['item'] == item['id']):
                     bind_calibration(doc, item['id'], saved['id'])
             self.exchange.document = doc
+            self._decoded_items.clear()
 
     def changed_start(self, old_count, old_length):
         """Use the shared view's cursor index for sparse, independently growing tails."""
@@ -281,11 +297,16 @@ class WebLab:
 
     def calibration_context(self):
         w = self.work
+        identity = self.saved_selection.get(w.device.id, {}).get('selected')
+        if identity:
+            saved = self.saved_measurement(identity).snapshot
+            return dict(device=w.device.id, selected=None, record_id=identity,
+                        settings={key: saved.segments[0].settings[key] for key in w.device.calibration_parameters})
         segments = w.product()["segments"]
         selected = w.lab.selected if w.lab.selected is not None else next(
             (i for i in range(len(segments) - 1, -1, -1) if w.device.id in segments[i]["readings"]), None)
         settings = w.spectrum_settings()
-        return dict(device=w.device.id, selected=selected,
+        return dict(device=w.device.id, selected=selected, record_id=None,
                     settings={key: settings[key] for key in w.device.calibration_parameters})
 
     def check_confirmation(self, data):
@@ -301,9 +322,12 @@ class WebLab:
     def state(self, product_cursor=None):
         w = self.work
         analysis = self.analysis[w.device.id]
-        calibration = w.active_calibration()
+        calibration = self.selected_calibration()
         pending = self.unsaved()
         instrument = w.session.instrument(w.device.id) if w.session.experiment.outputs and not self.readonly else None
+        instruments = {d.id: asdict(w.session.instrument(d.id)) for d in w.session.experiment.devices} if instrument else {}
+        pending_clear = next(((d.id, w.session.pending_clear(d.id)) for d in w.session.experiment.devices
+                              if w.session.pending_clear(d.id) is not None), None) if instrument else None
         snapshots = w.session.snapshots
         for item in snapshots[len(self._snapshot_summaries):]:
             device = next(d for d in w.session.experiment.devices if d.id == item.device)
@@ -313,16 +337,27 @@ class WebLab:
                 settings=[dict(s.settings) for i, s in enumerate(item.segments) if i == 0 or s.settings != item.segments[i-1].settings],
                 background_eligible=all(all(s.settings.get(k) == v for k, v in conditions.items()) for s in item.segments)))
         package = self.exchange.document
+        native_items = {item['document']['snapshot']['id']: item for item in (package or {}).get('items', ())
+                        if item['kind'] == 'measurement' and item['source']['package'] == package['id']
+                        and item['source']['item'] == item['id']}
+        for row in self._snapshot_summaries:
+            item = native_items.get(row['id'])
+            if item is not None:
+                row['item_id'] = item['id']
+                row['calibration_id'] = item.get('calibration_id')
         if package:
             for item in package['items'][self._imported_count:]:
                 if item['kind'] == 'measurement' and (item['source']['package'] != package['id'] or item['source']['item'] != item['id']):
                     metadata = item['document']['snapshot']
                     self._imported_items.append(dict(id=item['id'], device=metadata['device'], title=item['title'],
-                        acquisition=metadata['acquisition'], exposure_s=metadata['exposure_s'], source=item['source']))
+                        acquisition=metadata['acquisition'], exposure_s=metadata['exposure_s'], source=item['source'],
+                        settings=[s['settings'] for s in item['document']['segments']], calibration_id=item.get('calibration_id')))
             self._imported_count = len(package['items'])
         readout_error = None
         try:
-            readout = w.readout(*analysis["roi"])
+            selected_id = self.saved_selection.get(w.device.id, {}).get('selected')
+            readout = (w.readout_snapshot(self.saved_measurement(selected_id).snapshot, *analysis['roi'], calibration=calibration)
+                       if selected_id else w.readout(*analysis["roi"]))
         except ValueError as error:
             readout, readout_error = None, analysis_error(error)
         if w.device.kind == "counter":
@@ -342,21 +377,31 @@ class WebLab:
                     any_running=w.session.running, clock_running=w.session.clock_running,
                     output_enabled=dict(w.session.output_enabled),
                     instrument=asdict(instrument) if instrument else None,
+                    instruments=instruments,
+                    particle_flow=w.session.particle_flow,
+                    counter_windows={d.id: [window_state(row) for row in w.session.instrument_windows(d.id)]
+                                     for d in w.session.experiment.devices if d.kind == 'counter'} if instrument else {},
                     snapshots=self._snapshot_summaries,
                     imported_items=self._imported_items,
                     cached_calibrations=[dict(id=item['id'], device=item['document']['device'], title=item['title'])
                                          for item in (self.exchange.document or {}).get('items', ()) if item['kind'] == 'calibration'],
                     gates={d.id: (w.session.instrument(d.id).running if w.session.experiment.outputs else w.session.running)
                            for d in w.session.experiment.devices},
-                    clear_confirmation=(dict(token=self._clear_requests[w.device.id].token,
-                        exposure_s=self._clear_requests[w.device.id].snapshot.exposure_s)
-                        if w.device.id in self._clear_requests else None),
+                    clear_confirmation=(dict(device=pending_clear[0], token=pending_clear[1].token,
+                        exposure_s=pending_clear[1].snapshot.exposure_s if pending_clear[1].snapshot else 0)
+                        if pending_clear else None),
                     exposure_s=instrument.exposure_s if instrument else None,
                     paused=w.paused, frozen=self.frozen,
                     active_acquisition=(instrument.acquisition if instrument.running else None) if instrument else w.session.active_acquisition,
                     confirmation_id=self.confirmation_id,
                     speed=w.speed, remaining_s=instrument.remaining_s if instrument else w.session.remaining_s, device=w.device.id,
                     selected=w.lab.selected, analysis=analysis,
+                    selected_item_id=self.saved_selection.get(w.device.id, {}).get('selected'),
+                    reference_item_id=self.saved_selection.get(w.device.id, {}).get('reference'),
+                    selected_observation=self.saved_observation('selected'), reference_observation=self.saved_observation('reference'),
+                    saved_measurements=[dict(id=item['id'], device=item['document']['snapshot']['device'], title=item['title'],
+                        exposure_s=item['document']['snapshot']['exposure_s'], settings=[s['settings'] for s in item['document']['segments']],
+                        calibration_id=item.get('calibration_id')) for item in (package or {}).get('items', ()) if item['kind'] == 'measurement'],
                     spectrum_settings=dict(w.spectrum_settings()),
                     calibration=asdict(calibration) if calibration else None,
                     reference_calibration=(asdict(self.reference_calibration()) if self.reference_calibration() else None),
@@ -434,7 +479,46 @@ class WebLab:
         saved = next((entry for entry in items if item and entry['id'] == item.get('calibration_id')), None)
         return item, Calibration.from_document(saved['document']) if saved else None
 
+    def saved_measurement(self, identity, device=None):
+        if identity not in self._decoded_items:
+            self._decoded_items[identity] = decode_measurement(self.exchange.document, self.work.session.experiment,
+                                                              device or self.work.device.id, identity)
+        decoded = self._decoded_items[identity]
+        if decoded.snapshot.device != (device or self.work.device.id):
+            raise ValueError('所选记录不属于当前仪器。')
+        return decoded
+
+    def selected_calibration(self):
+        identity = self.saved_selection.get(self.work.device.id, {}).get('selected')
+        if not identity:
+            return self.work.active_calibration()
+        calibration = self.work.lab.calibrations.get(self.work.device.id)
+        return calibration if calibration and all(calibration.applies_to(row.settings)
+            for row in self.saved_measurement(identity).snapshot.segments) else None
+
+    def saved_observation(self, key):
+        identity = self.saved_selection.get(self.work.device.id, {}).get(key)
+        if identity is None:
+            return None
+        decoded = self.saved_measurement(identity)
+        item = next(item for item in self.exchange.document['items'] if item['id'] == identity)
+        return dict(id=identity, device=decoded.snapshot.device, title=decoded.title,
+                    counts=decoded.snapshot.counts, exposure_s=decoded.snapshot.exposure_s,
+                    segments=item['document']['segments'], calibration_id=item.get('calibration_id'))
+
+    def select_saved_item(self, key, identity):
+        if identity is not None:
+            self.saved_measurement(identity)
+        self.clear_portable_reference(self.work.device.id, key)
+        if identity is not None:
+            self.saved_selection.setdefault(self.work.device.id, {})[key] = identity
+            self.saved_analysis.setdefault(self.work.device.id, {})[key] = identity
+        self.edits += 1
+
     def reference_calibration(self):
+        identity = self.saved_selection.get(self.work.device.id, {}).get('reference')
+        if identity:
+            return self.saved_measurement(identity).calibration
         index = self.analysis[self.work.device.id]['reference']
         if index is None:
             return None
@@ -446,7 +530,11 @@ class WebLab:
 
     def select_saved_calibration(self):
         device = self.work.device.id
-        item, calibration = self.saved_item_calibration(self.work.lab.selected)
+        identity = self.saved_selection.get(device, {}).get('selected')
+        if identity:
+            item, calibration = True, self.saved_measurement(identity).calibration
+        else:
+            item, calibration = self.saved_item_calibration(self.work.lab.selected)
         if item is not None:
             if device not in self._saved_calibration_devices:
                 self._live_calibrations[device] = self.work.lab.calibrations.get(device)
@@ -476,6 +564,12 @@ class WebLab:
             raise ValueError("所用设备已改变，请重新查看仪器后操作。")
         if "device" not in data and len(w.session.experiment.devices) > 1:
             raise ValueError("请明确所用设备后重新操作。")
+
+    def instrument_group(self, component):
+        part = next((part for part in self.work.session.experiment.components if part.id == component), None)
+        if part is None or part.kind != 'instrument' or not part.devices:
+            raise ValueError('请选择包含多个窗的仪器。')
+        return part.devices
 
     def change_analysis(self, data):
         self._check_device_target(data)
@@ -514,10 +608,25 @@ class WebLab:
         """An explicit choice replaces an unresolved UUID, including choosing none."""
         getattr(self, 'portable_preserved_analysis', {}).get(device, {}).pop(key, None)
         getattr(self, 'portable_unresolved', {}).get(device, {}).pop(key, None)
+        self.saved_selection.get(device, {}).pop(key, None)
+        self.saved_analysis.get(device, {}).pop(key, None)
 
     def act(self, data):
         """Apply one action, settling its clock only after exit-round validation."""
         self.check_confirmation(data)
+        if data['action'] == 'stop_group':
+            devices = self.instrument_group(data['component'])
+            cycles = data.get('gate_cycles')
+            if (not isinstance(cycles, dict) or set(cycles) != set(devices)
+                    or any((cycles[device] is not None and type(cycles[device]) is not int)
+                           or cycles[device] != self.work.session.instrument(device).cycle for device in devices)):
+                raise ValueError('采集门已改变或已关闭，请重新查看计数器后操作。')
+        if data['action'] in ('select', 'analysis') and any(
+                data.get(key) is not None for key in ('index', 'reference', 'background')):
+            cursor = data.get('product_cursor')
+            identity = self.id if not self.product_generation else f'{self.id}.{self.product_generation}'
+            if cursor is not None and cursor.split(':', 1)[0] != identity:
+                raise ValueError('记录列表已改变，请重新选择所需记录。')
         if data["action"] == "stop":
             if self.work.session.experiment.outputs:
                 self._check_device_target(data)
@@ -534,7 +643,7 @@ class WebLab:
         action, w = data["action"], self.work
         if self.frozen and action not in ("freeze", "continue", "suspend", "save", "discard"):
             raise ValueError("先返回实验，再执行此操作。")
-        if self.readonly and action in ("start", "stop", "configure", "speed", "pause", "output", "snapshot", "begin_clear", "finish_clear", "instrument_config", "cache_calibration"):
+        if self.readonly and action in ("start", "stop", "configure", "speed", "pause", "output", "snapshot", "begin_clear", "finish_clear", "instrument_config", "cache_calibration", 'start_group', 'stop_group', 'instrument_group_config', 'window_config', 'load_measurement'):
             raise ValueError("已保存的实验只支持查看和分析。")
         if action in ("calibrate", "load_calibration", "cache_calibration"):
             if data.get("calibration_context") != self.calibration_context():
@@ -563,8 +672,29 @@ class WebLab:
                         count_limit=data.get("count_limit"), window_s=data.get("window_s"))
                 w.select(None)
                 self.analysis[w.device.id]["selected"] = None
+                self.clear_portable_reference(w.device.id, 'selected')
+                getattr(self, 'portable_default_selection', {}).pop(w.device.id, None)
+                self.select_saved_calibration()
             else:
                 w.start(data.get("duration"))
+        elif action in ('start_group', 'stop_group', 'instrument_group_config'):
+            devices = self.instrument_group(data['component'])
+            if action == 'start_group':
+                w.session.start_group(devices)
+                for device in devices:
+                    self.clear_portable_reference(device, 'selected')
+                    self.analysis[device]['selected'] = None
+                w.select(None)
+                self.select_saved_calibration()
+            elif action == 'stop_group':
+                w.session.stop_group(devices)
+            else:
+                w.session.configure_group(devices, **{key: data[key] for key in ('duration_s', 'count_limit') if key in data})
+        elif action == 'window_config':
+            devices = self.instrument_group(data['component'])
+            if data['device'] not in devices:
+                raise ValueError('所选窗不属于该计数器。')
+            w.session.configure_acquisition(data['device'], window_s=data['window_s'])
         elif action == "stop":
             w.stop(device=w.device.id if w.session.experiment.outputs else None)
         elif action == "output":
@@ -583,6 +713,9 @@ class WebLab:
             from .web_import import apply_import
             apply_import(self, data['token'], data['item_id'])
             self.edits += 1
+        elif action == 'load_measurement':
+            from .web_measurement import load_measurement
+            load_measurement(self, data['token'], data['item_id'], data.get('overwrite', False))
         elif action == "instrument_config":
             self._check_device_target(data)
             w.configure_acquisition(**{key: data[key] for key in ('duration_s', 'count_limit', 'window_s') if key in data})
@@ -600,7 +733,9 @@ class WebLab:
             if device not in self.analysis:
                 raise ValueError("请选择有效的设备。")
             try:
-                w.finish_clear(data["token"], data["choice"], device=device, writer=self.write_cache)
+                snapshot = w.finish_clear(data["token"], data["choice"], device=device, writer=self.write_cache)
+                if data['choice'] == 'save' and snapshot is not None:
+                    self.bind_saved_calibration(snapshot)
             finally:
                 # A failed cache write restores this instrument, just like cancel.
                 if not w.session.instrument(device).clearing:
@@ -618,6 +753,12 @@ class WebLab:
                 self.edits += 1
         elif action == "select":
             self._check_device_target(data)
+            if 'item_id' in data and data['item_id'] is not None:
+                self.select_saved_item('selected', data['item_id'])
+                w.select(None)
+                self.analysis[w.device.id]['selected'] = None
+                self.select_saved_calibration()
+                return False
             index = self.index(data["index"])
             getattr(self, 'portable_default_selection', {}).pop(w.device.id, None)
             self.clear_portable_reference(w.device.id, 'selected')
@@ -627,9 +768,16 @@ class WebLab:
                 self.edits += 1
             self.select_saved_calibration()
         elif action == "analysis":
+            if 'reference_item_id' in data:
+                self.select_saved_item('reference', data['reference_item_id'])
+                self.analysis[w.device.id]['reference'] = None
             self.change_analysis(data)
         elif action == "calibrate":
-            w.calibrate(*data["points"])
+            identity = self.saved_selection.get(w.device.id, {}).get('selected')
+            if identity:
+                w.calibrate_snapshot(self.saved_measurement(identity).snapshot, *data['points'])
+            else:
+                w.calibrate(*data["points"])
             self.edits += 1
         elif action == "load_calibration":
             document = data["calibration"]
@@ -638,7 +786,11 @@ class WebLab:
                 if bundle['items'][0]['kind'] != 'calibration':
                     raise ValueError("请选择一份已保存的刻度记录。")
                 document = bundle['items'][0]['document']
-            w.apply_calibration(Calibration.from_document(document))
+            identity = self.saved_selection.get(w.device.id, {}).get('selected')
+            if identity:
+                w.apply_snapshot_calibration(self.saved_measurement(identity).snapshot, Calibration.from_document(document))
+            else:
+                w.apply_calibration(Calibration.from_document(document))
             self.edits += 1
         elif action == "save":
             if w.session.experiment.outputs and not self.readonly:
@@ -702,8 +854,8 @@ class Application:
         self.clock = clock
         self.lab = None
 
-    def catalog(self):
-        rows = self.store.list()
+    def catalog(self, *, include_history=True):
+        rows = self.store.list() if include_history else []
         drafts = [r for r in rows if r["kind"] == "draft"]
         return dict(experiments=[describe(e) for e in self.definitions.values()],
                     archives=[r for r in rows if r["kind"] == "archive"],
@@ -763,6 +915,12 @@ class Application:
             return self.lab.state()
         if self.lab is None or data.get("session") != self.lab.id:
             raise ValueError("会话已结束，请返回目录。")
+        if path == '/api/replace_package':
+            self.lab.check_confirmation(dict(action='discard', confirmation_id=data.get('confirmation_id')))
+            from .web_portable import open_portable
+            replacement = open_portable(b64decode(data['file'], validate=True), self.definitions, self.store, self.clock)
+            self.lab = replacement
+            return replacement.state()
         if path == "/api/action":
             if self.lab.act(data):
                 self.lab = None
@@ -773,6 +931,9 @@ class Application:
         if path == '/api/inspect_import':
             from .web_import import inspect_import
             return inspect_import(self.lab, b64decode(data['file'], validate=True))
+        if path == '/api/inspect_measurement':
+            from .web_measurement import inspect_measurement
+            return inspect_measurement(self.lab, data['device'], b64decode(data['file'], validate=True) if 'file' in data else None)
         if path in ("/api/export", "/api/download"):
             self.lab.update_draft()
         if path == "/api/export":

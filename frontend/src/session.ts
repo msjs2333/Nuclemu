@@ -11,7 +11,7 @@ function stable<T>(previous: T, next: T): T {
   return JSON.stringify(previous) === JSON.stringify(next) ? previous : next
 }
 function pageName(hash: string): Page {
-  return hash === 'instrument' || hash === 'records' ? hash : 'setup'
+  return hash === 'instrument' || hash === 'records' || hash === 'materials' ? hash : 'setup'
 }
 export function useSession() {
   const state = shallowRef<State | null>(null)
@@ -39,6 +39,7 @@ export function useSession() {
       next.calibration_context = stable(prev.calibration_context, next.calibration_context)
       next.calibrated_devices = stable(prev.calibrated_devices, next.calibrated_devices)
       next.readout = stable(prev.readout, next.readout)
+      next.particle_flow = stable(prev.particle_flow, next.particle_flow)
     }
     state.value = {...next, product}
     if (!next.frozen) {
@@ -99,6 +100,17 @@ export function useSession() {
       const next = await api<Snapshot>('open_package', {file: await filePayload(file)})
       enter(next, 'instrument')
       history.pushState({id: next.id, page: 'instrument'}, '', labUrl())
+    })
+  }
+  function replacePackage(file: File) {
+    const session = state.value?.id, round = confirmationId
+    return serial(async () => {
+      if (!session || !confirming.value) throw Error('请先确认是否替换当前实验。')
+      const next = await api<Snapshot>('replace_package', {session, confirmation_id: round, file: await filePayload(file)})
+      confirming.value = false
+      confirmationId = dismissedConfirmationId = null
+      enter(next, 'instrument')
+      history.replaceState({id: next.id, page: 'instrument'}, '', labUrl())
     })
   }
   function askExit() {
@@ -216,5 +228,5 @@ export function useSession() {
     window.removeEventListener('pageshow', resume)
     window.removeEventListener('popstate', navigate)
   })
-  return {state, catalog, page, confirming, recovered, message, error, act, report, open, openPackage, askExit, cancelExit, finish, setPage}
+  return {state, catalog, page, confirming, recovered, message, error, act, report, open, openPackage, replacePackage, askExit, cancelExit, finish, setPage}
 }

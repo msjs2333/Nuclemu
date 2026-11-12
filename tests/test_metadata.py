@@ -4,7 +4,7 @@ from dataclasses import replace
 import json
 import unittest
 
-from nuclemu.catalog import describe, discover
+from nuclemu.catalog import describe, discover, resolve_short_code
 from nuclemu.core import Device, Experiment, Parameter, Session
 
 
@@ -21,6 +21,27 @@ def definition():
 
 
 class OptionalMetadataTests(unittest.TestCase):
+    def test_short_codes_are_public_metadata_with_safe_legacy_defaults(self):
+        for name, code in (("alpha", "AEL"), ("beta", "BABS")):
+            exp = discover()[name]
+            self.assertEqual(exp.short_code, code)
+            self.assertEqual(describe(exp)["short_code"], code)
+        old = definition()
+        self.assertEqual(old.short_code, "custom")
+        self.assertEqual(resolve_short_code("clock-pulses"), "clock-pulses")
+        for identifier in ("../course name\\example", "α能损", "x" * 100):
+            code = resolve_short_code(identifier)
+            self.assertRegex(code, r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
+            self.assertEqual(code, resolve_short_code(identifier))
+        for value in ("", "a/b", "a\\b", "..", " space", "中文", "x" * 33, 123):
+            with self.subTest(short_code=value), self.assertRaisesRegex(ValueError, "short_code"):
+                replace(old, short_code=value)
+        custom = replace(old, short_code="TEACH_1")
+        session = Session(custom)
+        session.start(1)
+        session.advance(1)
+        self.assertEqual(session.records[0].readings["meter"], (2,))
+
     def test_custom_parameter_and_nonzero_background_serialize_without_beta_assumptions(self):
         exp = definition()
         info = json.loads(json.dumps(describe(exp)))

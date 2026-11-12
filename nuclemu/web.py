@@ -65,7 +65,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             try:
                 with self.server.app_lock:
                     if route == "/api/catalog":
-                        data = self.server.app.catalog()
+                        data = self.server.app.catalog(include_history=False)
                     elif route == "/api/state":
                         query = parse_qs(url.query)
                         data = self.server.app.state(**{key: query[key][0] for key in
@@ -101,7 +101,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            maximum = 64 * 1024 * 1024 if urlsplit(self.path).path in ("/api/open_package", "/api/inspect_import") else 1024 * 1024
+            maximum = 64 * 1024 * 1024 if urlsplit(self.path).path in ("/api/open_package", "/api/replace_package", "/api/inspect_import", "/api/inspect_measurement") else 1024 * 1024
             if not 0 < length <= maximum:
                 self.payload(413, {"error": "请求大小无效。"})
                 return

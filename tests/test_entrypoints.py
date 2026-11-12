@@ -17,7 +17,7 @@ class EntryPointParityTests(unittest.TestCase):
     def test_exports_match_for_identical_operations_at_different_refresh_rates(self):
         scenarios = (
             ("alpha", "mca", "alpha_detector", 187,
-             [(2.25, {"foil_spec_um": 1, "foil_count": 0}),
+             [(2.25, {"source_present": 1, "foil_spec_um": 1, "foil_count": 0}),
               (1.25, {"foil_spec_um": 1, "foil_count": 5})], [172, 86]),
             ("beta", "counter", "beta_detector", 42,
              [(1.25, {"source_present": 0, "foil_spec_um": 100}),

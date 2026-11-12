@@ -17,18 +17,22 @@ async function request(path: string, data?: unknown) {
 export async function api<T>(path: string, data?: unknown): Promise<T> {
   return (await request(path, data)).json()
 }
-export async function downloadProducts(data: unknown, fallback: string) {
+export async function downloadProducts(data: unknown) {
   const response = await request('download', data)
-  const encoded = response.headers.get('Content-Disposition')?.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  const disposition = response.headers.get('Content-Disposition') ?? ''
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  const legacy = disposition.match(/filename=(?:"([^"]+)"|([^;]+))/i)
+  const filename = encoded ? decodeURIComponent(encoded) : legacy?.[1] ?? legacy?.[2]?.trim()
+  if (!filename) throw Error('服务未提供下载文件名，请重试。')
   const url = URL.createObjectURL(await response.blob())
   const link = document.createElement('a')
   link.href = url
-  link.download = encoded ? decodeURIComponent(encoded) : fallback
+  link.download = filename
   link.click()
   window.setTimeout(() => URL.revokeObjectURL(url), 30000)
 }
 export function downloadExperiment(session: string) {
-  return downloadProducts({session, scope: 'experiment'}, 'experiment.nuclemu')
+  return downloadProducts({session, scope: 'experiment'})
 }
 export async function filePayload(file: File) {
   const bytes = new Uint8Array(await file.arrayBuffer())

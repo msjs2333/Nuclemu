@@ -32,6 +32,7 @@ class WebImportTests(unittest.TestCase):
 
     def source(self, seed):
         session = Session(self.definition, seed=seed)
+        session.configure({'source_present': 1})
         session.set_output("alpha_detector", True)
         session.start(3, device="mca")
         session.advance(3)
@@ -121,6 +122,30 @@ class WebImportTests(unittest.TestCase):
                 item = next(i for i in self.lab.exchange.document["items"] if i["id"] == result["id"])
                 self.assertEqual(item["document"], source["items"][0]["document"])
                 self.assertIn("calibration_id", item)
+
+    def test_old_page_indices_are_rejected_after_import_shifts_the_prefix(self):
+        cursor = self.lab.state()['product_cursor']
+        source = self.source(33)
+        inspected = inspect_import(self.lab, package_bytes(source))
+        apply_import(self.lab, inspected['token'], source['items'][0]['id'])
+        selected = self.lab.work.lab.selected
+        for fields in (dict(action='select', index=0), dict(action='analysis', reference=0), dict(action='analysis', background=0)):
+            with self.subTest(fields=fields), self.assertRaisesRegex(ValueError, '记录列表已改变'):
+                self.lab.act(dict(device='mca', product_cursor=cursor, **fields))
+        self.assertEqual(self.lab.work.lab.selected, selected)
+
+    def test_saved_uuid_is_part_of_delayed_calibration_context(self):
+        identities = []
+        for seed in (33, 34):
+            source = self.source(seed)
+            inspected = inspect_import(self.lab, package_bytes(source))
+            identities.append(apply_import(self.lab, inspected['token'], source['items'][0]['id'])['id'])
+        self.lab.act(dict(action='select', device='mca', item_id=identities[0]))
+        context = self.lab.calibration_context()
+        self.lab.act(dict(action='select', device='mca', item_id=identities[1]))
+        with self.assertRaisesRegex(ValueError, '刻度所用设备'):
+            self.lab.act(dict(action='calibrate', points=[0, 0, 1000, 4], calibration_context=context))
+        self.assertEqual(self.lab.state()['selected_item_id'], identities[1])
 
     def test_saving_native_snapshot_does_not_rebind_import_with_same_sequence(self):
         source = self.source(33)

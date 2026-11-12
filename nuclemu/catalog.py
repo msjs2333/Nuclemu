@@ -10,7 +10,7 @@ from pkgutil import iter_modules
 from runpy import run_path
 
 from . import experiments
-from .core import Component, Connection, Experiment
+from .core import Component, Connection, Experiment, resolve_short_code
 
 
 def describe(experiment: Experiment) -> dict:
@@ -31,6 +31,7 @@ def describe(experiment: Experiment) -> dict:
             parts = (controls, *parts)
     entry = {
         "id": experiment.id,
+        "short_code": experiment.short_code,
         "title": experiment.title,
         "course": experiment.course,
         "description": experiment.description,

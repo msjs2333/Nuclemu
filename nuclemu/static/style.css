@@ -8,8 +8,8 @@
 :root {
   color-scheme: light;
   --ink: #101010;
-  --muted: var(--ink);
-  --quiet: var(--ink);
+  --muted: #46525b;
+  --quiet: #5b6770;
   --line: #dce2e5;
   --edge: #c8d1d6;
   --accent: #2956a1;
@@ -403,3 +403,28 @@ button .rig-figure { height: var(--rig-image-height); }
   .counter-ledger-head { padding: 10px; }
   .counter-ledger td, .counter-ledger th { padding: 12px; }
 }
+/* Desktop laboratory: white measurement surfaces and quiet instrument tools. */
+.danger { color: #b22c32; }
+#records .records-heading { display:flex; justify-content:space-between; align-items:center; }
+.records-actions { display:flex; gap:8px; align-items:center; }
+#records .product-selection { justify-content:flex-start; }
+#records .product-selection output { margin-left:auto; }
+.course .illustration { height:250px; padding:12px 24px; }
+.student-page-heading { margin-bottom:12px; }
+.student-page-layout { display:grid; grid-template-columns:190px minmax(0,1fr); gap:28px; align-items:start; padding-top:18px; }
+.student-page-contents { position:sticky; top:12px; display:grid; gap:3px; }
+.student-page-contents button { text-align:left; background:var(--plane); border-color:transparent; }
+.student-page-body { max-width:78ch; font-size:15px; line-height:1.8; padding-bottom:32px; }
+#student-page-status { color:var(--muted); padding:8px 0; border-bottom:1px solid var(--line); }
+.instrument-workspace #plot { border:0; border-left:2px solid #687784; border-top:2px solid #687784; border-bottom:2px solid #687784; border-radius:0; height:max(390px,calc(100dvh - 170px)); }
+#acquisition.fixed-acquisition { display:grid; grid-template-columns:1fr 1fr; margin:0; width:100%; flex-wrap:nowrap; }
+.instrument-status dl { font-variant-numeric:tabular-nums; }
+#gate-status[data-running=true]::before { background:#278545; box-shadow:0 0 0 3px #e3f1e7; }
+#gate-status[data-running=false]::before { background:#8b969e; }
+.instrument-controls .device-select::after { display:none; }
+#measurement-load label { display:grid; gap:6px; margin:16px 0; }
+#measurement-overwrite { font-weight:650; color:#a82932; margin:12px 0; }
+.instrument-page-open { height:100dvh; min-height:0; overflow:hidden; }
+.instrument-page-open .lab-main { min-height:0; overflow:hidden; }
+.instrument-display { min-height:0; max-height:calc(100dvh - 72px); overflow:auto; }
+#counter.counter-console { margin:6px 0 0; padding:0; border:0; border-radius:0; background:#fff; box-shadow:none; }

@@ -48,6 +48,7 @@ class WorkbenchTests(unittest.TestCase):
         c.set_output("out", True)
         c.start(device="mca")
         c.advance(1)
+        history = c.snapshot(cache=False)
         c.configure({"gain": 2})
         c.advance(1)
         c.select(1)
@@ -71,6 +72,19 @@ class WorkbenchTests(unittest.TestCase):
         self.assertEqual(single_channel["roi_counts"], 2)
         with self.assertRaises(ValueError):
             c.readout(0, 4)
+        before = (dict(c.session.settings), c.session.records.copy(), c.session.instrument("mca"),
+                  c.lab.selected, c.session._rng.getstate())
+        historical_calibration = c.calibrate_snapshot(history, 0, 0, 3, 3)
+        self.assertEqual(dict(historical_calibration.conditions), {"gain": 1})
+        self.assertAlmostEqual(c.readout_snapshot(history, 1, 2, calibration=historical_calibration)["energy_MeV"], 1.6)
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            c.apply_snapshot_calibration(history, calibration)
+        with self.assertRaisesRegex(ValueError, "matching instrument settings"):
+            c.calibrate_snapshot(c.snapshot(cache=False), 0, 0, 3, 6)
+        c.apply_snapshot_calibration(history, historical_calibration)
+        self.assertEqual(c.lab.calibrations["mca"], historical_calibration)
+        self.assertEqual((dict(c.session.settings), c.session.records, c.session.instrument("mca"),
+                          c.lab.selected, c.session._rng.getstate()), before)
 
     def test_beta_reference_reading_background_export_and_repeated_display(self):
         c = Workbench(seed=42)
@@ -114,6 +128,7 @@ class WorkbenchTests(unittest.TestCase):
         c = Workbench(seed=187)
         c.switch("alpha")
         c.set_output("alpha_detector", True)
+        c.configure({"source_present": 1})
         c.start(device="mca")
         c.advance(2.25)
         c.stop()
@@ -173,6 +188,7 @@ class WorkbenchTests(unittest.TestCase):
     def test_invalid_parameter_form_is_atomic_and_does_not_close_window(self):
         c = Workbench()
         c.switch("beta")
+        c.configure({"source_present": 1})
         c.set_output("beta_detector", True)
         c.start(device="counter")
         c.advance(.25)
@@ -410,6 +426,7 @@ class SaveTrackingTests(unittest.TestCase):
     def test_old_partial_copy_does_not_cover_new_exposure_and_no_external_polling(self):
         c = self.c
         c.clear(device="counter")
+        c.configure_acquisition(device="counter", duration_s=None)
         c.start(device="counter")
         c.advance(1)
         c.export(self.path, all_segments=True)

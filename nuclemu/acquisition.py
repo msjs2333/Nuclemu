@@ -1,7 +1,7 @@
 """Independent interval readouts of shared detector outputs."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from math import isfinite
 from types import MappingProxyType
@@ -24,6 +24,20 @@ class InstrumentState:
     window_s: float
     stop_reason: str | None
     clearing: bool
+    next_window_s: float | None = None
+
+
+@dataclass(frozen=True)
+class InstrumentWindow:
+    device: str
+    number: int
+    acquisition: int
+    start_exposure_s: float
+    end_exposure_s: float
+    counts: tuple[int, ...]
+    parts: tuple[Measurement, ...]
+    complete: bool
+    window_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -35,6 +49,10 @@ class Snapshot:
     exposure_s: float
     counts: tuple[int, ...]
     segments: tuple[Measurement, ...]
+    windows: tuple[InstrumentWindow, ...] = ()
+    source: str | None = None
+    window_prefix_exposure_s: float = 0
+    window_prefix_counts: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -70,6 +88,14 @@ class TargetChange:
 
 
 @dataclass(frozen=True)
+class WindowChange:
+    time_s: float
+    exposure_s: float
+    window_s: float
+    effective_exposure_s: float
+
+
+@dataclass(frozen=True)
 class RoundInfo:
     device: str
     acquisition: int
@@ -87,6 +113,11 @@ class RoundInfo:
     initial_duration_s: float | None = None
     initial_count_limit: int | None = None
     target_changes: tuple[TargetChange, ...] = ()
+    random_stream: object = None
+    loaded_exposure_s: float = 0
+    loaded_source: str | None = None
+    initial_window_s: float = 1
+    window_changes: tuple[WindowChange, ...] = ()
 
 
 @dataclass
@@ -121,6 +152,17 @@ class _Gate:
     initial_duration: float | None = None
     initial_count_limit: int | None = None
     target_changes: list = field(default_factory=list)
+    windows: list = field(default_factory=list)
+    window_parts: list = field(default_factory=list)
+    window_counts: tuple[int, ...] = ()
+    window_start: Decimal = Decimal(0)
+    pending_window: Decimal | None = None
+    loaded_exposure: float = 0
+    loaded_source: str | None = None
+    window_prefix_exposure: float = 0
+    window_prefix_counts: tuple[int, ...] = ()
+    initial_window: float = 1
+    window_changes: list = field(default_factory=list)
 
 
 class InstrumentAcquisition:
@@ -144,6 +186,7 @@ class InstrumentAcquisition:
         self.configuration_history = []
         for device in session.experiment.devices:
             self.gates[device.id].counts = (0,) * device.channels
+            self.gates[device.id].window_counts = (0,) * device.channels
 
     @property
     def running(self):
@@ -185,7 +228,8 @@ class InstrumentAcquisition:
                                g.cycle if g.opened is not None else None, g.counts,
                                float(g.readable_exposure), g.count_limit,
                                None if g.duration is None else float(g.duration), float(g.window),
-                               g.reason, g.pending is not None)
+                               g.reason, g.pending is not None,
+                               None if g.pending_window is None else float(g.pending_window))
 
     @property
     def rounds(self):
@@ -198,11 +242,12 @@ class InstrumentAcquisition:
                          "cleared" if cleared else ("running" if state.running else g.reason or "paused"),
                          g.initial_settings, tuple(g.changes), state.duration_s, g.count_limit, float(g.window),
                          g.initial_outputs, tuple(g.output_changes), g.initial_duration,
-                         g.initial_count_limit, tuple(g.target_changes))
+                         g.initial_count_limit, tuple(g.target_changes), MappingProxyType(self.session.random_stream),
+                         g.loaded_exposure, g.loaded_source, g.initial_window, tuple(g.window_changes))
 
-    def configure(self, device, duration=_UNCHANGED, count_limit=_UNCHANGED, window=_UNCHANGED):
+    def configure(self, device, duration=_UNCHANGED, count_limit=_UNCHANGED, window=_UNCHANGED, *, _prepare=False):
         g = self._gate(device)
-        if g.opened is not None or g.pending is not None:
+        if g.pending is not None:
             raise ValueError("Pause the instrument before changing acquisition targets")
         if duration is not _UNCHANGED and duration is not None:
             if type(duration) not in (int, float) or not isfinite(duration) or duration <= 0:
@@ -213,13 +258,29 @@ class InstrumentAcquisition:
         if window is not _UNCHANGED:
             if type(window) not in (int, float) or not isfinite(window) or window <= 0:
                 raise ValueError("Statistical window must be finite and positive")
-            if g.current and g.exposure > 0 and Decimal(str(window)) != g.window:
-                raise ValueError("Clear the instrument before changing its statistical window")
         target = g.duration if duration is _UNCHANGED else (None if duration is None else Decimal(str(duration)))
         limit = g.count_limit if count_limit is _UNCHANGED else count_limit
-        if window is not _UNCHANGED and Decimal(str(window)) != g.window:
-            g.window = Decimal(str(window))
-            g.next_check = g.window
+        if g.opened is not None and (target != g.duration or limit != g.count_limit):
+            raise ValueError("Pause the instrument before changing acquisition targets")
+        if _prepare:
+            return device, g, target, limit, window
+        self._apply_configuration(device, g, target, limit, window)
+
+    def _apply_configuration(self, device, g, target, limit, window):
+        if window is not _UNCHANGED:
+            requested = Decimal(str(window))
+            previous = g.pending_window or g.window
+            elapsed = self.state(device).exposure_s
+            effective = g.next_check if Decimal(str(elapsed)) > g.window_start else g.readable_exposure
+            if requested == g.window:
+                g.pending_window = None
+            elif Decimal(str(self.state(device).exposure_s)) > g.window_start:
+                g.pending_window = requested
+            else:
+                g.window, g.pending_window = requested, None
+                g.next_check = g.readable_exposure + g.window
+            if requested != previous and g.current:
+                g.window_changes.append(WindowChange(self.session.time_s, elapsed, float(requested), float(effective)))
         if target != g.duration or limit != g.count_limit:
             g.duration, g.count_limit = target, limit
             if g.current:
@@ -272,8 +333,29 @@ class InstrumentAcquisition:
             self._activate_clock()
         self._idle()
 
-    def start(self, device, duration, count_limit=None, window=None):
-        gates = list(self.gates.values()) if device is None else [self._gate(device)]
+    def _group(self, devices):
+        if isinstance(devices, str):
+            raise ValueError("Instrument group must contain distinct device ids")
+        ids = tuple(devices)
+        if not ids or len(set(ids)) != len(ids):
+            raise ValueError("Instrument group must contain distinct device ids")
+        return [self._gate(device) for device in ids]
+
+    def start_group(self, devices):
+        self.start(None, None, _devices=self._group(devices))
+
+    def configure_group(self, devices, duration, count_limit):
+        ids = tuple(devices) if not isinstance(devices, str) else devices
+        self._group(ids)
+        prepared = [self.configure(device, duration, count_limit, _prepare=True) for device in ids]
+        for values in prepared:
+            self._apply_configuration(*values)
+
+    def stop_group(self, devices):
+        self.stop(None, _devices=self._group(devices))
+
+    def start(self, device, duration, count_limit=None, window=None, *, _devices=None):
+        gates = _devices if _devices is not None else (list(self.gates.values()) if device is None else [self._gate(device)])
         if any(g.pending is not None for g in gates):
             raise ValueError("Finish the instrument clear request before starting")
         if duration is not None:
@@ -316,6 +398,7 @@ class InstrumentAcquisition:
                 g.window = Decimal(str(window)) if window is not None else g.window
                 g.next_check = g.window
                 g.started = self.session.time_s
+                g.initial_window = float(g.window)
                 g.initial_settings = MappingProxyType(dict(self.session.settings))
                 g.initial_outputs = MappingProxyType(dict(self.enabled))
             g.cycle += 1
@@ -333,8 +416,8 @@ class InstrumentAcquisition:
             g.reason = None
             g.ended = None
 
-    def stop(self, device):
-        gates = list(self.gates.values()) if device is None else [self._gate(device)]
+    def stop(self, device, *, _devices=None):
+        gates = _devices if _devices is not None else (list(self.gates.values()) if device is None else [self._gate(device)])
         if any(g.pending is not None for g in gates):
             raise ValueError("Finish the instrument clear request before stopping")
         if not any(g.opened is not None for g in gates):
@@ -367,9 +450,15 @@ class InstrumentAcquisition:
                 return
             self._sample(boundary)
             self.session._time = boundary
-            for g in self.gates.values():
+            for device, g in self.gates.items():
                 full_window = g.opened is not None and g.readable_exposure >= g.next_check
                 if full_window:
+                    g.windows.append(self._window(device, g, True))
+                    g.window_parts = []
+                    g.window_counts = (0,) * len(g.counts)
+                    g.window_start = g.readable_exposure
+                    if g.pending_window is not None:
+                        g.window, g.pending_window = g.pending_window, None
                     g.next_check += g.window
                 if g.stop_at == boundary:
                     self._close(g, "time_limit")
@@ -420,23 +509,97 @@ class InstrumentAcquisition:
             g = self.gates[device]
             values = row.readings[device]
             g.counts = tuple(a + b for a, b in zip(g.counts, values))
+            g.window_counts = tuple(a + b for a, b in zip(g.window_counts, values))
+            g.window_parts.append(row)
             g.readable_exposure += boundary - self.begin
             if (g.segments and g.segments[-1].end_s == start
+                    and g.segments[-1].origin == row.origin
                     and g.segments[-1].settings == settings):
                 old = g.segments[-1]
                 merged = tuple(a + b for a, b in zip(old.readings[device], values))
                 g.segments[-1] = Measurement(old.start_s, end, old.settings,
-                                             MappingProxyType({device: merged}), g.acquisition)
+                                             MappingProxyType({device: merged}), g.acquisition, old.origin)
             else:
                 g.segments.append(row)
         self.begin = boundary
+
+    def _window(self, device, g, complete):
+        return InstrumentWindow(device, len(g.windows) + 1, g.acquisition,
+                                float(g.window_start), float(g.readable_exposure),
+                                g.window_counts, tuple(g.window_parts), complete, float(g.window))
+
+    def instrument_windows(self, device):
+        g = self._gate(device)
+        return tuple(g.windows) + ((self._window(device, g, False),) if g.window_parts else ())
+
+    def load_measurement(self, device, snapshot, *, overwrite=False):
+        g = self._gate(device)
+        if type(overwrite) is not bool:
+            raise ValueError("Measurement overwrite confirmation must be boolean")
+        if g.pending is not None:
+            raise ValueError("Finish the instrument clear request before loading")
+        if g.current and self.state(device).exposure_s > 0 and not overwrite:
+            raise ValueError("Loading will overwrite current measurement data; confirmation required")
+        if not isinstance(snapshot, Snapshot) or snapshot.device != device or not snapshot.segments:
+            raise ValueError("Saved measurement belongs to another instrument or has no exposure")
+        from .restoration import load_history
+        source = replace(snapshot, id=max(1, snapshot.id))
+        metadata = RoundInfo(device, source.acquisition, 0, None,
+                             source.exposure_s, "loaded", source.segments[0].settings, (),
+                             None, None, float(g.window), {}, (),
+                             loaded_exposure_s=source.exposure_s, loaded_source=source.source or "load-validation")
+        _, validated, _ = load_history(self.session.experiment, source.time_s, (metadata,), (source,), ())
+        source = validated[0]
+        # Validation precedes the only physical mutation: settle all current
+        # gates, then replace this instrument while other gates remain open.
+        self.flush()
+        if g.current:
+            self._close(g, "replaced")
+            self._round_history.append(self._round_info(device, g))
+        acquisition = g.acquisition + 1
+        from uuid import uuid4
+        origin = source.source or str(uuid4())
+        rows = [replace(row, acquisition=acquisition, origin=row.origin or origin) for row in source.segments]
+        windows = [replace(w, acquisition=acquisition,
+                           parts=tuple(replace(p, acquisition=acquisition, origin=p.origin or origin) for p in w.parts)) for w in source.windows]
+        loaded = _Gate(acquisition=acquisition, cycle=g.cycle, current=True,
+                       exposure=Decimal(str(source.exposure_s)), readable_exposure=Decimal(str(source.exposure_s)),
+                       duration=g.duration, count_limit=g.count_limit, window=g.window,
+                       counts=source.counts, segments=rows, started=self.session.time_s,
+                       loaded_exposure=source.exposure_s, loaded_source=origin,
+                       initial_settings=MappingProxyType(dict(self.session.settings)), initial_outputs=MappingProxyType(dict(self.enabled)),
+                       reason="loaded", ended=self.session.time_s,
+                       initial_duration=None if g.duration is None else float(g.duration),
+                       initial_count_limit=g.count_limit, window_counts=(0,) * len(source.counts))
+        loaded.initial_window = float(g.window)
+        loaded.window_prefix_exposure = source.window_prefix_exposure_s if source.windows else source.exposure_s
+        loaded.window_prefix_counts = source.window_prefix_counts if source.windows else source.counts
+        if windows and not windows[-1].complete:
+            partial = windows.pop()
+            loaded.window_parts = list(partial.parts)
+            loaded.window_counts = partial.counts
+            loaded.window_start = Decimal(str(partial.start_exposure_s))
+            if partial.window_s is not None:
+                loaded.window = Decimal(str(partial.window_s))
+                loaded.next_check = loaded.window_start + loaded.window
+                loaded.pending_window = g.window if g.window != loaded.window else None
+            else:
+                loaded.next_check = loaded.readable_exposure + g.window
+        else:
+            loaded.window_start = loaded.readable_exposure
+            loaded.next_check = loaded.readable_exposure + g.window
+        loaded.windows = windows
+        self.gates[device] = loaded
+        self._idle()
 
     def snapshot(self, device, *, cache=True, writer=None):
         g = self._gate(device)
         if not g.current or g.readable_exposure == 0:
             raise ValueError("There is no readable exposure for this instrument")
         item = Snapshot(self._snapshot_id + 1 if cache else 0, device, g.acquisition,
-                        self.session.time_s, float(g.readable_exposure), g.counts, tuple(g.segments))
+                        self.session.time_s, float(g.readable_exposure), g.counts, tuple(g.segments),
+                        self.instrument_windows(device), None,
+                        g.window_prefix_exposure, g.window_prefix_counts)
         if cache:
             if writer is not None:
                 writer(item)
@@ -475,7 +638,8 @@ class InstrumentAcquisition:
             if choice == "save" and pending.request.snapshot is not None:
                 source = pending.request.snapshot
                 saved = Snapshot(self._snapshot_id + 1, source.device, source.acquisition,
-                                 source.time_s, source.exposure_s, source.counts, source.segments)
+                                 source.time_s, source.exposure_s, source.counts, source.segments, source.windows, source.source,
+                                 source.window_prefix_exposure_s, source.window_prefix_counts)
                 if writer is not None:
                     writer(saved)
                 self.snapshots.append(saved)
@@ -488,11 +652,16 @@ class InstrumentAcquisition:
         if g.current:
             self._round_history.append(self._round_info(device, g, cleared=True))
         self.gates[device] = _Gate(acquisition=g.acquisition, cycle=g.cycle,
-                                  counts=(0,) * len(g.counts))
+                                  duration=g.duration, count_limit=g.count_limit,
+                                  window=g.pending_window or g.window, next_check=g.pending_window or g.window,
+                                  counts=(0,) * len(g.counts), window_counts=(0,) * len(g.counts))
         self._idle()
         return saved
 
     def _restore(self, g, pending):
+        # Finish input belonging only to the other active gates before this
+        # gate reopens, including a partial physical window during confirmation.
+        self.flush()
         g.pending = None
         g.reason = pending.reason
         if pending.request.was_running:

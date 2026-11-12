@@ -92,7 +92,7 @@ class CliTests(unittest.TestCase):
         with TemporaryDirectory() as temporary:
             target = Path(temporary)
             common = ("run", "beta", "--seed", "42", "--enable-output", "beta_detector",
-                      "--set", "foil_spec_um=100", "--set", "foil_count=4")
+                      "--set", "source_present=1", "--set", "foil_spec_um=100", "--set", "foil_count=4")
             self.ok(*common, "--device", "counter", "--step", "5", "--step", "5",
                     "--output", str(target / "short.json"))
             self.ok(*common, "--device", "counter_b", "--duration", "10",
@@ -168,7 +168,7 @@ class CliTests(unittest.TestCase):
             calibration = Calibration("alpha", "mca", 1024, 0, 0, 1000, 6)
             calibration.save(target / "cal.json")
             arguments = ("run", "alpha", "--seed", "187", "--device", "spectrum:mca",
-                "--enable-output", "alpha_detector",
+                "--enable-output", "alpha_detector", "--set", "source_present=1",
                 "--step", "2.25,foil_um=0", "--step", "1.25,foil_um=5", "--roi", "830:890",
                 "--calibration", str(target / "cal.json"))
             summary = self.ok(*arguments, "--output", str(target / "alpha.json"),
@@ -176,6 +176,7 @@ class CliTests(unittest.TestCase):
             product = json.loads((target / "alpha.json").read_text(encoding="utf-8"))
             session = Session(discover()["alpha"], seed=187)
             session.set_output("alpha_detector", True)
+            session.set("source_present", 1)
             session.start(2.25)
             session.advance(2.25)
             session.set("foil_um", 5)
@@ -207,7 +208,7 @@ class CliTests(unittest.TestCase):
         with TemporaryDirectory() as temporary:
             target = Path(temporary)
             common = ("run", "alpha", "--seed", "187", "--device", "mca",
-                      "--enable-output", "alpha_detector")
+                      "--enable-output", "alpha_detector", "--set", "source_present=1")
             self.ok(*common, "--step", "2.25,foil_um=0", "--step", "1.25,foil_um=5",
                     "--output", str(target / "old.json"))
             self.ok(*common, "--step", "2.25,foil_spec_um=1,foil_count=0",

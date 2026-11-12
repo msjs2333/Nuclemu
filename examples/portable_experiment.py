@@ -17,6 +17,7 @@ def run(directory):
     experiment = discover()["alpha"]
     session = Session(experiment, seed=187)
     session.set_output("alpha_detector", True)
+    session.set("source_present", 1)
     session.start(5, device="mca")
     session.advance(3)
     first = session.snapshot("mca")

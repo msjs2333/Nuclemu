@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import {computed, onBeforeUnmount, onMounted, ref, watch} from 'vue'
 import {pointerChannels, drawSpectrum, spectrumExtent} from '/draw.js'
-import {describe, exposure, fmt, indexValue, segmentName} from './display'
+import {describe, exposure, fmt, segmentName} from './display'
 import type {Act, Calibration, CalibrationContext, Course, Device, Segment, Series, State} from './types'
 
+type SavedMeasurement = {id: string; device: string; title: string; exposure_s: number; settings: Record<string, number>[]; calibration_id: string | null}
+type Observation = {id: string; device: string; title: string; counts: number[]; exposure_s: number; segments: Segment[]; calibration_id: string | null}
 const props = defineProps<{
   course: Course; device: Device; session: string; segments: Segment[]; index: number | null; analysis: State['analysis']
   calibration: Calibration | null; calibrationContext: CalibrationContext; readout: State['readout']; act: Act
   referenceCalibration: Calibration | null
   currentAcquisition?: number | null; instrument?: State['instrument']
+  savedMeasurements?: SavedMeasurement[]; selectedItemId?: string | null; referenceItemId?: string | null
+  selectedObservation?: Observation | null; referenceObservation?: Observation | null
 }>()
 const emit = defineEmits<{task: [fn: () => Promise<void>]}>()
 const available = computed(() => props.segments.map((segment, index) => ({segment, index}))
@@ -19,18 +23,33 @@ const current = computed(() => {
   for (let i = available.value.length - 1; i >= 0; i--) if (available.value[i].segment.acquisition === props.currentAcquisition) return available.value[i].segment
 })
 const currentCounts = computed(() => {
+  if (props.selectedObservation) return props.selectedObservation.counts
   if (props.index === null && props.instrument) return props.instrument.readable_exposure_s > 0 ? props.instrument.counts : null
   return current.value?.readings[props.device.id] ?? null
 })
-const currentExposure = computed(() => props.index === null && props.instrument
-  ? props.instrument.readable_exposure_s : current.value ? exposure(current.value) : 0)
+const currentExposure = computed(() => props.selectedObservation?.exposure_s ?? (props.index === null && props.instrument
+  ? props.instrument.readable_exposure_s : current.value ? exposure(current.value) : 0))
+const saved = computed(() => (props.savedMeasurements ?? []).filter(item => item.device === props.device.id))
+const selectedValue = computed(() => props.selectedItemId ?? (props.index == null ? '' : 'segment:' + props.index))
+const referenceValue = computed(() => props.referenceItemId ?? (props.analysis.reference == null ? '' : 'segment:' + props.analysis.reference))
+function selectSpectrum(event: Event, reference = false) {
+  const value = (event.target as HTMLSelectElement).value
+  if (reference) {
+    instrumentAction('analysis', value.startsWith('segment:') ? {reference: Number(value.slice(8)), reference_item_id: null} : {reference_item_id: value || null})
+  } else instrumentAction('select', value.startsWith('segment:') ? {index: Number(value.slice(8))} : value ? {item_id: value} : {index: null})
+}
 const reference = computed(() => props.analysis.reference === null ? null : props.segments[props.analysis.reference])
+const currentParts = computed(() => props.selectedObservation?.segments ?? (props.index != null && current.value ? [current.value] : available.value.filter(row => row.segment.acquisition === props.currentAcquisition).map(row => row.segment)))
+const referenceParts = computed(() => props.referenceObservation?.segments ?? (reference.value ? [reference.value] : []))
+function conditions(parts: Segment[]) {
+  return parts.map(part => describe(props.course, part.settings)).filter((text, i, list) => text && (i === 0 || text !== list[i - 1])).join(' → ')
+}
 const energyScale = computed(() => {
   const c = props.calibration
   if (!c || !props.analysis.energy_axis) return null
   return (channel: number) => c.energy1 + (channel - c.channel1) * (c.energy2 - c.energy1) / (c.channel2 - c.channel1)
 })
-const incompatible = computed(() => !!(energyScale.value && reference.value && !props.referenceCalibration))
+const incompatible = computed(() => !!(energyScale.value && (reference.value || props.referenceObservation) && !props.referenceCalibration))
 const series = computed(() => {
   const lines: Series[] = []
   function add(segment: Segment | null | undefined, label: string, channelPosition?: (channel: number) => number) {
@@ -38,9 +57,8 @@ const series = computed(() => {
       counts: segment.readings[props.device.id], divisor: props.analysis.rate_axis ? exposure(segment) : 1, channelPosition})
   }
   if (currentCounts.value && currentExposure.value > 0) {
-    if (props.index === null && props.instrument) lines.push({label: '本轮累计 · ' + fmt(currentExposure.value) + ' s',
+    lines.push({label: [props.selectedObservation?.title ?? (props.index === null ? '本轮累计谱' : '分段谱'), conditions(currentParts.value), fmt(currentExposure.value) + ' s'].filter(Boolean).join(' · '),
       counts: currentCounts.value, divisor: props.analysis.rate_axis ? currentExposure.value : 1})
-    else add(current.value, props.index === null ? '当前谱' : '历史谱')
   }
   if (!incompatible.value) {
     const current = props.calibration, saved = props.referenceCalibration
@@ -48,16 +66,19 @@ const series = computed(() => {
       const energy = saved.energy1 + (channel - saved.channel1) * (saved.energy2 - saved.energy1) / (saved.channel2 - saved.channel1)
       return current.channel1 + (energy - current.energy1) * (current.channel2 - current.channel1) / (current.energy2 - current.energy1)
     } : undefined
-    add(reference.value, '参考谱', position)
+    if (props.referenceObservation) {
+      const item = props.referenceObservation
+      lines.push({label: ['参考谱：' + item.title, conditions(item.segments), fmt(item.exposure_s) + ' s'].filter(Boolean).join(' · '), counts: item.counts,
+        divisor: props.analysis.rate_axis ? item.exposure_s : 1, channelPosition: position})
+    } else add(reference.value, '参考谱', position)
   }
   return lines
 })
 const plot = ref<HTMLCanvasElement>()
-const rangeMode = ref<'fit' | 'full'>('fit')
 const extent = computed(() => spectrumExtent(series.value, props.device.channels))
 const heldRange = ref<[number, number] | null>(null)
 const visibleRange = computed<[number, number]>(() => heldRange.value ??
-  (rangeMode.value === 'fit' ? extent.value.range : [0, props.device.channels - 1]))
+  extent.value.range)
 const centroidText = computed(() => {
   if (!extent.value.maximum) return series.value.length ? '可见谱暂无计数，显示全道范围。' : '等待采集，显示全道范围。'
   const centroid = props.readout?.centroid
@@ -79,7 +100,9 @@ onMounted(() => {
 })
 onBeforeUnmount(() => observer.disconnect())
 const first = ref(0), last = ref(0)
-watch(() => props.analysis.roi.join('/'), () => { [first.value, last.value] = props.analysis.roi }, {immediate: true})
+watch(() => props.analysis.roi.join('/'), (_next, previous) => {
+  if (previous === undefined || [first.value, last.value].join('/') === previous) [first.value, last.value] = props.analysis.roi
+}, {immediate: true})
 const points = ref<(number | string)[]>([])
 const calibrationFile = ref<HTMLInputElement>()
 const calibrationNotice = ref('')
@@ -166,17 +189,27 @@ function load(e: Event) {
 
 <template>
   <div id="spectrum">
-    <Teleport defer to="#panel-display"><div class="menu-fields">
-      <label>当前谱 <select id="sample" :value="index ?? ''" @change="instrumentAction('select', {index: indexValue($event)})">
-        <option value="">{{ instrument ? '本轮累计谱' : '跟随最新段' }}</option><option v-for="{segment, index: i} in available" :key="i" :value="i">{{ segmentName(segment, i) }}</option></select></label>
-      <label>参考谱 <select id="reference" :value="analysis.reference ?? ''" @change="change('reference', indexValue($event))">
-        <option value="">无参考谱</option><option v-for="{segment, index: i} in available" :key="i" :value="i">{{ segmentName(segment, i) }}</option></select></label>
-      <label>横轴范围 <select id="spectrum-range" v-model="rangeMode">
-        <option value="fit">适合可见谱</option><option value="full">固定全道范围</option></select></label>
+    <Teleport defer to="#spectrum-analysis-tools"><div class="menu-fields">
+      <label>当前谱 <select id="sample" :value="selectedValue" @change="selectSpectrum($event)">
+        <option value="">本轮累计谱</option>
+        <optgroup v-if="saved.length" label="已保存道谱"><option v-for="item in saved" :key="item.id" :value="item.id">{{ item.title }} · {{ fmt(item.exposure_s) }} s</option></optgroup>
+        <optgroup v-if="available.length" label="分段查看"><option v-for="{segment, index: i} in available" :key="i" :value="'segment:' + i">{{ segmentName(segment, i) }}</option></optgroup>
+      </select></label>
+      <label>参考谱 <select id="reference" :value="referenceValue" @change="selectSpectrum($event, true)">
+        <option value="">无参考谱</option>
+        <optgroup v-if="saved.length" label="已保存道谱"><option v-for="item in saved" :key="item.id" :value="item.id">{{ item.title }} · {{ fmt(item.exposure_s) }} s</option></optgroup>
+        <optgroup v-if="available.length" label="分段查看"><option v-for="{segment, index: i} in available" :key="i" :value="'segment:' + i">{{ segmentName(segment, i) }}</option></optgroup>
+      </select></label>
+      <details v-if="currentParts.length" class="spectrum-conditions"><summary>当前谱分段工况</summary>
+        <ol><li v-for="(part, i) in currentParts" :key="i">{{ fmt(exposure(part)) }} s · {{ describe(course, part.settings) }}</li></ol>
+      </details>
+      <details v-if="referenceParts.length" class="spectrum-conditions"><summary>参考谱分段工况</summary>
+        <ol><li v-for="(part, i) in referenceParts" :key="i">{{ fmt(exposure(part)) }} s · {{ describe(course, part.settings) }}</li></ol>
+      </details>
       <label><input type="checkbox" id="energy" :disabled="!calibration" :checked="!!energyScale" @change="change('energy_axis', checked($event))"> MeV 横轴</label>
       <label><input type="checkbox" id="rate" :checked="analysis.rate_axis" @change="change('rate_axis', checked($event))"> 按曝光归一</label>
     </div></Teleport>
-    <canvas id="plot" ref="plot" :aria-label="`道谱，显示 ${visibleRange[0]} 至 ${visibleRange[1]} 道。可在分析菜单输入选区道号。`" height="260"
+    <canvas id="plot" ref="plot" :aria-label="`道谱，显示 ${visibleRange[0]} 至 ${visibleRange[1]} 道。可在谱分析中输入选区道号。`" height="420"
       @pointerdown="startDrag" @lostpointercapture="cancelDrag" @pointerup="endDrag"></canvas>
     <div class="spectrum-readout"><div id="legend" class="legend"><span v-for="line in series" :key="line.label">{{ line.label }}</span></div>
       <output id="peak">{{ centroidText }}
@@ -184,7 +217,7 @@ function load(e: Event) {
     </div>
     <output v-if="currentCounts" id="spectrum-total">总计数 {{ readout?.counts == null ? '—' : fmt(readout.counts) }} 次 · 可读曝光 {{ fmt(currentExposure) }} s</output>
     <p v-if="incompatible" class="notice">参考谱没有适用的能量刻度。切回道号轴可叠加两张谱。</p>
-    <Teleport defer to="#panel-analysis">
+    <Teleport defer to="#spectrum-analysis-tools">
     <form id="roi" class="menu-fields" @submit.prevent="change('roi', [first, last])"><strong>选区 ROI</strong>
       <label>起道 <input id="first" v-model.number="first" type="number" min="0" :max="device.channels - 1" required step="1"></label>
       <label>止道 <input id="last" v-model.number="last" type="number" min="0" :max="device.channels - 1" required step="1"></label>
@@ -216,6 +249,12 @@ function load(e: Event) {
 </template>
 
 <style scoped>
+#plot { display:block; width:100%; height:420px; background:#fff; border:0; border-top:2px solid #71818e; border-left:2px solid #71818e; border-bottom:2px solid #71818e; border-radius:0; }
+.menu-fields { display:grid; gap:10px; }
+.menu-fields label { display:grid; gap:4px; }
+.spectrum-conditions { font-size:13px; }
+.spectrum-conditions ol { padding-left:20px; }
+.spectrum-conditions li { margin:6px 0; }
 #spectrum-total { display: block; font-size: 13px; }
 .calibration-file-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 #calibration-notice { display: block; margin-top: 8px; font-size: 13px; }

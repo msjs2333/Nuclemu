@@ -11,7 +11,7 @@ from nuclemu.physics import AluminumFoil, poisson
 
 # Selected NIST ASTAR SRD 124 aluminium CSDA ranges (MeV, g/cm²).
 # https://physics.nist.gov/PhysRefData/Star/Text/ASTAR-t.html (Aluminum, 013)
-# The zero-energy endpoint is an added boundary; see docs/alpha.md.
+# The zero-energy endpoint is an added boundary; see docs/model-reference.md.
 RANGE_TABLE = (
     (0.0, 0.0),
     (0.001, 9.964e-6),
@@ -88,6 +88,29 @@ def transmitted_energy(incident_mev: float, foil: AluminumFoil) -> float:
     return _interpolate(residual_range, MASS_RANGES, ENERGIES)
 
 
+def particle_flow(settings: Mapping[str, float]) -> dict:
+    """Deterministic CSDA reference metadata, independent of apparatus artwork.
+
+    Rates use the same fixed-geometry effective acceptance as the spectrum,
+    not source activity or individual trajectories. No detector switch or RNG
+    is involved: disabling electrical output does not remove emitted particles.
+    Visual fan beams and background dots are state illustrations, not a scale
+    for these rates, energies or any angular distribution. Input settings have
+    already been checked by Session.
+    """
+    foil = configured_foil(settings)
+    rate = LINE_RATE_HZ if settings["source_present"] else 0.0
+    lines = []
+    for energy in REFERENCE_MEV:
+        residual = transmitted_energy(energy, foil)
+        lines.append(dict(incident_MeV=energy, residual_MeV=residual,
+                          incident_rate_s=rate, transmitted_rate_s=rate if residual > 0 else 0.0))
+    return dict(kind="alpha_csda", material="Al", thickness_um=foil.thickness_mm * 1000,
+                areal_density_g_cm2=foil.areal_density_g_cm2, lines=lines,
+                incident_rate_s=sum(line["incident_rate_s"] for line in lines),
+                transmitted_rate_s=sum(line["transmitted_rate_s"] for line in lines))
+
+
 def measure(settings: Mapping[str, float], start_s: float, end_s: float, rng: Random):
     """Sample one Session exposure into a channel histogram at fixed geometry."""
     counts = [0] * CHANNELS
@@ -112,13 +135,13 @@ EXPERIMENT = Experiment(
     title="α 粒子在铝箔中的能量损失",
     description="采集无箔三峰参考谱，建立能量刻度；增加铝箔厚度后比较峰位。",
     parameters=(
-        Parameter("source_present", "源座", "", 1, 0, 1, integer=True,
+        Parameter("source_present", "源座", "", 0, 0, 1, integer=True,
                   options=((0, "空源座"), (1, "α 三峰参考源"))),
         Parameter("foil_spec_um", "Al 单片厚度", "µm/片", 1.0, 1.0, 2.0,
-                  options=((1.0, "Al 1 µm/片"), (2.0, "Al 2 µm/片"))),
+                  options=tuple((spec, f"Al {spec:g} µm/片") for spec in FOIL_SPEC_UM)),
         Parameter("foil_count", "铝箔片数", "片", 0, 0, 40, integer=True),
     ),
-    devices=(Device("mca", "spectrum", "α 多道谱仪", channels=CHANNELS, input=DETECTOR_OUTPUT),),
+    devices=(Device("mca", "spectrum", "多道谱仪", channels=CHANNELS, input=DETECTOR_OUTPUT),),
     model=measure,
     question="α 粒子穿过铝箔后，谱峰能量怎样随箔厚变化？",
     guide=(
@@ -130,13 +153,13 @@ EXPERIMENT = Experiment(
         "接近射程时谱线可能消失，此时记录峰区计数及实际曝光。",
     ),
     components=(
-        Component("source", "source", "α 源座", "固定几何下可放入三峰参考源或移空源座；模型无本底，空源无源峰。",
+        Component("source", "source", "源座", "源座固定放射源的位置。装入三峰参考源后，可以观察三条 α 谱线；取下源可以观察没有源信号时的读数。",
                   ("source_present",), illustration="source"),
-        Component("foil", "foil", "铝箔架", "装入同规格 Al 薄片，0 片表示空箔架；总厚度为单片厚度乘片数，独立于源座状态。",
+        Component("foil", "foil", "箔架", "箔架把薄箔固定在放射源和探测器之间。先用空箔架采谱，再放入铝箔，观察同一条谱线的峰位怎样移动。",
                   ("foil_spec_um", "foil_count"), illustration="foil"),
-        Component("detector", "detector", "硅探测器", "穿透铝箔的粒子产生脉冲，脉冲幅度反映沉积能量。",
+        Component("detector", "detector", "硅探测器", "硅探测器将粒子沉积的能量转换为电脉冲，脉冲幅度用于区分粒子能量。开启输出后，信号送到多道谱仪；采集还需在谱仪上开始。",
                   illustration="silicon", output=DETECTOR_OUTPUT),
-        Component("mca", "instrument", "多道谱仪", "按脉冲幅度分道，累计各道计数。", device="mca", illustration="mca"),
+        Component("mca", "instrument", "多道谱仪", "多道谱仪按脉冲幅度把计数分入各道，形成能谱。选择一条孤立峰，可以读峰心并建立能量刻度。", device="mca", illustration="mca"),
     ),
     connections=(
         Connection("source", "foil", "particle", "入射 α 粒子"),
@@ -146,4 +169,6 @@ EXPERIMENT = Experiment(
     outputs=(SignalOutput(DETECTOR_OUTPUT, "硅探测器幅度输出", channels=CHANNELS,
                           response="固定几何及效率已计入每线25 s⁻¹；含12 keV标准差响应及0.006 MeV/道量化，无本底"),),
     normalize_settings=normalize_settings,
+    particle_flow=particle_flow,
+    short_code="AEL",
 )

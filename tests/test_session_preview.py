@@ -15,6 +15,7 @@ class SessionPreviewTests(unittest.TestCase):
         for name in ("alpha", "beta"):
             with self.subTest(experiment=name):
                 session = Session(legacy_course(name), seed=187)
+                session.set("source_present", 1)
                 session.start(2.25)
                 session.advance(1.375)
                 records = session.records.copy()

@@ -5,20 +5,24 @@ import SetupPage from './SetupPage.vue'
 import InstrumentPage from './InstrumentPage.vue'
 import RecordsPage from './RecordsPage.vue'
 import CommandBar from './CommandBar.vue'
-import StudentReader from './StudentReader.vue'
-import {studentMarkdown} from './studentMaterials'
+import StudentPage from './StudentPage.vue'
+import MeasurementLoader from './MeasurementLoader.vue'
 import {fmt, inputValue} from './display'
 import {useSession} from './session'
 import {downloadExperiment} from './api'
 import type {Open, Page} from './types'
 
-const {state, catalog, page, confirming, recovered, message, error, act, report, open, openPackage, askExit, cancelExit, finish, setPage} = useSession()
-const tabs: {id: Page; label: string}[] = [{id: 'setup', label: '实验装置'}, {id: 'instrument', label: '测量仪器'}, {id: 'records', label: '实验记录'}]
+const {state, catalog, page, confirming, recovered, message, error, act, report, open, openPackage, replacePackage, askExit, cancelExit, finish, setPage} = useSession()
+const tabs = computed<{id: Page; label: string}[]>(() => [{id: 'setup', label: '实验装置'}, {id: 'instrument', label: kind.value === 'spectrum' ? '多道谱仪' : '计数器'}, {id: 'records', label: '实验记录'}, {id: 'materials', label: '实验资料'}])
 const dialog = ref<HTMLDialogElement>()
 const menu = ref<InstanceType<typeof CatalogPage>>()
 const instruments = ref<InstanceType<typeof InstrumentPage>>()
 const commands = ref<InstanceType<typeof CommandBar>>()
-const reader = ref<InstanceType<typeof StudentReader>>()
+const experimentFile = ref<HTMLInputElement>()
+const replacementFile = ref<File | null>(null)
+const previousPage = ref<Page>('setup')
+const measurementLoader = ref<InstanceType<typeof MeasurementLoader>>()
+function requestMeasurementLoad(device: string, source: 'cache' | 'file') { measurementLoader.value?.open(device, source) }
 const title = ref<HTMLHeadingElement>()
 const kind = computed(() => state.value?.definition.devices.find(d => d.id === state.value?.device)?.kind)
 const livePortable = computed(() => !!state.value?.definition.outputs?.length && !state.value?.readonly)
@@ -29,9 +33,11 @@ const navIcons = {
   setup: 'M3 6h4v12H3z M10 9h4v6h-4z M17 4h4v16h-4z M7 12h3m4 0h3',
   instrument: 'M3 4v16h18 M5 15h3l2-7 3 9 3-6 2 3h3',
   records: 'M5 3h14v18H5z M8 8h8 M8 12h8 M8 16h5',
+  materials: 'M3 4h7l2 2 2-2h7v16h-7l-2 2-2-2H3z M12 6v16',
 }
 function navigate(tab: Page) {
   commands.value?.close()
+  if (tab === 'materials' && page.value !== 'materials') previousPage.value = page.value
   setPage(tab)
 }
 async function openLab(args: Open) {
@@ -40,22 +46,9 @@ async function openLab(args: Open) {
   if (page.value === 'instrument') instruments.value?.focusDevice()
   else title.value?.focus()
 }
-function showRecords() {
-  navigate('records')
-  void nextTick(() => document.querySelector<HTMLHeadingElement>('#records-title')?.focus())
-}
 function requestExit() {
   commands.value?.close(true)
   void report(askExit)
-}
-function showTool(tool: 'acquisition' | 'analysis' | 'calibration') {
-  commands.value?.open('analysis')
-  void nextTick(() => {
-    const target = document.querySelector<HTMLDetailsElement>(tool === 'acquisition' ? '#acquisition-tools' : tool === 'calibration' ? '.calibration-tools' : '#roi')
-    if (target?.tagName === 'DETAILS') target.open = true
-    target?.scrollIntoView({block: 'nearest'})
-    target?.querySelector<HTMLInputElement>('input, select')?.focus()
-  })
 }
 watch(confirming, async value => {
   if (value) exitDownloadStarted.value = false
@@ -93,7 +86,10 @@ function leave(save: boolean) {
     return
   }
   void report(async () => {
+    const replacement = replacementFile.value
+    if (replacement) { await replacePackage(replacement); replacementFile.value = null; return }
     await finish(save)
+    replacementFile.value = null
     await nextTick()
     menu.value?.focusExperiment(experiment)
   })
@@ -114,51 +110,40 @@ function save() { void report(async () => {
 function loadExperiment(event: Event) {
   const input = event.target as HTMLInputElement, file = input.files?.[0]
   input.value = ''
-  if (file) void report(async () => { await openPackage(file); await nextTick(); instruments.value?.focusDevice() })
+  if (!file) return
+  if (state.value) {
+    replacementFile.value = file
+    requestExit()
+  } else void report(async () => { await openPackage(file); await nextTick(); instruments.value?.focusDevice() })
 }
+function chooseExperiment() { commands.value?.close(); experimentFile.value?.click() }
+async function returnToExperiment() { replacementFile.value = null; await cancelExit() }
 </script>
 
 <template>
   <header v-if="!state" class="mast"><div class="wrap brand"><span class="mark" aria-hidden="true">N</span><span>Nuclemu</span></div></header>
   <main :class="state ? 'workbench-wrap' : 'wrap'">
     <p id="error" role="alert" :hidden="!error || confirming">{{ error }}</p>
-    <label v-if="!state" class="open-experiment">打开实验文件 <input id="open-package" type="file" accept=".nuclemu" @change="loadExperiment"></label>
-    <CatalogPage v-if="catalog && !state" ref="menu" :catalog="catalog" @open="args => report(() => openLab(args))"/>
-    <section v-if="state" id="workspace" class="lab-shell" :class="{'spectrum-workspace': page === 'instrument' && kind === 'spectrum'}" :key="state.id">
+    <input ref="experimentFile" id="open-package" type="file" accept=".nuclemu" hidden @change="loadExperiment">
+    <CatalogPage v-if="catalog && !state" ref="menu" :catalog="catalog" @open="args => report(() => openLab(args))" @load="chooseExperiment"/>
+    <section v-if="state" id="workspace" class="lab-shell" :class="{'spectrum-workspace': page === 'instrument' && kind === 'spectrum', 'instrument-page-open': page === 'instrument'}" :key="state.id">
       <header class="lab-topbar">
         <h1 ref="title" id="lab-title" tabindex="-1">{{ state.definition.title }}</h1>
-        <CommandBar ref="commands" :analysis="page === 'instrument' && kind === 'spectrum'"
-          :display="page === 'instrument' && kind === 'spectrum'">
+        <CommandBar ref="commands">
           <template #file>
-            <button id="save" @click="save">{{ state.readonly ? '保存分析副本' : '保存整场实验' }}</button>
-            <button id="open-products" @click="showRecords">选择导出产品…</button>
-            <button id="leave" @click="requestExit">退出实验…</button>
-          </template>
-          <template #analysis>
-            <div v-if="page === 'instrument' && kind === 'spectrum'" class="inspector-heading">
-              <h2>谱分析</h2>
-              <button type="button" aria-label="关闭谱分析" @click="commands?.close(true)">
-                <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
-              </button>
-            </div>
-            <div v-if="page === 'instrument' && kind === 'spectrum'" class="tool-tabs" role="group" aria-label="仪器工具">
-              <button id="tool-acquisition" @click="showTool('acquisition')">采集</button>
-              <button id="tool-analysis" @click="showTool('analysis')">谱分析</button>
-              <button id="tool-calibration" @click="showTool('calibration')">刻度</button>
-            </div>
-          </template>
-          <template #acquisition>
-            <div id="acquisition-settings"></div>
+            <button id="load-experiment" @click="chooseExperiment">载入实验</button>
+            <button id="save" @click="save">保存实验</button>
+            <button id="leave" class="danger" @click="requestExit">退出实验</button>
           </template>
           <template #simulation>
             <div class="menu-fields clock-settings">
               <label>仿真倍率 <select id="speed" :value="state.speed" :disabled="state.readonly" @change="report(() => act('speed', {speed: Number(inputValue($event))}))">
                 <option v-for="n in [0.25, 1, 2, 5, 10, 60]" :key="n" :value="n">{{ n }}×</option></select></label>
-              <button id="pause" :disabled="state.readonly" @click="report(() => act('pause', {paused: !state!.paused}))">{{ state.paused ? '继续仿真' : '暂停仿真' }}</button>
+              <p>倍率 {{ state.speed }}×：现实 1 秒对应 {{ state.speed }} 仿真秒。探测输出和采集门决定仿真是否推进。</p>
             </div>
           </template>
         </CommandBar>
-        <button v-if="studentMarkdown(state.definition)" id="student-materials" @click="reader?.open()">实验资料</button>
+
       </header>
       <nav class="lab-rail" aria-label="实验工作区"><button v-for="tab in tabs" :key="tab.id" :data-page="tab.id"
         :aria-current="tab.id === page ? 'page' : 'false'" @click="navigate(tab.id)">
@@ -170,29 +155,30 @@ function loadExperiment(event: Event) {
       <p v-if="state.portable_loaded && state.selected !== null" id="portable-view" class="notice">正在查看文件中已保存的读数。仪器当前门关闭，开始后建立新的测量轮次。</p>
       <p v-if="Object.keys(state.portable_unresolved).length" class="notice">部分分析引用未对应一份完整保存的读数。已保存的各段仍可查看；请选择所需记录核对工况。</p>
       <SetupPage v-show="page === 'setup'" :course="state.definition" :settings="state.settings" :readonly="state.readonly" :act="act"
-        :output-enabled="state.output_enabled" :gates="state.gates" @device="toDevice" @notice="message = $event"/>
-      <InstrumentPage ref="instruments" v-show="page === 'instrument'" :state="state" :act="act" @task="report"
-        @acquisition-settings="commands?.open('acquisition')"/>
+        :particle-flow="state.particle_flow" :output-enabled="state.output_enabled" :gates="state.gates" @device="toDevice" @notice="message = $event"/>
+      <InstrumentPage ref="instruments" v-show="page === 'instrument'" :state="state" :act="act" @task="fn => { message = ''; report(fn) }"
+        @load-measurement="requestMeasurementLoad"/>
       <RecordsPage v-show="page === 'records'" :session="state.id" :course="state.definition" :segments="state.product.segments"
         :calibrated="state.calibrated_devices" :snapshots="state.snapshots" :cached="!!state.definition.outputs?.length && !state.readonly"
         :calibrations="state.cached_calibrations"
         :imported="state.imported_items" :act="act"
         @task="report" @notice="message = $event"/>
       <output v-show="message" id="message" role="status">{{ message }}</output>
-      <StudentReader ref="reader" :course="state.definition" :status="(state.definition.devices.find(d => d.id === state?.device)?.label ?? '') + ' · ' + (state.running ? '采集中' : '已暂停') + (state.exposure_s !== null ? ' · 曝光 ' + fmt(state.exposure_s) + ' s' : '')"/>
+      <StudentPage v-show="page === 'materials'" :course="state.definition" :status="(state.running ? '采集中' : '待机') + (state.exposure_s !== null ? ' · 曝光 ' + fmt(state.exposure_s) + ' s' : '')" @back="navigate(previousPage)"/>
+      <MeasurementLoader ref="measurementLoader" :session="state.id" :act="act" @task="report" @notice="message = $event"/>
       </div>
     </section>
   </main>
-  <dialog id="confirm" ref="dialog" aria-labelledby="exit-title" @cancel.prevent="report(cancelExit)">
-    <h2 id="exit-title">退出实验</h2><p id="exit-message">{{ reason.length ? reason.join('，') + '。确认期间仿真时钟冻结。' : '退出并返回实验目录？' }}</p>
+  <dialog id="confirm" ref="dialog" aria-labelledby="exit-title" @cancel.prevent="report(returnToExperiment)">
+    <h2 id="exit-title">{{ replacementFile ? '载入实验' : '退出实验' }}</h2><p id="exit-message">{{ reason.length ? reason.join('，') + '。确认期间仿真时钟冻结。' : '退出并返回实验目录？' }}</p>
     <p v-if="livePortable" class="notice">本场缓存只保留在当前服务中。下载整场文件后可在另一台电脑重开；取消下载或尚未保存文件时可返回实验。</p>
     <p v-if="exitDownloadStarted" id="exit-download-status">浏览器已发起下载。确认文件已保存后再退出。</p>
     <p v-if="copyNotice" id="copy-notice">{{ copyNotice }}</p>
     <p id="exit-error" role="alert" :hidden="!error">{{ error }}</p><div class="dialog-actions">
-      <button id="cancel" autofocus @click="report(cancelExit)">继续实验</button>
-      <button id="discard" @click="leave(false)">{{ reason.length ? '放弃并退出' : '退出并返回目录' }}</button>
+      <button id="cancel" autofocus @click="report(returnToExperiment)">继续实验</button>
+      <button id="discard" @click="leave(false)">{{ replacementFile ? '放弃本场并载入' : reason.length ? '放弃并退出' : '退出并返回目录' }}</button>
       <button id="save-exit" class="primary" :hidden="!reason.length && !livePortable" @click="leave(true)">{{ livePortable ? '下载整场实验' : state?.readonly ? '保存副本并退出' : '保存实验并退出' }}</button>
-      <button v-if="exitDownloadStarted" id="exit-after-download" @click="leave(false)">文件已保存，退出</button>
+      <button v-if="exitDownloadStarted" id="exit-after-download" @click="leave(false)">{{ replacementFile ? '文件已保存，载入' : '文件已保存，退出' }}</button>
     </div>
   </dialog>
 </template>

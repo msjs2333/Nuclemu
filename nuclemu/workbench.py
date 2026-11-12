@@ -7,7 +7,7 @@ from math import isfinite
 from pathlib import Path
 
 from .catalog import discover
-from .core import Session
+from .core import Session, _UNCHANGED
 from .results import Calibration, MeasurementView, net_count_rate, roi_centroid, save_product, snapshot_product
 
 
@@ -215,16 +215,34 @@ class Workbench:
         origin = getattr(self.lab.view, "measurement_origin", None)
         return self.session if origin is None else origin(index)
 
+    def readout_snapshot(self, snapshot, first=0, last=None, *, calibration=None):
+        """Read a whole saved spectrum, retaining every contributing condition."""
+        if snapshot.device != self.device.id or len(snapshot.counts) != self.device.channels:
+            raise ValueError("Saved measurement belongs to another instrument")
+        if calibration is not None:
+            if self.device.kind != "spectrum":
+                raise ValueError("Energy calibration requires a spectrum instrument")
+            calibration.check(self.session.experiment.id, self.device.id, self.device.channels,
+                              self.device.calibration_parameters)
+        if self.device.kind != "spectrum":
+            return dict(counts=sum(snapshot.counts), exposure_s=snapshot.exposure_s,
+                        rate=sum(snapshot.counts) / snapshot.exposure_s)
+        return self._readout({"settings": snapshot.segments[-1].settings}, snapshot.counts,
+                             snapshot.exposure_s, first, last,
+                             conditions=tuple(row.settings for row in snapshot.segments), calibration=calibration)
+
     def _readout(self, segment, counts, exposure, first, last, cumulative_acquisition=None,
-                 *, measurement_index=None):
+                 *, measurement_index=None, conditions=None, calibration=_UNCHANGED):
         result = dict(counts=sum(counts), exposure_s=exposure, rate=sum(counts) / exposure)
         if self.device.kind == "spectrum":
             last = len(counts) - 1 if last is None else last
             center = roi_centroid(counts, first, last)
             result["roi_counts"] = sum(counts[first:last + 1])
             result["centroid"] = center
-            calibration = self.lab.calibrations.get(self.device.id)
-            conditions = (segment["settings"],) if cumulative_acquisition is None else self._spectrum_conditions()
+            if calibration is _UNCHANGED:
+                calibration = self.lab.calibrations.get(self.device.id)
+            if conditions is None:
+                conditions = (segment["settings"],) if cumulative_acquisition is None else self._spectrum_conditions()
             if calibration and not all(calibration.applies_to(settings) for settings in conditions):
                 calibration = None
             result["energy_MeV"] = calibration.energy(center) if calibration and center is not None else None
@@ -254,13 +272,27 @@ class Workbench:
         return result
 
     def calibrate(self, channel1, energy1, channel2, energy2):
+        return self._calibrate((channel1, energy1, channel2, energy2), self._spectrum_conditions())
+
+    def _snapshot_conditions(self, snapshot):
+        if (snapshot.device != self.device.id or len(snapshot.counts) != self.device.channels
+                or not snapshot.segments):
+            raise ValueError("Saved measurement belongs to another instrument or has no spectrum")
+        return tuple(row.settings for row in snapshot.segments)
+
+    def calibrate_snapshot(self, snapshot, channel1, energy1, channel2, energy2):
+        return self._calibrate((channel1, energy1, channel2, energy2), self._snapshot_conditions(snapshot))
+
+    def _calibrate(self, points, settings_sequence):
         if self.device.kind != "spectrum":
             raise ValueError("Energy calibration requires a spectrum instrument.")
-        settings = self.spectrum_settings()
+        settings = settings_sequence[0]
+        if any(key not in settings for key in self.device.calibration_parameters):
+            raise ValueError("Spectrum is missing its instrument calibration settings")
         conditions = tuple((key, settings[key]) for key in self.device.calibration_parameters)
-        calibration = Calibration(self.current, self.device.id, self.device.channels,
-                                  *map(float, (channel1, energy1, channel2, energy2)), conditions=conditions)
-        if not all(calibration.applies_to(settings) for settings in self._spectrum_conditions()):
+        calibration = Calibration(self.session.experiment.id, self.device.id, self.device.channels,
+                                  *map(float, points), conditions=conditions)
+        if not all(calibration.applies_to(settings) for settings in settings_sequence):
             raise ValueError("Select a spectrum with matching instrument settings before calibrating")
         self.lab.calibrations[self.device.id] = calibration
         return calibration
@@ -271,11 +303,17 @@ class Workbench:
         self._remember_file(path, {}, {(self.current, self.device.id): calibration})
 
     def apply_calibration(self, calibration):
+        self._apply_calibration(calibration, self._spectrum_conditions())
+
+    def apply_snapshot_calibration(self, snapshot, calibration):
+        self._apply_calibration(calibration, self._snapshot_conditions(snapshot))
+
+    def _apply_calibration(self, calibration, settings_sequence):
         if self.device.kind != "spectrum":
             raise ValueError("Energy calibration requires a spectrum instrument.")
-        calibration.check(self.current, self.device.id, self.device.channels,
+        calibration.check(self.session.experiment.id, self.device.id, self.device.channels,
                           self.device.calibration_parameters)
-        if not all(calibration.applies_to(settings) for settings in self._spectrum_conditions()):
+        if not all(calibration.applies_to(settings) for settings in settings_sequence):
             raise ValueError("Calibration does not match the selected spectrum's settings.")
         self.lab.calibrations[self.device.id] = calibration
 

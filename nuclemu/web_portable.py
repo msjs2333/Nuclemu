@@ -116,12 +116,18 @@ def open_portable(data, definitions, store, clock):
             identity = saved.get(key)
             if identity is None:
                 continue
+            if key in ('selected', 'reference'):
+                lab.saved_measurement(identity, device)
+                lab.saved_selection.setdefault(device, {})[key] = identity
+                lab.saved_analysis.setdefault(device, {})[key] = identity
+                unresolved.pop(key, None)
             indices = overlay.item_indices.get(identity, ())
             if len(indices) == 1:
                 target[key] = indices[0]
             else:
-                unresolved[key] = identity
-                lab.portable_preserved_analysis.setdefault(device, {})[key] = identity
+                if key not in ('selected', 'reference'):
+                    unresolved[key] = identity
+                    lab.portable_preserved_analysis.setdefault(device, {})[key] = identity
         if unresolved:
             lab.portable_unresolved[device] = unresolved
 
@@ -137,6 +143,7 @@ def open_portable(data, definitions, store, clock):
                    if item["kind"] == "measurement" and doc["device"] in item["document"]["devices"]), None)
     saved_selected = doc.get('analysis', {}).get(doc['device'], {}).get('selected')
     if latest and saved_selected is None:
+        lab.saved_selection.setdefault(doc['device'], {})['selected'] = latest['id']
         indices = overlay.item_indices[latest["id"]]
         if len(indices) == 1:
             lab.analysis[doc["device"]]["selected"] = indices[0]
@@ -144,7 +151,6 @@ def open_portable(data, definitions, store, clock):
                 lab.portable_default_selection[doc['device']] = indices[0]
         else:
             lab.analysis[doc["device"]]["selected"] = None
-            lab.portable_unresolved.setdefault(doc["device"], {})["selected"] = latest["id"]
         calibration = calibrations.get(latest.get("calibration_id"))
         if calibration:
             lab.work.lab.calibrations[calibration.device] = calibration

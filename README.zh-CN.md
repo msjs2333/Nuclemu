@@ -4,7 +4,7 @@
 
 [English](README.md)
 
-Nuclemu 是面向本科实验课的本地核物理仿真软件。当前开发版本包含 α 能损和 β 吸收实验。学生可以改变铝箔厚度，观测 α 谱的峰移，或比较 β 计数器在不同厚度下的净计数率。
+Nuclemu 是面向本科实验课的本地核物理仿真软件。当前开发版本包含 α 能损和 β 吸收实验。学生可以改变铝箔厚度，观测 α 谱的峰移。在 β 实验中，学生分别测量样品计数和环境本底，利用记录的实际曝光计算净计数率。
 
 ## 开始使用
 
@@ -29,10 +29,10 @@ python -m nuclemu run beta --device counter --enable-output beta_detector --step
 
 | 文档 | 内容 |
 |---|---|
-| [图形实验台](docs/gui.md) · [命令行](docs/cli.md) | 采集、刻度、扣本底和导出操作 |
-| 学生手册 · [α 能损](docs/alpha.md) · [β 吸收](docs/beta.md) | 实验步骤、仪器读数与结果解释 |
-| 教师用书 · [α 能损](docs/teacher/alpha.md) · [β 吸收](docs/teacher/beta.md) | 测量示例、能量刻度与计数不确定度的课堂讨论 |
-| 技术参考 · [α 能谱](docs/technical/alpha.md) · [β 计数](docs/technical/beta.md) | 仪器参数、模型适用范围和可复现的测量用例 |
+| [图形实验台](docs/gui.md) · [命令行](docs/cli.md) | 采集、刻度、导出以及命令行可选的扣本底操作 |
+| [学生手册](docs/student.md) · [α 能损](docs/alpha.md) · [β 吸收](docs/beta.md) | 实验步骤、空白记录表与实测数据处理 |
+| [教师用书](docs/teacher/README.md) · [α 能损](docs/teacher/alpha.md) · [β 吸收](docs/teacher/beta.md) | 备课、能量刻度与计数不确定度的课堂讨论 |
+| [技术参考](docs/technical/README.md) · [α 能谱](docs/technical/alpha.md) · [β 计数](docs/technical/beta.md) | 仪器参数、模型适用范围和可复现的测量用例 |
 | [交付规划](docs/plan.md) | 工作台的范围、交付顺序和完成条件 |
 | [框架与接口](docs/architecture.md) | 实验模块、仿真时间、仪器面板和测量数据 |
 | [12 个实验](docs/experiments.md) | 每项实验的物理问题、测量设计与验收要求 |

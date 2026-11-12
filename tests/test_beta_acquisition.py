@@ -12,7 +12,7 @@ import unittest
 from examples.beta_windows import background_comparison, counts, dual_windows
 from nuclemu.catalog import describe
 from nuclemu.core import Device, Parameter, Session
-from nuclemu.experiments.beta import DETECTOR_OUTPUT, EXPERIMENT, sample_counts
+from nuclemu.experiments.beta import DETECTOR_OUTPUT, EXPERIMENT, expected_rates, particle_flow, sample_counts
 from nuclemu.physics import AluminumFoil
 from nuclemu.results import MeasurementView, write_product
 
@@ -27,6 +27,9 @@ class BetaAcquisitionTests(unittest.TestCase):
         self.assertIsNone(parts['detector']['device'])
         self.assertEqual([d.input for d in EXPERIMENT.devices], [DETECTOR_OUTPUT] * 2)
         self.assertEqual([d.channels for d in EXPERIMENT.devices], [1, 1])
+        self.assertEqual(parts['counter']['devices'], ('counter', 'counter_b'))
+        self.assertNotIn('counter_b', parts)
+        self.assertEqual([p['id'] for p in entry['components'] if p['kind'] == 'instrument'], ['counter'])
 
     def test_foil_specs_empty_and_equivalent_stacks(self):
         for spec in (50, 100):
@@ -44,27 +47,47 @@ class BetaAcquisitionTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 session.set(key, value)
 
-    def test_shared_5_plus_5_equals_10_at_multiple_foil_conditions(self):
-        for spec, foils in ((50, 0), (50, 8), (100, 4), (100, 24)):
-            with self.subTest(spec=spec, foils=foils):
-                s = Session(EXPERIMENT, seed=42)
-                s.set('foil_spec_um', spec); s.set('foil_count', foils)
-                s.set_output(DETECTOR_OUTPUT, True)
-                s.start(5, device='counter'); s.start(10, device='counter_b')
-                s.advance(5)
-                first = counts(s, 'counter')
-                self.assertEqual(first, counts(s, 'counter_b'))
-                self.assertFalse(s.instrument('counter').running)
-                self.assertTrue(s.instrument('counter_b').running)
-                s.snapshot('counter'); s.clear(device='counter')
-                s.start(5, device='counter'); s.advance(5)
-                self.assertEqual(counts(s, 'counter'), counts(s, 'counter_b'))
-                left = [r for r in s.records if 'counter' in r.readings]
-                right = [r for r in s.records if 'counter_b' in r.readings]
-                self.assertEqual([r.readings['counter'][0] for r in left],
-                                 [r.readings['counter_b'][0] for r in right])
-                self.assertEqual(sum(r.exposure_s for r in left), 10)
-                self.assertEqual(sum(r.exposure_s for r in right), 10)
+    def test_known_input_and_offset_gates_explain_each_reading(self):
+        # A dedicated ideal input checks routing, not random equality in class.
+        experiment = replace(EXPERIMENT, model=lambda settings, start, end, rng:
+                             {DETECTOR_OUTPUT: (round(10 * (end - start)),)})
+        s = Session(experiment, seed=42)
+        s.set_output(DETECTOR_OUTPUT, True)
+        s.start(5, device='counter')
+        s.advance(2)
+        s.start(5, device='counter_b')
+        s.advance(3)
+        self.assertEqual((s.instrument('counter').counts, s.instrument('counter').exposure_s), ((50,), 5))
+        self.assertEqual((s.instrument('counter_b').counts, s.instrument('counter_b').exposure_s), ((30,), 3))
+        self.assertFalse(s.instrument('counter').running)
+        self.assertTrue(s.instrument('counter_b').running)
+        s.advance(2)
+        self.assertEqual((s.instrument('counter_b').counts, s.instrument('counter_b').exposure_s), ((50,), 5))
+
+    def test_flow_uses_model_mean_and_does_not_advance_rng_or_measurement(self):
+        s = Session(EXPERIMENT, seed=42)
+        self.assertEqual(s.settings['source_present'], 0)
+        empty = particle_flow(s.settings)
+        self.assertEqual((empty['incident_rate_s'], empty['transmitted_rate_s'], empty['background_rate_s']), (0, 0, 2))
+        s.configure({'source_present': 1, 'foil_count': 4})
+        twin = Session(EXPERIMENT, seed=42)
+        twin.configure({'source_present': 1, 'foil_count': 4})
+        rates = expected_rates(s.settings)
+        for _ in range(100):
+            flow = particle_flow(s.settings)
+            self.assertEqual(flow['transmitted_rate_s'] + flow['background_rate_s'], rates['detector_cps'])
+        self.assertEqual(s.time_s, 0)
+        self.assertAlmostEqual(flow['areal_density_g_cm2'], .108)
+        self.assertAlmostEqual(flow['transmission'], 2 ** (-.108 / .112))
+        s.set_output(DETECTOR_OUTPUT, True)
+        self.assertEqual(particle_flow(s.settings), flow)
+        s.set_output(DETECTOR_OUTPUT, False)
+        self.assertEqual(particle_flow(s.settings), flow)
+        for current in (s, twin):
+            current.set_output(DETECTOR_OUTPUT, True)
+            current.start(5, device='counter')
+            current.advance(5)
+        self.assertEqual(s.instrument('counter').counts, twin.instrument('counter').counts)
 
     def test_a_stops_while_b_continues_and_export_exposures_stay_separate(self):
         result = dual_windows(reopen=False)
@@ -78,6 +101,7 @@ class BetaAcquisitionTests(unittest.TestCase):
 
     def test_empty_source_keeps_background_but_output_off_is_zero_input(self):
         s = Session(EXPERIMENT, seed=42)
+        s.set('source_present', 1)
         s.advance(10)
         self.assertEqual(s.time_s, 0)
         s.set('source_present', 0)
@@ -104,7 +128,6 @@ class BetaAcquisitionTests(unittest.TestCase):
             middle = [r for r in rows if 3 <= r.start_s and r.end_s <= 7]
             self.assertEqual(sum(r.exposure_s for r in middle), 4)
             self.assertTrue(all(r.readings[device] == (0,) for r in middle))
-        self.assertEqual(counts(s, 'counter'), counts(s, 'counter_b'))
 
     def test_background_selection_changes_only_analysis_with_unequal_exposures(self):
         result = background_comparison()
@@ -149,6 +172,7 @@ class BetaAcquisitionTests(unittest.TestCase):
     def test_refresh_chunking_does_not_change_the_same_gate_timeline(self):
         def run(chunk):
             s = Session(EXPERIMENT, seed=42)
+            s.set('source_present', 1)
             s.set('foil_count', 4); s.set_output(DETECTOR_OUTPUT, True)
             s.start(5, device='counter'); s.start(10, device='counter_b')
             view = MeasurementView(s)

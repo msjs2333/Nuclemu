@@ -11,6 +11,7 @@ export interface Part {
   id: string; label: string; kind: string; description: string; parameters: string[]; device: string | null
   illustration?: string | null
   output?: string | null
+  devices?: string[]
 }
 export interface Edge { source: string; target: string; kind: string; label: string }
 export interface Course {
@@ -30,7 +31,10 @@ export interface Calibration {
   conditions: [string, number][]
 }
 export interface CalibrationContext {
-  device: string; selected: number | null; settings: Record<string, number>
+  device: string; selected: number | null; record_id: string | null; settings: Record<string, number>
+}
+export interface SavedObservation {
+  id: string; device: string; title: string; counts: number[]; exposure_s: number; segments: Segment[]; calibration_id: string | null
 }
 export interface State {
   id: string; experiment: string; definition: Course; settings: Record<string, number>
@@ -38,6 +42,9 @@ export interface State {
   dirty: boolean; readonly: boolean; recovered_s: number | null; device: string; selected: number | null
   product: { segments: Segment[] }; calibration: Calibration | null; reference_calibration: Calibration | null
   product_cursor: string
+  selected_item_id: string | null; reference_item_id: string | null
+  selected_observation: SavedObservation | null; reference_observation: SavedObservation | null
+  saved_measurements: {id: string; device: string; title: string; exposure_s: number; settings: Record<string, number>[]; calibration_id: string | null}[]
   measurement_end_s: number
   confirmation_id: number | null
   active_acquisition: number | null
@@ -46,7 +53,7 @@ export interface State {
   gates: Record<string, boolean>
   snapshots: {id: number; device: string; acquisition: number; time_s: number; exposure_s: number; counts: number; settings: Record<string, number>[]; background_eligible: boolean}[]
   imported_items: {id: string; device: string; title: string; acquisition: number; exposure_s: number; source: {package: string; item: string}}[]
-  clear_confirmation: {token: number; exposure_s: number} | null
+  clear_confirmation: {device: string; token: number; exposure_s: number} | null
   readout_error: string | null
   portable_loaded: boolean
   portable_unresolved: Record<string, Record<string, unknown>>
@@ -54,7 +61,10 @@ export interface State {
   counter_analysis: {index: number; net_rate?: number; uncertainty?: number; background_reference?: boolean; error?: string}[]
   instrument: {device: string; acquisition: number | null; cycle: number | null;
     counts: number[]; readable_exposure_s: number; stop_reason: string | null; clearing: boolean;
-    duration_s: number | null; count_limit: number | null; window_s: number} | null
+    duration_s: number | null; count_limit: number | null; window_s: number; next_window_s?: number | null} | null
+  instruments: Record<string, NonNullable<State['instrument']> & {running: boolean; exposure_s: number; remaining_s: number | null}>
+  counter_windows: Record<string, {number: number; start_exposure_s: number; end_exposure_s: number; counts: number[]; complete: boolean; parts: {start_s: number; end_s: number; settings: Record<string, number>}[]}[]>
+  particle_flow: {kind: string; material: string; thickness_um: number; areal_density_g_cm2: number; incident_rate_s: number; transmitted_rate_s: number; lines?: {incident_MeV: number; residual_MeV: number; incident_rate_s: number; transmitted_rate_s: number}[]} | null
   calibration_context: CalibrationContext
   calibrated_devices: string[]
   draft_error?: string
@@ -67,7 +77,7 @@ export interface State {
   analysis: { roi: [number, number]; reference: number | null; background: number | null; energy_axis: boolean; rate_axis: boolean }
   readout: {counts: number; exposure_s: number; roi_counts?: number; centroid?: number | null; energy_MeV?: number | null} | null
 }
-export type Page = 'setup' | 'instrument' | 'records'
+export type Page = 'setup' | 'instrument' | 'records' | 'materials'
 export type Act = (name: string, fields?: Record<string, unknown>, session?: string) => Promise<void>
 export type Open = {experiment: string} | {archive: string} | {draft: string}
 export interface Series { label: string; counts: number[]; divisor: number; channelPosition?: (channel: number) => number }

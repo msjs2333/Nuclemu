@@ -20,7 +20,7 @@ class WebExchange:
         self.document = deepcopy(validate_document(previous_document)) if previous_document is not None else None
 
     def refresh(self, session, *, device=None, definition=None, product=None, analysis=None, item_indices=None,
-                preserved_analysis=None):
+                preserved_analysis=None, identity_analysis=None):
         # First collect snapshots; no preview or live observation is created.
         doc = capture_session(session, self.document, definition=definition, device=device)
         if analysis is not None:
@@ -30,6 +30,10 @@ class WebExchange:
                 selection = deepcopy(values)
                 unresolved = {}
                 for key in ("selected", "reference", "background"):
+                    explicit = (identity_analysis or {}).get(instrument, {}).get(key)
+                    if explicit is not None:
+                        selection[key] = explicit
+                        continue
                     preserved = (preserved_analysis or {}).get(instrument, {}).get(key)
                     if preserved is not None:
                         selection[key] = preserved

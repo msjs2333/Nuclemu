@@ -36,6 +36,7 @@ def zero_sample():
 def overlapping_snapshots():
     """Annotated non-independent case, not an automatic provenance classifier."""
     s = Session(EXPERIMENT, seed=42)
+    s.set('source_present', 1)
     s.set_output(DETECTOR_OUTPUT, True)
     s.start(5, device="counter")
     s.advance(3)

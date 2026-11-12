@@ -140,7 +140,7 @@ class WebContextTests(unittest.TestCase):
         self.spectra()
         self.call("select", device="left", index=0)
         context = deepcopy(self.app.lab.state()["calibration_context"])
-        self.assertEqual(context, {"device": "left", "selected": 0, "settings": {"gain": 1}})
+        self.assertEqual(context, {"device": "left", "selected": 0, "record_id": None, "settings": {"gain": 1}})
         calibration = Calibration("two", "left", 8, 0, 0, 7, 7, conditions=(("gain", 1),))
         for action, payload in (("calibrate", {"points": [0, 0, 7, 7]}),
                                 ("load_calibration", {"calibration": calibration.document()})):

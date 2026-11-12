@@ -7,14 +7,14 @@ import unittest
 
 from nuclemu.catalog import describe, discover
 from nuclemu.core import Device, Experiment, Parameter, Session
-from nuclemu.experiments.alpha import DETECTOR_OUTPUT, EXPERIMENT, configured_foil, transmitted_energy
+from nuclemu.experiments.alpha import DETECTOR_OUTPUT, EXPERIMENT, configured_foil, particle_flow, transmitted_energy
 from nuclemu.physics import AluminumFoil
 from nuclemu.results import Calibration, MeasurementView
 
 
 def acquire(thickness_um, seconds=60, seed=187):
     session = Session(EXPERIMENT, seed=seed)
-    session.configure({"foil_spec_um": 1, "foil_count": thickness_um})
+    session.configure({"source_present": 1, "foil_spec_um": 1, "foil_count": thickness_um})
     session.set_output(DETECTOR_OUTPUT, True)
     session.start(seconds, device="mca")
     session.advance(seconds)
@@ -73,7 +73,7 @@ class AlphaTransportTests(unittest.TestCase):
 
     def test_legacy_live_settings_are_normalized_once_and_fail_atomically(self):
         session = Session(EXPERIMENT)
-        session.configure({"foil_spec_um": 2, "foil_count": 3})
+        session.configure({"source_present": 1, "foil_spec_um": 2, "foil_count": 3})
         session.set("foil_um", 5)
         self.assertEqual(dict(session.settings), {"source_present": 1, "foil_spec_um": 1.0, "foil_count": 5})
         session.configure({"foil_um": 0.0, "source_present": 0})
@@ -94,12 +94,38 @@ class AlphaTransportTests(unittest.TestCase):
     def test_different_sheet_stacks_of_equal_thickness_give_equal_spectra(self):
         _, expected = acquire(6, seconds=10)
         other = Session(EXPERIMENT, seed=187)
-        other.configure({"foil_spec_um": 2, "foil_count": 3})
+        other.configure({"source_present": 1, "foil_spec_um": 2, "foil_count": 3})
         other.set_output(DETECTOR_OUTPUT, True)
         other.start(10, device="mca")
         other.advance(10)
         counts = MeasurementView(other).product()["segments"][0]["readings"]["mca"]
         self.assertEqual(counts, expected)
+
+    def test_reused_course_sheet_menu_and_instrument_instances(self):
+        from examples.courses.alpha_fine_foil import EXPERIMENT as fine
+        session = Session(fine, seed=187)
+        session.configure({"source_present": 1, "foil_spec_um": 0.5, "foil_count": 6})
+        self.assertAlmostEqual(configured_foil(session.settings).thickness_mm, 0.003)
+        self.assertAlmostEqual(session.particle_flow["thickness_um"], 3)
+        session.set_output(DETECTOR_OUTPUT, True)
+        session.start(3, device="mca")
+        session.advance(3)
+        _, expected = acquire(3, seconds=3)
+        self.assertEqual(list(session.instrument("mca").counts), expected)
+        two = replace(EXPERIMENT, components=(), connections=(), devices=(
+            EXPERIMENT.devices[0], Device("second", "spectrum", "第二台 MCA", 1024, input=DETECTOR_OUTPUT)))
+        session = Session(two, seed=187)
+        session.set("source_present", 1)
+        session.set_output(DETECTOR_OUTPUT, True)
+        session.configure_acquisition("mca", duration_s=2)
+        session.configure_acquisition("second", duration_s=5)
+        session.start(device="mca")
+        session.start(device="second")
+        session.advance(5)
+        self.assertEqual(session.instrument("mca").exposure_s, 2)
+        self.assertEqual(session.instrument("second").exposure_s, 5)
+        self.assertEqual(session.instrument("mca").duration_s, 2)
+        self.assertEqual(session.instrument("second").duration_s, 5)
 
 
 class AlphaSpectrumTests(unittest.TestCase):
@@ -148,7 +174,7 @@ class AlphaSpectrumTests(unittest.TestCase):
     def test_refresh_chunks_do_not_change_the_acquired_spectrum(self):
         reference, _ = acquire(5, seconds=1.25, seed=92)
         split = Session(EXPERIMENT, seed=92)
-        split.configure({"foil_spec_um": 1, "foil_count": 5})
+        split.configure({"source_present": 1, "foil_spec_um": 1, "foil_count": 5})
         split.set_output(DETECTOR_OUTPUT, True)
         split.start()
         for _ in range(25):
@@ -158,6 +184,51 @@ class AlphaSpectrumTests(unittest.TestCase):
 
 
 class AlphaEquipmentTests(unittest.TestCase):
+    def test_new_source_is_empty_until_explicitly_loaded(self):
+        session = Session(EXPERIMENT, seed=187)
+        self.assertEqual(session.settings["source_present"], 0)
+        session.set_output(DETECTOR_OUTPUT, True)
+        session.start(device="mca")
+        session.advance(2)
+        empty = session.snapshot("mca")
+        self.assertEqual((empty.exposure_s, sum(empty.counts)), (2, 0))
+        session.set("source_present", 1)
+        session.advance(2)
+        loaded = session.snapshot("mca")
+        self.assertEqual(loaded.exposure_s, 4)
+        self.assertGreater(sum(loaded.counts), 0)
+        self.assertEqual(sum(empty.counts), 0)
+
+    def test_physics_metadata_uses_csda_without_changing_acquisition(self):
+        # Check the technical metadata and RNG isolation, not visual dot counts.
+        def timeline(read_metadata):
+            session = Session(EXPERIMENT, seed=187)
+            session.set("source_present", 1)
+            session.set_output(DETECTOR_OUTPUT, True)
+            session.start(4, device="mca")
+            for count in (0, 5, 25, 30):
+                session.set("foil_count", count)
+                if read_metadata:
+                    for _ in range(120):
+                        flow = particle_flow(session.settings)
+                    self.assertEqual(flow["incident_rate_s"], 75)
+                    expected = (75, 75, 25, 0)[(0, 5, 25, 30).index(count)]
+                    self.assertEqual(flow["transmitted_rate_s"], expected)
+                session.advance(1)
+            return session.snapshot("mca")
+        queried, unqueried = timeline(True), timeline(False)
+        self.assertEqual(queried.counts, unqueried.counts)
+        self.assertEqual(queried.exposure_s, unqueried.exposure_s)
+        session = Session(EXPERIMENT)
+        self.assertEqual(particle_flow(session.settings)["incident_rate_s"], 0)
+        session.configure({"source_present": 1, "foil_count": 5})
+        flow = particle_flow(session.settings)
+        for line, energy in zip(flow["lines"], (4.306741, 4.673632, 5.032984)):
+            self.assertAlmostEqual(line["residual_MeV"], energy, places=5)
+        # Electrical output is still off, but the source still emits.
+        self.assertFalse(session.output_enabled[DETECTOR_OUTPUT])
+        self.assertEqual(flow["incident_rate_s"], 75)
+
     def test_apparatus_maps_independent_output_and_instrument(self):
         entry = describe(EXPERIMENT)
         parts = {part["id"]: part for part in entry["components"]}
@@ -211,6 +282,7 @@ class AlphaEquipmentTests(unittest.TestCase):
         definition = replace(EXPERIMENT, components=(), connections=(), devices=(
             EXPERIMENT.devices[0], Device("second", "spectrum", "第二台 MCA", 1024, input=DETECTOR_OUTPUT)))
         session = Session(definition, seed=187)
+        session.set("source_present", 1)
         session.set_output(DETECTOR_OUTPUT, True)
         session.start(5)
         session.advance(5)
@@ -220,6 +292,7 @@ class AlphaEquipmentTests(unittest.TestCase):
 
     def test_detector_off_in_middle_does_not_shorten_mca_exposure(self):
         session = Session(EXPERIMENT, seed=187)
+        session.set("source_present", 1)
         session.set_output(DETECTOR_OUTPUT, True)
         session.start(10, device="mca")
         session.advance(3)

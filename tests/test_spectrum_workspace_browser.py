@@ -1,5 +1,7 @@
 """Real alpha spectrum workflow: cumulative channels, ROI and energy calibration."""
 
+import json
+from pathlib import Path
 import unittest
 
 import test_catalog_records_browser as fixtures
@@ -20,7 +22,7 @@ class SpectrumWorkspaceBrowserTests(unittest.TestCase):
 
     def set_part(self, part, values):
         self.page.locator('[data-page=setup]').click()
-        self.page.locator(f'[data-part="{part}"]').click()
+        self.page.locator('#operation-tab').click()
         changed = False
         for key, value in values.items():
             field = self.page.locator(f'#component [name="{key}"]')
@@ -42,18 +44,24 @@ class SpectrumWorkspaceBrowserTests(unittest.TestCase):
         self.enter('alpha')
         self.set_part('source', {'source_present': source})
         self.set_part('foil', {'foil_spec_um': 1, 'foil_count': 0})
+        self.page.locator('#output-alpha_detector').check()
+        expect(self.page.locator('#output-alpha_detector')).to_be_checked()
         self.page.locator('[data-part=detector]').click()
-        self.page.locator('#part-output').check()
-        expect(self.page.locator('#part-output')).to_be_checked()
+        expect(self.page.locator('[data-page=setup]')).to_have_attribute('aria-current', 'page')
         self.page.locator('[data-part=mca]').click()
         expect(self.page.locator('[data-page=setup]')).to_have_attribute('aria-current', 'page')
         self.page.locator('#open-instrument').click()
-        expect(self.page.locator('#device')).to_have_value('mca')
+        expect(self.page.locator('#device')).to_have_count(0)
+        expect(self.page.locator('[data-page=instrument]')).to_have_text('多道谱仪')
         expect(self.page.locator('#other')).to_have_count(0)
 
     def analysis(self):
-        if self.page.locator('#menu-analysis').get_attribute('aria-expanded') != 'true':
-            self.page.locator('#menu-analysis').click()
+        self.page.get_by_role('tab', name='谱分析', exact=True).click()
+
+    def start_collection(self, seconds):
+        self.page.locator('[data-page=instrument]').click()
+        self.page.get_by_role('tab', name='采集', exact=True).click()
+        fixtures.start_collection(self, seconds)
 
     def roi(self, first, last):
         self.analysis()
@@ -68,23 +76,41 @@ class SpectrumWorkspaceBrowserTests(unittest.TestCase):
         expect(self.page.locator('#roi-result')).to_contain_text(f"选区计数 {readout['roi_counts']:,} 次")
         return readout
 
-    def channels(self):
-        self.page.keyboard.press('Escape')
+    def save_current(self):
+        self.page.get_by_role('tab', name='采集', exact=True).click()
+        with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
+                                       r.request.post_data_json.get('action') == 'snapshot') as saved:
+            self.page.locator('#save-current').click()
+        self.assertTrue(saved.value.ok, saved.value.text())
+        return saved.value.json()['snapshots'][-1]['id']
+
+    def channels(self, snapshot_id=None):
+        """Download an explicitly saved spectrum through the student record UI."""
         expect(self.page.locator('#channel-table')).to_have_count(0)
-        state = self.state()
-        indices = [state['selected']] if state['selected'] is not None else [
-            i for i, segment in enumerate(state['product']['segments'])
-            if 'mca' in segment['readings'] and segment['acquisition'] == state['instrument']['acquisition']]
-        exported = self.page.request.post(self.url + '/api/export', data=dict(
-            session=state['id'], device='mca', format='json', kind='measurement', indices=indices))
-        self.assertTrue(exported.ok, exported.text())
-        segments = exported.json()['segments']
+        if snapshot_id is None:
+            snapshot_id = self.save_current()
+        self.page.locator('[data-page=records]').click()
+        for checkbox in self.page.locator('#products input:checked').all():
+            checkbox.uncheck()
+        row = self.page.locator(f'[data-key="s/{snapshot_id}"]')
+        row.locator('select').select_option('json')
+        row.locator('input').check()
+        with self.page.expect_download() as pending:
+            self.page.locator('#export').click()
+        destination = Path(self.folder.name, f'spectrum-{snapshot_id}.json')
+        pending.value.save_as(destination)
+        exported = json.loads(destination.read_text(encoding='utf-8'))
+        self.assertEqual(exported['format'], 'nuclemu.item/1')
+        measurement = next(item for item in exported['items'] if item['kind'] == 'measurement')
+        self.assertEqual(measurement['document']['snapshot']['id'], snapshot_id)
+        segments = measurement['document']['segments']
         self.assertTrue(all(len(segment['readings']['mca']) == 1024 for segment in segments))
+        self.page.locator('[data-page=instrument]').click()
         return [sum(segment['readings']['mca'][channel] for segment in segments) for channel in range(1024)]
 
     def test_alpha_three_peaks_roi_two_point_calibration_and_complete_export(self):
         self.alpha(1)
-        fixtures.start_collection(self, 60)
+        self.start_collection(60)
         self.now = 60
         expect(self.page.locator('#gate-status')).to_have_attribute('data-running', 'false')
         state = self.state()
@@ -126,7 +152,6 @@ class SpectrumWorkspaceBrowserTests(unittest.TestCase):
         self.assertGreater(middle['roi_counts'], 500)
         self.assertAlmostEqual(middle['energy_MeV'], 5.486, delta=.003)
         expect(self.page.locator('#roi-result')).to_contain_text('MeV')
-        self.page.locator('#menu-display').click()
         canvas = self.page.locator('#plot').evaluate('node => node.toDataURL()')
         self.page.locator('#energy').check()
         self.page.wait_for_function("previous => document.querySelector('#plot').toDataURL() !== previous", arg=canvas)
@@ -138,35 +163,34 @@ class SpectrumWorkspaceBrowserTests(unittest.TestCase):
         with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
                                        r.request.post_data_json.get('action') == 'analysis'):
             self.page.locator('#energy').check()
-        self.page.keyboard.press('Escape')
         self.page.set_viewport_size({'width': 1366, 'height': 844})
         self.analysis()
         expect(self.page.locator('#roi-result')).to_be_visible()
+        expect(self.page.locator('#stop')).to_be_in_viewport(ratio=1)
         self.assertEqual(self.page.evaluate('document.documentElement.scrollWidth'), 1366)
         self.screenshot('alpha-spectrum-workspace-1366')
-        self.page.keyboard.press('Escape')
-        self.assertEqual(self.page.evaluate('document.documentElement.scrollWidth'), 1366)
-        self.page.locator('#menu-display').click()
-        self.page.locator('#spectrum-range').select_option('full')
-        self.page.keyboard.press('Escape')
-        self.screenshot('alpha-spectrum-full-range-1366')
+        expect(self.page.locator('#menu-analysis, #menu-display, #spectrum-range')).to_have_count(0)
+        self.assertEqual(sum(self.channels()), total)
+        self.screenshot('alpha-spectrum-complete-export-1366')
 
     def test_waiting_zero_spectrum_cumulative_round_and_explicit_history(self):
         self.alpha(0)
         expect(self.page.locator('#channel-table')).to_have_count(0)
         expect(self.page.locator('#spectrum-total')).to_have_count(0)
-        fixtures.start_collection(self, 1)
+        self.start_collection(1)
         self.now = 1
         expect(self.page.locator('#gate-status')).to_have_attribute('data-running', 'false')
-        self.assertEqual(self.channels(), [0] * 1024)
+        zero_snapshot = self.save_current()
+        self.assertEqual(self.channels(zero_snapshot), [0] * 1024)
         zero = self.roi(845, 875)
         self.assertEqual(zero['roi_counts'], 0)
         self.assertIsNone(zero['centroid'])
         expect(self.page.locator('#roi-result')).to_contain_text('峰心 无计数')
         self.set_part('source', {'source_present': 1})
-        fixtures.start_collection(self, 2)
+        self.start_collection(2)
         self.now = 2
-        expect(self.page.locator('#current-readout')).to_contain_text(' / 1 s')
+        expect(self.page.locator('#exposure')).to_have_text('1 s')
+        self.assertEqual(self.state()['instrument']['readable_exposure_s'], 1)
         self.page.locator('#stop').click()
         expect(self.page.locator('#start')).to_be_enabled()
         acquisition = self.state()['instrument']['acquisition']
@@ -182,13 +206,15 @@ class SpectrumWorkspaceBrowserTests(unittest.TestCase):
         self.assertEqual(sum(self.channels()), state['readout']['counts'])
         segments = state['product']['segments']
         self.assertEqual(sum(segments[-1]['readings']['mca']), 0)
-        self.page.locator('#menu-display').click()
-        self.page.locator('#sample').select_option(str(len(segments) - 1))
-        self.page.keyboard.press('Escape')
-        self.assertEqual(self.channels(), [0] * 1024)
-        self.page.locator('#menu-display').click()
+        self.analysis()
+        identity = next(snapshot['item_id'] for snapshot in self.state()['snapshots'] if snapshot['id'] == zero_snapshot)
+        self.page.locator('#sample').select_option(identity)
+        selected = self.state()
+        self.assertEqual(selected['readout']['counts'], 0)
+        self.assertEqual(selected['readout']['exposure_s'], 1)
+        self.assertEqual(self.channels(zero_snapshot), [0] * 1024)
+        self.analysis()
         self.page.locator('#sample').select_option('')
-        self.page.keyboard.press('Escape')
         self.assertEqual(sum(self.channels()), state['readout']['counts'])
 
 

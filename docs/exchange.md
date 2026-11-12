@@ -24,6 +24,7 @@ from nuclemu.exchange import capture_session, save_package, load_package, reopen
 experiment = discover()["alpha"]
 s = Session(experiment, seed=187)
 s.set_output("alpha_detector", True)
+s.set("source_present", 1)
 s.start(5, device="mca")
 s.advance(3)
 s.snapshot("mca")                 # 学生主动保存，曝光 3 s
@@ -41,7 +42,7 @@ fresh.snapshot("mca")
 doc = capture_session(fresh, loaded)  # 保留旧项目及其身份，新增第二轮的 1 s 快照
 ```
 
-打开文件本身不执行模型或结清采集窗。`reopen_session()` 经公共 `Session.reopen()` 载入已验证的规范设置、历史轮次和缓存快照。所有门与探测输出均关闭，当前仪器从零曝光开始；按开始后建立新轮，编号接续。保留既有仪器目标和窗长，但不恢复随机流或未缓存的当前计数，不能称作精确续跑。
+打开文件本身不执行模型或结清采集窗。`reopen_session()` 经公共 `Session.reopen()` 载入已验证的规范设置、历史轮次和缓存快照。所有门与探测输出均关闭，当前仪器从零曝光开始；按开始后建立新轮，编号接续。保留既有仪器目标和窗长，但不恢复未缓存的当前计数。顶层 `random_stream` 保存根种子、派生规则和代数；重开时增加代数，生成新统计流。旧文件没有该字段时按初代处理。保存的观测保持原值，同一文件按相同操作重开仍可复现；不能称作原随机流的精确续跑。
 
 完整可跑例：
 
@@ -53,9 +54,9 @@ python -m examples.portable_experiment --directory portable-output
 
 ## Web 与 CLI 共用的下载和导入
 
-`package_download(doc)` 返回整场文件的 `(文件名, MIME, bytes)`，名称为 `nuclemu-实验ID-experiment.nuclemu`；它不接受记录勾选列表，始终包含全部手动缓存和元数据。
+`package_download(doc)` 返回整场文件的 `(文件名, MIME, bytes)`，名称为 `{CODE}_{YYYYMMDD-HHMMSS-ffffff}.nuclemu`；它不接受记录勾选列表，始终包含全部手动缓存和元数据。`CODE` 来自目录的 `short_code`，内置 α 为 `AEL`、β 为 `BABS`。时间是本机实际保存时刻，精确到微秒，不取仿真时刻；同进程遇到相同或回退的系统时间时，按上一名称递增一微秒，重复下载无需推进仿真。
 
-`batch_download(doc, [{"id": item_id, "format": "csv"}, ...])` 只导出指定项目。单项直接返回文件，多项返回 `nuclemu-saved-items.zip`，项目可分别选择格式，名称与整场包不同。刻度只支持 JSON。
+`batch_download(doc, [{"id": item_id, "format": "csv"}, ...])` 只导出指定项目。内置课程的单项名称采用 `{CODE}_{时间}_spectrum.csv`、`{CODE}_{时间}_calibration.json`、`{CODE}_{时间}_counts-A.csv` 或 `counts-B.csv`；谱和计数也支持 JSON。窗字母按课程装置绑定的顺序取得，外部同类多设备需要区分时附安全实例名。多项返回 `{CODE}_{时间}_records.zip`，成员沿用同批次时间并加顺序号去重，项目可分别选择格式。UUID 仅保留在文件内部。旧协议下载同样使用课程代码与真实保存时间，测量标签可附 `segment-N` 或 `segments`。默认主名与批量成员均不加 `nuclemu` 前缀；专有整场扩展名保留 `.nuclemu`。CLI 显式指定的输出路径原样生效。这些名称不改变文件内部的包、记录或来源身份。旧包缺少 `short_code` 时，当前工作台使用已安装课程的目录代码命名，不改原包。
 
 ```python
 from nuclemu.exchange import export_item, load_item, import_item
@@ -69,6 +70,28 @@ new_id = import_item(doc, bundle, identity)
 单项 JSON 包含所选项目及所依赖的刻度。单项 CSV 第一行以 `# ` 开头，保存 `nuclemu.item/1` 元数据与刻度关联；后续是标准列名和各道整数计数。第三方表格工具可以跳过第一行读计数；Nuclemu 读回时使用它恢复快照身份、截止曝光和刻度。全道谱保留零计数道，缺道、重道或曝光不符会报错。普通 `run --output` 保持既有无元数据行的测量 CSV，供外部分析；需要可重新导入的单项文件时，使用本节的导出。
 
 `import_item()` 完成校验后追加新 UUID 并保留源标识和刻度依赖。相同名称不覆盖已有项目；当前仪器及未保存读数不变。分析引用由调用方在导入成功后显式选择，不会因导入而自动改换本底或参考谱。导入来自不同实验或不符的设备类型/道数时明确报错。
+
+## 逐窗数据与载入仪器
+
+测量产品的 `windows` 保留窗口编号、累计曝光边界、整数计数、完整或未完成状态、该窗原定 `window_s`，以及窗内各工况的 `parts`。单项 CSV 每窗每道一行，`parts` 列保留窗内设置与原始读数；首行元数据同时保留累计工况段，读回时核对两种视图的工况、计数和曝光一致。缺少窗口字段的旧文件不凭累计读数拆造逐窗计数；载入后以 `window_prefix` 保存缺明细部分的累计曝光和计数，后续只追加真实新窗。窗口编号从已知窗口的 1 开始，不能称旧累计曝光为若干已测窗口。
+
+运行中改窗长记录为轮次 `window_changes`，保留请求时刻和实际生效曝光；当前窗按原定长度结清后才使用新长度。`instruments.next_window_s` 保存待生效值，重开待机时把它作为预设，不恢复未结清的现场窗。载入部分窗口时保留其原定长度，继续到原边界后才使用目标仪器的后续窗长。
+
+```python
+from nuclemu.exchange import decode_measurement
+
+decoded = decode_measurement("reference-3s.csv", experiment, "mca")
+# 多份测量的包或缓存还须传 item_id，不能自动猜选最后一份。
+fresh.load_measurement("mca", decoded.snapshot)
+# 仪器已有曝光时须先由界面确认，再显式 overwrite=True。
+fresh.set_output("alpha_detector", True)
+fresh.start(device="mca")
+fresh.advance(1)
+```
+
+`decode_measurement()` 无现场副作用，返回冻结的 `DecodedMeasurement(snapshot, calibration, source, item_id, title)`，统一检查实验、设备绑定、道数和刻度关联。记录页的 `import_item()` 只追加缓存；仪器载入使用 `Session.load_measurement()`，仅替换目标仪器，保持其他仪器和本场硬件设置。已有曝光即为非空，合法零计数也须确认覆盖。
+
+载入的已测曝光是固定前缀。旧段与旧窗口保留原始时刻和工况，新窗按本场时钟记录，累计曝光和窗号连续。段的 `origin` 区分来源时间线；缺省表示本场。`snapshot.source` 标识载入记录，轮次 `loaded_exposure_s`/`loaded_source` 记录前缀来源与曝光。源记录在 100–103 s 测得的三窗可在本场 0 s 载入并续采至四窗；本场时间不会跳到 103 s。单项文件和整场重开保留这些扁平来源标识，不嵌套整份原档。
 
 ## 既有内部档案转存
 

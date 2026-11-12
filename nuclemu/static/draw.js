@@ -25,7 +25,7 @@ function prepare(canvas) {
 function connect(g, start, end, kind, detour, active=true, cableIndex=0) {
   const dx=end.x-start.x, dir=dx>=0?1:-1;
   const x1=start.x+dir*(dir>0?start.right:start.left), x2=end.x-dir*(dir>0?end.left:end.right);
-  const color=kind==="particle"?(active?particle:"#a9b1b8"):(cableIndex%2?"#65839b":accent);
+  const color=kind==="particle"?(active?particle:"#a9b1b8"):(active?(cableIndex%2?"#65839b":accent):"#9ba6ae");
   const y1=start.outY;
   const points=[[x1,y1]];
   if(detour && kind!=="particle") {
@@ -104,7 +104,7 @@ function paintConnections(canvas, connections) {
       right: rect.width * Number(node.dataset.outX ?? 1) - half,
     });
   }
-  routes(surface.g, connections, positions, canvas.classList.contains("wiring"));
+  routes(surface.g, connections, positions, false);
 }
 
 export const margin={left:62,right:27,top:30,bottom:43};

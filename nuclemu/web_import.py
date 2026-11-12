@@ -42,7 +42,7 @@ def apply_import(lab, token, item_id):
     exchange = WebExchange(lab.exchange.document)
     doc = exchange.refresh(work.session, device=work.device.id, definition=lab.info,
                                product=product, analysis=lab.analysis, item_indices=getattr(view, 'item_indices', None),
-                               preserved_analysis=getattr(lab, 'portable_preserved_analysis', None))
+                               preserved_analysis=getattr(lab, 'portable_preserved_analysis', None), identity_analysis=lab.saved_analysis)
     validate_document(doc)
     new_id = import_item(doc, source, item_id)
     imported = next(i for i in doc["items"] if i["id"] == new_id)

@@ -1,92 +1,125 @@
-# β 课程的共用探测输入与双窗核验
+# β 课程：单台计数器双窗与逐窗文件
 
-本文核验 β 课程定义和 Python 公共调用。学生手册见 [β 射线吸收](beta.md)，采集、缓存和文件的交付约定以[测量工作流](measurement-workflow.md)为准。GUI 和 CLI 由各自入口接入同一课程，不在课程内实现另一套时钟或采集器。
+本页供课程、GUI、CLI 维护者复核模型和读数；学生与教师正文由相应教材维护。界面交付见[工作台验收](workbench-acceptance.md)，公共边界及文件规则见[测量工作流](measurement-workflow.md)和[可携实验文件](exchange.md)。
 
-## 器材与接口
+## 装置、端口与旧记录
 
-| 对象 | 标识与默认值 | 作用 |
+| 对象 | 稳定标识 | 物理作用与允许操作 |
 |---|---|---|
-| 源座 | `source`；`source_present=1` | 0 为空源座，1 为 β 源。空源座仍有环境本底，独立于空箔和探测开关。 |
-| Al 箔架 | `foil`；`foil_count=0`，`foil_spec_um=100` | 0–24 片；单片可选 50/100 µm，属于本课程的教学选定规格。0 片为空箔。 |
-| 探测器 | `detector`，`output="beta_detector"` | 输出含源窗、固定几何、阈值与探测效率及环境本底的有效计数，不再重复乘效率。 |
-| 计数器 A | `counter`，`input="beta_detector"` | 保留原设备 ID，单通道整数计数；独立开关采集门。 |
-| 计数器 B | `counter_b`，同一输入 | 理想无损分接同一批计数；不是另抽一次泊松数。 |
+| 源座 | `source`，`source_present` 默认 0 | 0 空源、1 装源；空源开探测输出时仍可测环境本底。 |
+| 箔架 | `foil`，`foil_count=0`，`foil_spec_um=100` | 0–24 片 Al，单片 50/100 µm；空箔与空源分开。 |
+| 探测器 | `detector`，输出 `beta_detector` | 电输出独立开关，不因关闭电输出而关闭物理源发射。 |
+| 计数器 | 一个 `counter` 装置部件 | `device='counter'` 保留主入口，`devices=('counter','counter_b')` 绑定同台仪器的 A/B 两窗。 |
+| 窗 A / B | `counter` / `counter_b` | 同一有效输入，各自设统计窗长和目标；学生面板一组开始／继续、暂停同时操作两窗。 |
 
-总厚度 `foil_spec_um × foil_count`，单位 µm。用 `AluminumFoil(总厚度 / 1000)` 换成 mm 后得到面密度。例如 50 µm 的 2 片与 100 µm 的 1 片均为 0.10 mm、0.027 g/cm²；24 片默认规格为 2.4 mm、0.648 g/cm²，未扩展原有效吸收模型的总厚度范围。两种规格不代表某套实物器材的标称值。
+两个底层设备 ID 是稳定读数目标，不代表装置中放了两台仪器。学生面板 A 左、B 右等宽并列，各窗参数在自身大读数下方。GUI 按部件的 `devices` 读取分组，不按课程 ID 或显示文字猜测。探测器到计数器只有一条电信号连接。独立设备复用应另用测试课程验证，不能改画本课装置。
 
-新课程保留 `beta`、`source_present`、`foil_count`、`counter`。`sample_counts` 返回的是具名探测输出 `beta_detector`，模型按给定区间抽样一次；框架再向每台开门的设备分发。部件绑定输出、设备绑定输入，界面不根据部件文字猜测端口。已有文件仍按自身设备和数值设置读回；缺少 `foil_spec_um` 的既有 β 记录按原课程的 100 µm/片解释，不回写旧数据，也不补造第二台仪器的读数。
+整机调用 `Session.start_group(component.devices)` / `stop_group(component.devices)`，同一物理时刻一次结算并共同开／关门，按各窗既有预设开始或继续各自轮次。操作先校验全组，任一目标不合法或清空确认未完成时整体拒绝，不得只启动一半。不用 `device=None` 代替明确范围，以免联动另一台仪器。探测输出不随整机启停改变；单窗保存、清空、载入仍须明确目标。底层独立门接口供模型及专用核验使用，不再描述为学生页逐窗启停步骤。
 
-初始探测输出及两台采集门均关闭。需要测源信号或空源本底时先 `set_output("beta_detector", True)`；空源本底的期望率为 2 s⁻¹。关闭探测输出后，已开门的仪器仍有曝光，但输入为合法零计数。全部输出和门都停止后，物理时间待机。
+已有文件保留其保存的设备、设置及读数。旧 `counter` 映射 A，`counter_b` 映射 B；没有 B 记录不补造。缺单片规格的旧 β 模型按原来 100 µm/片解释，不以新默认设置重算原始计数。没有逐窗数据的旧累计记录，只能作为旧累计观测，不能从总数拆造五行。
 
-## 两个 5 s 窗与一个 10 s 窗
+[ORTEC 995 说明](https://www.ortec-online.com/-/media/ametekortec/brochures/9/995-a4.pdf)可作为一台模块内 A/B 计数及门控的器材参考；本课左右同时显示、每窗独立窗长及整机共用启停属于明确的教学约定，不声称该型号具有本课全部 UI 行为。[ST260 手册](https://www.spectrumtechniques.com/wp-content/uploads/ST260-Manual.pdf)第 19–21 页区分显示计数和带经过时间的测量数据。本课具体操作以公共采集协议为准。
 
-在仓库根目录执行：
+## 模型、单位和粒子流显示
+
+课程函数 `expected_rates(settings)` 与 `sample_counts()` 共用同一均值计算：
 
 ```text
-python -m examples.beta_windows
+总厚度 / µm = foil_spec_um × foil_count
+m / (g·cm⁻²) = 2.70 × 总厚度 / µm × 10⁻⁴
+T = 2^(−m / 0.112)
+S = source_present × 100 × T  (s⁻¹)
+R = S + 2  (s⁻¹)
+N ~ Poisson(R × 区间实际曝光)
 ```
 
-其中 `dual_windows()` 的完整操作线如下。规格为 100 µm、4 片，种子为 42：
+100 s⁻¹ 是固定几何下的有效未加箔信号率，2 s⁻¹ 为环境本底。几何、源窗、阈值、探测效率等已合入经验响应；不是源总活度，也不再另乘距离效率或空气损失。规格上限 24×100 µm 对应 2.4 mm、0.648 g/cm²，适用域限于本课固定几何、Al 和允许设置。`source_present=0` 只移除 S；电输出关闭时，框架把送入门的输入置零而保留开门曝光。
+
+[CAEN β 透射实验](https://edu.caen.it/experiments/nuclear-physics/beta-radiation-transmission-through-matter/)支持逐层加吸收片比较计数率，并指出近指数透射只适用于部分曲线区域。这里的半值面密度是本课有效模型参数；不能据此推导完整 β 能谱、单粒子射程、散射角或材料内停止点。
+
+`particle_flow(settings)` 是纯模型状态函数，绑定到 `Experiment.particle_flow`，由 `Session.particle_flow` 提供给界面。它不调用随机数或推进时间，返回：
+
+- 公共字段 `kind`、`material`、`thickness_um`、`areal_density_g_cm2`。
+- `incident_rate_s`、`transmitted_rate_s`：上述固定几何有效信号率，供模型核对；不可标注为绝对粒子流或源活度，也不对应画面点数。
+- β 专有 `transmission`、`background_rate_s`。环境本底不画成源座发射的粒子。
+
+装置画面的扇束及空气背景点只表示源、材料、探测等状态，与真实计数无关；示意点既不是探测脉冲，也不是按曝光累积的单粒子记录。不能数点复算仪器读数，也不承诺画面疏密与计数率成比例。扇束不是从平均透射推导出的单粒子散射角，点的消失也不代表测得材料内停止位置。
+
+源存在时，关闭电输出只关闭可测电信号，不能抹去源状态；空源时源信号率为零，环境本底仍按模型测量。加箔改变真实模型的透射均值，学生应从计数器原始读数和实际曝光检验趋势。空气背景点不参与泊松抽样或本底扣除，模型的 2 s⁻¹ 本底保持不变。动画开关、帧率和重复读取状态函数均不得改变同一测量操作线的计数。
+
+## 输入与抽样关系
+
+本课采用同一 `beta_detector` 输出的理想无损分接，没有分路甄别差异。每个内核物理区间只抽样一次，再分发给当时开门的 A/B；不是各窗重新抽一次泊松数。两个窗的统计关系由共享输入及真实开门区间决定。
+
+恰好同时开门、同输入且覆盖相同区间的读数可共享同一批计数；错开的门、不同输入或不同甄别不能据名义窗长推出相等。课程不以两路数值必须相等或必须不同验收。理想路由用已知输入和错开门的专用测试验证；随机课程核验逐行曝光、整数、设备身份与工况。重叠窗或包含关系的累计快照不能按相互独立的泊松数处理。
+
+模型只有区间计数，没有每个脉冲的到达时刻。同一设置、种子和操作时刻下刷新频率与推进批次不应改变结果；改变门或工况的真实生效时刻可能改变抽样区间，不能承诺另一时间线仍沿用同一个潜在事件序列。
+
+## 五个短窗、一个长窗与热调工况
+
+运行公共接口例子：
+
+```text
+python -m examples.beta_window_rows
+python -m examples.beta_window_rows --retime
+```
+
+`acquire()` 使用 seed=42，显式装源，初始空箔、100 µm/片、探测输出开启。两窗同轮从 0 s 开始，定时累计曝光目标各为 5 s，A 统计窗 1 s、B 统计窗 5 s。2.5 s 时改为 4 片，门不停。5 s 后分别主动保存，再关闭输出。
 
 ```python
-from nuclemu.core import Session
-from nuclemu.experiments.beta import EXPERIMENT
-
-s = Session(EXPERIMENT, seed=42)
-s.set("foil_count", 4)
-s.set_output("beta_detector", True)
-s.start(5, device="counter")
-s.start(10, device="counter_b")
-s.advance(5)
-first = s.snapshot("counter")          # 279 次，5 s；保存后读数仍保留
-assert s.instrument("counter_b").running
-s.clear(device="counter")            # 已显式保存第一窗；只清 A 的当前读数
-s.start(5, device="counter")
-s.advance(5)
-second = s.snapshot("counter")         # 271 次，5 s
-long = s.snapshot("counter_b")         # 550 次，10 s
-assert first.counts[0] + second.counts[0] == long.counts[0]
-s.set_output("beta_detector", False)
+s.configure_acquisition('counter', duration_s=5, window_s=1)
+s.configure_acquisition('counter_b', duration_s=5, window_s=5)
+s.start_group(('counter', 'counter_b'))
+s.advance(2.5)
+s.set('foil_count', 4)
+s.advance(2.5)
+s.snapshot('counter')
+s.snapshot('counter_b')
 ```
 
-A 首次到限时 B 已读到同一段 279 次并继续运行。A 清空后再开始建立新轮次，原第一窗快照仍保留。`dual_windows(reopen=False)` 不再开启 A，结果为 A 保持 279 次/5 s、B 继续到 550 次/10 s。操作期间不推进墙钟等待之外的物理时间；另一台设备不会因 A 停门而暂停。
+| 目标 | 窗号 | 开门累计曝光 / s | 本窗实际曝光 / s | 本次实得整数计数 | 工况 |
+|---|---:|---|---:|---:|---|
+| A | 1 | 0–1 | 1 | 106 | 空箔 |
+| A | 2 | 1–2 | 1 | 95 | 空箔 |
+| A | 3 | 2–3 | 1 | 75 | 2–2.5 s 空箔 56 次；2.5–3 s 4片 19 次 |
+| A | 4 | 3–4 | 1 | 42 | 4片 |
+| A | 5 | 4–5 | 1 | 62 | 4片 |
+| B | 1 | 0–5 | 5 | 380 | 跨工况，保留全部 parts |
 
-若要同一轮累计到 10 s，可提高 A 的累计曝光目标后继续；若要保留两份独立 5 s 窗，按上例保存、清空再开始。不能把两份重叠的累计快照当作独立测量相加。A 与 B 的同期窗共享计数，作差时也不能套用相互独立的泊松方差相加。
+这些数值是给定种子和操作线的复核样例，不是学生实验必须得到的答案。尤其不能把 A 第三窗或 B 第一窗整体标为新箔厚。
 
-同一完整时间线下，改变刷新次数或推进批次应得到相同读数。当前区间模型没有脉冲到达时刻；改变某台仪器的窗内关门时刻会改变区间划分，不能据此承诺不同操作线仍复现同一潜在事件流。
+`--retime` 在 2.5 s 同时请求 A 统计窗长改为 2 s。A 第三窗仍在累计曝光 3 s 结清，下一窗覆盖 3–5 s，实得 104 次/2 s；B 仍是一窗 380 次/5 s。新值何时生效以 `next_window_s` 和真实窗边界为准，不能立即截断当前窗。未测与有有效曝光的零计数分别表示。
 
-CLI 的单窗对照可直接运行以下命令；把 `counter` 改成 `counter_b` 可单独核对 B，同一配置均得 550 次、10 s：
+`pause_resume()` 例在 3 s 用一次整机暂停，探测器保持开启、物理时间再经过 7 s，随后一次共同继续并采 2 s。两窗均保留原轮次，实际曝光分别为 5 s，墙钟首尾跨度为 12 s；3 s 保存的快照保持原值。底层专用测试另核单门暂停不影响另一门，但这不是当前学生面板的启停入口。
+
+## 逐窗、快照与文件核对
+
+`Session.instrument_windows(device)` 返回不可变 `InstrumentWindow`。关键字段为 `device`、`number`、`acquisition`、`start_exposure_s`、`end_exposure_s`、`counts`、`parts`、`complete`、`window_s`。`window_s` 为这次测量采用的统计窗预设，旧记录无法确认时可为空；本窗实际曝光是两个曝光边界之差，不是首尾墙钟之差或当前预设。`parts` 各有物理时刻、工况、稀疏设备读数，保留跨设置变更；不能先按工况合并后再推导逐窗值。
+
+`complete=True` 表示窗已结清；若存在可读的未完整窗，保留其实际曝光及未完整标记。大数字显示最近完整窗时，不可用当前累计计数冒充该窗。`Snapshot.windows` 复制按键时可读的逐窗数据，后续采集不改写旧快照。只有主动保存的快照写入原始数据文件；未保存的轮次只保留元数据。
+
+文件例子：
 
 ```text
-python -m nuclemu run beta --seed 42 --device counter --enable-output beta_detector --set foil_count=4 --set foil_spec_um=100 --duration 10
+python -m examples.beta_window_rows --directory beta-output
 ```
 
-原 `--device counter` 仍指 A；现在有两台计数器，选择设备时使用具体实例 ID。未启用输出时，开门曝光仍有效、计数为零，命令会显示输出关闭。CLI 每个 `--step` 表示独立测点，下一步前会清空所选仪器的当前轮；本次运行的窗口产品仍保留各测点，供直接 CSV/JSON 输出，不等同于整场快照档案。以下命令得到 A 的 279 和 271 次，可与 B 单 10 s 的 550 次核对：
+例子保存 `beta-windows.nuclemu`，分别导出 A/B 的 JSON、CSV 并读回核对原测量文档，同时输出便于跨入口比较的 `window-rows.json`。整场文件与单项都必须保留 A 五行、B 一行、每行截止曝光和 parts；缺逐窗字段应明确失败，不能只拿累计总数相同声称通过。离线重开仪器待机，浏览历史记录不抽样；从已保存记录继续计数须显式载入目标窗，不能自动恢复未保存部分。
+
+GUI/CLI 联调必须使用相同种子、设置、窗配置和生效时刻。以下 CLI 调用已与上述 Python 的两份测量文档逐项对照，保留 A 五行、B 一行及各窗 parts：
 
 ```text
-python -m nuclemu run beta --seed 42 --device counter --enable-output beta_detector --set foil_count=4 --step 5 --step 5
+python -m nuclemu run beta --seed 42 --set source_present=1 --set foil_count=0 --set foil_spec_um=100 --enable-output beta_detector --window counter=1 --window counter_b=5 --change 2.5,foil_count=4 --duration 5 --package beta-cli.nuclemu
 ```
 
-同场共享输入、按键保存和清空的完整操作线仍以本页 Python 样例为复核入口；直接调用 `Session.start()` 不会自动清空。Web 双门操作由图形入口接入。
+CLI 的 `--step` 仍表示独立测点，不能拿两个 step 代替一轮热调；`--change` 的时刻相对于本轮开始。单项逐窗文件从包中选择 UUID 后用 `files export` 取得，具体调用见[命令行](cli.md)。GUI 新建默认种子为 0，与 seed=42 的固定示例不同；应按实际种子另跑同一时间线再比对，不能把不同种子的读数差异误报为入口不一致。
 
-## 不同曝光与独立本底
+## 本底与专项验证
 
-同一脚本的 `background_comparison()` 只使用 A，依次采集并显式保存、清空三个测点。探测输出始终打开，种子 42：
-
-| 测点 | 源座 | 100 µm 箔片数 | 实际曝光 / s | 原始计数 |
-|---|---|---:|---:|---:|
-| 本底 1 | 空 | 0 | 19.5 | 32 |
-| 样品 | 有源 | 4 | 7.25 | 399 |
-| 本底 2 | 空 | 0 | 9.25 | 20 |
-
-选择本底 1 时，样品净率为 **53.393457 ± 2.770400 s⁻¹**；改选本底 2 后为 **52.872321 ± 2.797268 s⁻¹**。两次样品原始读数均为 399 次、7.25 s，全部原始段和已保存快照不变，只改变分析引用。净率使用样品与参考各自的曝光计算；空源本底与样品须独立且适用。净率可以为负，合法零计数照常保存。
-
-此处的完整 `MeasurementView` 产品用来诊断原始曝光窗。学生保存和交换文件应依据主动保存的快照，不能因为查看、导出整场或保留内存诊断记录而补存未保存的读数。
-
-## 专项检查
+β 学生工作台只测量、保存和导出。学生在本地按各自实际曝光计算 `Ns/ts−Nb/tb` 与独立泊松近似标准不确定度；保留负净率和合法零计数。`examples.beta_background` 提供独立测量与重叠累计快照的技术对照，调用的是公共结果函数，不要求学生页面提供分析区。CLI 显式指定本底时必须随整包保留稳定记录身份及实际曝光，不能只打印结果。
 
 ```text
 python -m unittest discover -s tests -p "test_beta*.py" -v
 ```
 
-检查涵盖旧有效吸收曲线的均值与方差、源座和箔架独立、规格换算及等厚片组、同一输入逐窗一致、5+5=10、A 停 B 继续、探测关闭期间保留曝光与零输入、不同曝光本底及换参考不改原数、按设备导出的实际曝光、旧单计数器 SQLite 档原样读回，以及相同操作线下刷新/推进分块不改变计数。GUI 和 CLI 应使用本页相同的设备、种子、参数和物理时刻复验，不只比较期望曲线。
+专项覆盖有效曲线均值/方差、片规格与面密度、空源与关电输出、单装置两窗绑定、已知输入错开门、五短一长逐窗/跨工况、运行改窗长、A停B继续、显示读取不改变计数、旧记录不重算及零计数/负净率。公共内核和文件边界另由框架及CLI验证；桌面新面板由GUI完成后以同一份数据交叉走查。

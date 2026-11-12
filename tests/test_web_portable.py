@@ -77,7 +77,7 @@ class PortableWebTests(unittest.TestCase):
         self.assertEqual([i["id"] for i in lab.exchange.document["items"]],
                          [i["id"] for i in self.doc["items"]])
 
-    def test_multisegment_reference_is_unresolved_instead_of_fabricated(self):
+    def test_multisegment_saved_item_is_read_as_a_whole_with_its_parts(self):
         definition = Experiment("multi", "Multi", "", (Parameter("gain", "Gain", "", 1, 1, 2),),
             (Device("counter", "counter", "Counter", input="detector"),), self.model,
             outputs=(SignalOutput("detector", "Detector"),))
@@ -94,14 +94,17 @@ class PortableWebTests(unittest.TestCase):
         lab = self.open(package_bytes(doc), {"multi": definition})
         self.assertEqual(len(lab.work.product()["segments"]), 2)
         self.assertEqual(lab.portable_unresolved["counter"],
-                         {"reference": identity, "background": identity, "selected": identity})
+                         {"background": identity})
+        state = lab.state()
+        self.assertEqual((state['readout']['counts'], state['readout']['exposure_s']), (50, 5))
+        self.assertEqual(len(state['selected_observation']['segments']), 2)
         self.assertIsNone(lab.analysis["counter"]["reference"])
         self.assertIsNone(lab.analysis["counter"]["background"])
         copied = load_package(lab.portable_download()[2])
         for key in ('selected', 'reference', 'background'):
             self.assertEqual(copied['analysis']['counter'][key], identity)
         reopened = self.open(package_bytes(copied), {'multi': definition})
-        self.assertEqual(reopened.portable_unresolved['counter']['reference'], identity)
+        self.assertEqual(reopened.saved_selection['counter']['reference'], identity)
         reopened.act(dict(action='analysis', device='counter', reference=None, background=None))
         reopened.act(dict(action='select', device='counter', index=None))
         changed = load_package(reopened.portable_download()[2])

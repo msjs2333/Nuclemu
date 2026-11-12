@@ -55,12 +55,14 @@ class BrowserPluginTests(unittest.TestCase):
                         page.locator('#open-instrument').press('Enter')
                         expect(page.locator("#device")).to_have_value("right")
                         expect(page.locator("#device")).to_be_focused()
-                        expect(page.locator("#duration")).to_be_hidden()
-                        page.locator("#menu-acquisition").click()
+                        expect(page.locator("#duration")).to_be_visible()
                         page.locator('#mode').select_option('timed')
                         page.locator("#duration").fill("1")
                         page.keyboard.press("Escape")
-                        expect(page.locator("#menu-acquisition")).to_be_focused()
+                        # Menu keyboard dismissal remains available independently of acquisition.
+                        page.locator("#menu-simulation").click()
+                        page.keyboard.press("Escape")
+                        expect(page.locator("#menu-simulation")).to_be_focused()
                         page.locator("#start").click()
                         expect(page.locator("#gate-status")).to_have_text("采集中")
                         now = 1
@@ -69,8 +71,19 @@ class BrowserPluginTests(unittest.TestCase):
                         expect(page.locator("#counts tr td").nth(1)).to_have_text("1")
                         page.locator("#menu-file").click()
                         page.locator("#leave").click()
-                        page.locator("#save-exit").click()
-                        page.get_by_role("button", name="查看实验").click()
+                        with page.expect_response(lambda r: r.url.endswith('/api/action') and r.request.post_data_json.get('action') == 'save') as saved:
+                            page.locator("#save-exit").click()
+                        self.assertTrue(saved.value.ok, saved.value.text())
+                        expect(page.locator('#catalog')).to_be_visible()
+                        # Old archives remain explicitly readable without appearing on the catalogue.
+                        expect(page.locator(".archive-table")).to_have_count(0)
+                        archives = server.app.catalog()["archives"]
+                        self.assertEqual(len(archives), 1)
+                        response = page.request.post(f"http://127.0.0.1:{server.server_port}/api/open",
+                                                     data={"archive": archives[0]["id"]})
+                        self.assertTrue(response.ok, response.text())
+                        self.assertTrue(response.json()["readonly"])
+                        page.goto(f"http://127.0.0.1:{server.server_port}/lab/parallel/#instrument")
                         expect(page.locator("#device")).to_have_value("left")
                         expect(page.locator("#counts tr td").nth(1)).to_have_text("1")
                         page.locator("#device").select_option("right")

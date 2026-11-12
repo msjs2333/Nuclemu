@@ -43,13 +43,14 @@ class WebEditBrowserTests(unittest.TestCase):
         self.enter('edit-review')
         peer.locator("[data-experiment='edit-review']").click()
         expect(peer.locator('#workspace')).to_be_visible()
-        self.page.locator('[data-part=controls]').click()
-        peer.locator('[data-part=controls]').click()
+        self.page.locator('#operation-tab').click()
+        peer.locator('#operation-tab').click()
         return peer
 
     def apply(self, page):
         page.locator('#component form button').click()
-        expect(page.locator('#component form button')).to_be_enabled()
+        # Applied drafts are cleared, so the button is disabled until another edit.
+        expect(page.locator('#component form button')).to_be_disabled()
 
     def merged_fields(self, refresh):
         peer = self.editors()
@@ -71,7 +72,7 @@ class WebEditBrowserTests(unittest.TestCase):
         self.exit_dialog(self.page)
         self.page.locator('#save-exit').click()
         expect(self.page.locator('#catalog')).to_be_visible()
-        self.page.get_by_role('button', name='查看实验', exact=True).click()
+        fixtures.open_legacy_archive(self)
         expect(self.page.locator('#workspace')).to_be_visible()
         self.assertEqual(self.state()['settings'], {'gain': 2, 'threshold': 3})
 
@@ -112,7 +113,7 @@ class WebEditBrowserTests(unittest.TestCase):
         self.assertEqual(self.state()['settings']['gain'], 1)
         self.assertEqual(self.state()['settings']['threshold'], 3)
 
-    def test_restore_original_and_switch_component_drop_unsubmitted_edits(self):
+    def test_restore_original_and_switch_component_keep_operation_draft(self):
         peer = self.editors()
         self.page.locator('[name=gain]').fill('2')
         self.page.locator('[name=gain]').fill('1')
@@ -132,7 +133,10 @@ class WebEditBrowserTests(unittest.TestCase):
         self.page.locator('[name=gain]').fill('5')
         self.page.locator('[data-part=other]').click()
         self.page.locator('[data-part=controls]').click()
-        expect(self.page.locator('[name=gain]')).to_have_value('2')
+        # Selecting an apparatus part now opens its introduction; operation drafts persist.
+        self.page.locator('#operation-tab').click()
+        expect(self.page.locator('[name=gain]')).to_have_value('5')
+        self.assertEqual(self.state()['settings']['gain'], 2)
 
     def test_stale_stop_cannot_close_new_gate_and_current_stop_settles_tail(self):
         peer = self.peer()
@@ -155,9 +159,9 @@ class WebEditBrowserTests(unittest.TestCase):
         with self.page.expect_response(lambda r: r.url.endswith('/api/action')) as rejected:
             self.page.locator('#stop').click()
         self.assertEqual(rejected.value.status, 400)
-        self.assertEqual(rejected.value.request.post_data_json['device'], original['device'])
-        self.assertEqual(rejected.value.request.post_data_json['acquisition'], original['active_acquisition'])
-        self.assertEqual(rejected.value.request.post_data_json['cycle'], original['instrument']['cycle'])
+        self.assertEqual(rejected.value.request.post_data_json['action'], 'stop_group')
+        self.assertEqual(rejected.value.request.post_data_json['gate_cycles'],
+                         {device: values['cycle'] for device, values in original['instruments'].items()})
         after = self.state()
         self.assertTrue(after['running'])
         self.assertEqual(after['remaining_s'], before['remaining_s'])

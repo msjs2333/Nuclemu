@@ -1,4 +1,4 @@
-"""Optional browser checks for the catalogue and selectable measurement products."""
+"""Optional browser checks for the catalogue and selectable experiment records."""
 
 import csv
 import io
@@ -37,6 +37,16 @@ def install_legacy(test, name):
     return definition.id
 
 
+def open_legacy_archive(test):
+    archives = test.server.app.catalog()["archives"]
+    test.assertTrue(archives)
+    response = test.page.request.post(test.url + "/api/open", data={"archive": archives[0]["id"]})
+    test.assertTrue(response.ok, response.text())
+    test.assertTrue(response.json()["readonly"])
+    test.page.goto(test.url + "/lab/" + response.json()["experiment"] + "/#instrument")
+    expect(test.page.locator("#workspace")).to_be_visible()
+
+
 def enable_output(test):
     """Turn on the selected instrument's declared detector from its apparatus part."""
     page = test.page
@@ -45,14 +55,13 @@ def enable_output(test):
     output = device.get("input")
     if not output or state["output_enabled"].get(output):
         return
-    part = next(p for p in state["definition"]["components"] if p.get("output") == output)
     page.locator("[data-page='setup']").click()
-    page.locator(f"[data-part='{part['id']}']").click()
+    page.locator("#operation-tab").click()
     with page.expect_response(lambda r: r.url.endswith('/api/action') and
                               r.request.post_data_json.get('action') == 'output') as enabled:
-        page.locator("#part-output").check()
+        page.locator(f"#output-{output}").check()
     test.assertTrue(enabled.value.ok, enabled.value.text())
-    expect(page.locator("#part-output")).to_be_checked()
+    expect(page.locator(f"#output-{output}")).to_be_checked()
     page.locator("[data-page='instrument']").click()
 
 
@@ -76,10 +85,10 @@ def start_collection(test, seconds):
             expect(page.locator("#clear-discard")).not_to_be_visible()
         expect(page.locator("#start")).to_be_enabled()
     enable_output(test)
-    page.locator("#menu-acquisition").click()
+    if state["definition"]["devices"][0]["kind"] == "spectrum":
+        page.get_by_role("tab", name="采集", exact=True).click()
     page.locator("#mode").select_option("timed")
     page.locator("#duration").fill(str(seconds))
-    page.keyboard.press("Escape")
     page.locator("#start").click()
     expect(page.locator("#gate-status")).to_have_text("采集中")
 
@@ -128,9 +137,8 @@ class CatalogRecordsBrowserTests(unittest.TestCase):
         expect(self.page.locator("#lab-title")).to_be_focused()
 
     def records(self):
-        self.page.locator("#menu-file").click()
-        self.page.locator("#open-products").click()
-        expect(self.page.locator("#records-title")).to_be_focused()
+        self.page.locator("[data-page=records]").click()
+        expect(self.page.locator("#records-title")).to_have_text("实验记录")
 
     def collect(self, seconds):
         start_collection(self, seconds)
@@ -146,7 +154,8 @@ class CatalogRecordsBrowserTests(unittest.TestCase):
         self.assertIsNone(self.page.request.get(self.url + "/api/state").json())
         self.page.keyboard.press("Escape")
         expect(guide).to_be_focused()
-        expect(self.page.locator(".archive-empty")).to_be_visible()
+        expect(self.page.locator("#archives, .archive-empty, .archive-table")).to_have_count(0)
+        expect(self.page.locator("#catalog-load")).to_be_visible()
         self.page.set_viewport_size({"width": 1366, "height": 844})
         self.assertEqual(self.page.evaluate("document.documentElement.scrollWidth"), 1366)
         expect(card.get_by_role("button", name="进入实验", exact=True)).to_be_visible()
@@ -154,7 +163,9 @@ class CatalogRecordsBrowserTests(unittest.TestCase):
         self.enter("alpha")
         self.records()
         expect(self.page.locator(".product-empty")).to_be_visible()
-        expect(self.page.locator("#export")).to_be_disabled()
+        expect(self.page.locator(".product-empty")).to_have_text("当前没有实验记录，请进行测量或在本页面导入")
+        expect(self.page.locator("#choose-import")).to_be_enabled()
+        expect(self.page.locator("#export")).to_have_count(0)
         self.screenshot("records-empty-desktop")
         self.page.locator("#menu-file").click()
         self.page.locator("#leave").click()
@@ -172,8 +183,8 @@ class CatalogRecordsBrowserTests(unittest.TestCase):
         self.records()
         rows = self.page.locator("#products .product")
         expect(rows).to_have_count(4)
-        expect(rows.nth(0)).to_contain_text("计数器 · left")
-        expect(rows.nth(1)).to_contain_text("计数器 · right")
+        expect(rows.nth(0)).to_contain_text("计数器 · 窗 A")
+        expect(rows.nth(1)).to_contain_text("计数器 · 窗 B")
         expect(rows.nth(0).locator(".product-exposure")).to_have_text("1.25 s")
         all_rows = self.page.get_by_role("checkbox", name="全选", exact=True)
         all_rows.check()
@@ -209,10 +220,12 @@ class CatalogRecordsBrowserTests(unittest.TestCase):
         self.page.locator("#leave").click()
         self.page.locator("#save-exit").click()
         expect(self.page.locator("[data-experiment='records-test']")).to_be_focused()
-        expect(self.page.locator(".archive-table tbody tr")).to_have_count(1)
+        expect(self.page.locator(".archive-table")).to_have_count(0)
         self.screenshot("catalog-archive-desktop")
-        self.page.get_by_role("button", name="查看实验", exact=True).click()
+        open_legacy_archive(self)
         expect(self.page.locator("#start")).to_be_disabled()
+        # Explicit API restoration boots the page; the selector remains keyboard focusable.
+        self.page.locator("#device").focus()
         expect(self.page.locator("#device")).to_be_focused()
         self.records()
         expect(self.page.locator("#products .product")).to_have_count(4)
@@ -223,7 +236,7 @@ class CatalogRecordsBrowserTests(unittest.TestCase):
     def test_calibration_product_single_json_download(self):
         self.enter("alpha")
         self.collect(.25)
-        self.page.locator("#menu-analysis").click()
+        self.page.get_by_role("tab", name="谱分析", exact=True).click()
         self.page.locator("details.calibration-tools > summary").click()
         for field, value in (("c1", 0), ("e1", 0), ("c2", 1000), ("e2", 6)):
             self.page.locator(f"[name='{field}']").fill(str(value))

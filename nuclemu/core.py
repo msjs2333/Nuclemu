@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from math import isfinite
 from random import Random
+import re
 from types import MappingProxyType
 
 
@@ -15,6 +16,22 @@ Settings = Mapping[str, Number]
 Readings = Mapping[str, Sequence[int]]
 Model = Callable[[Settings, float, float, Random], Readings]
 _UNCHANGED = object()
+
+
+def resolve_short_code(experiment_id: str, short_code: str | None = None) -> str:
+    """Return declared naming metadata, or a safe code derived from an old id."""
+    if short_code is not None:
+        if not isinstance(short_code, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,31}", short_code) is None:
+            raise ValueError("short_code must contain 1–32 ASCII letters, digits, underscores or hyphens, starting with a letter or digit")
+        return short_code
+    if not isinstance(experiment_id, str) or not experiment_id:
+        raise ValueError("An experiment id is required to derive short_code")
+    code = re.sub(r"[^A-Za-z0-9_-]+", "-", experiment_id).strip("-_")
+    if not code or len(code) > 32:
+        from hashlib import sha256
+        digest = sha256(experiment_id.encode("utf-8")).hexdigest()[:8]
+        code = f"{code[:23] or 'EXP'}-{digest}"
+    return code
 # Models return interval counts, never rates or invented event arrival times.
 
 
@@ -83,9 +100,11 @@ class Component:
     device: str | None = None
     illustration: str | None = None
     output: str | None = None
+    devices: tuple[str, ...] = ()
 
     def __post_init__(self):
         object.__setattr__(self, "parameters", tuple(self.parameters))
+        object.__setattr__(self, "devices", tuple(self.devices))
 
 
 @dataclass(frozen=True)
@@ -129,12 +148,17 @@ class Experiment:
     course: str = "核物理实验"
     outputs: tuple[SignalOutput, ...] = ()
     normalize_settings: Callable[[Settings], Settings] | None = None
+    particle_flow: Callable[[Settings], Mapping] | None = None
+    short_code: str | None = None
 
     def __post_init__(self) -> None:
         if not self.id or not self.title or not callable(self.model):
             raise ValueError("Experiment requires an id, title and callable model")
+        object.__setattr__(self, "short_code", resolve_short_code(self.id, self.short_code))
         if self.normalize_settings is not None and not callable(self.normalize_settings):
             raise ValueError(f"{self.id}: normalize_settings must be callable")
+        if self.particle_flow is not None and not callable(self.particle_flow):
+            raise ValueError(f"{self.id}: particle_flow must be callable")
         if not isinstance(self.course, str) or not self.course.strip():
             raise ValueError(f"{self.id}: course must be nonempty text")
         object.__setattr__(self, "parameters", tuple(self.parameters))
@@ -224,6 +248,10 @@ class Experiment:
                 if part.device not in device_ids:
                     raise ValueError(f"{self.id}/{part.id}: unknown device {part.device!r}")
                 assigned_devices.add(part.device)
+            if (len(set(part.devices)) != len(part.devices) or not set(part.devices) <= device_ids
+                    or (part.devices and part.device is not None and part.device not in part.devices)):
+                raise ValueError(f"{self.id}/{part.id}: devices must bind distinct declared instruments including device")
+            assigned_devices.update(part.devices)
             if part.output is not None and part.output not in output_ids:
                 raise ValueError(f"{self.id}/{part.id}: unknown output {part.output!r}")
         if self.components and (parameter_keys != assigned_parameters or device_ids != assigned_devices):
@@ -243,6 +271,7 @@ class Measurement:
     settings: Settings
     readings: Mapping[str, tuple[int, ...]]
     acquisition: int = 1
+    origin: str | None = None
 
     @property
     def exposure_s(self) -> float:
@@ -265,6 +294,7 @@ class Session:
         self._parameters = {p.key: p for p in experiment.parameters}
         self._settings = {p.key: p.value(p.default) for p in experiment.parameters}
         self._rng = Random(seed)
+        self._random_stream = {"scheme": "python-random-sha256-v1", "seed": seed, "generation": 0}
         self._time = Decimal(0)
         self._segment_start = self._time
         self._next_window: Decimal | None = None
@@ -272,6 +302,7 @@ class Session:
         self._device_ids = {d.id for d in experiment.devices}
         self.records: list[Measurement] = []
         self._acquisition = 0
+        self._particle_flow = None
         self._instruments = None
         if experiment.outputs:
             from .acquisition import InstrumentAcquisition
@@ -279,8 +310,23 @@ class Session:
 
     @property
     def seed(self) -> int:
-        """The actual seed used to initialize this session's random stream."""
+        """The user-supplied root seed; random_stream identifies the generation."""
         return self._seed
+
+    @property
+    def random_stream(self):
+        return dict(self._random_stream)
+
+    @property
+    def particle_flow(self):
+        """Deterministic apparatus display data, cached until settings change."""
+        if self.experiment.particle_flow is None:
+            return None
+        if self._particle_flow is None:
+            import json
+            self._particle_flow = json.loads(json.dumps(
+                self.experiment.particle_flow(self.settings), allow_nan=False))
+        return self._particle_flow
 
     @property
     def time_s(self) -> float:
@@ -318,9 +364,41 @@ class Session:
             raise ValueError("Snapshots require independent instruments")
         return self._instruments.snapshot(device, cache=cache, writer=writer)
 
+    def instrument_windows(self, device: str):
+        if self._instruments is None:
+            raise ValueError("Instrument windows require declared detector outputs")
+        return self._instruments.instrument_windows(device)
+
+    def load_measurement(self, device: str, snapshot, *, overwrite=False):
+        """Replace only one idle/current instrument after validating saved data."""
+        if self._instruments is None:
+            raise ValueError("Loading a measurement requires independent instruments")
+        self._instruments.load_measurement(device, snapshot, overwrite=overwrite)
+
+    def start_group(self, devices):
+        """Open/continue an explicit instrument group at this one lab instant.
+
+        All targets and bindings are checked before any gate is changed.
+        Detector outputs and instruments outside the group remain untouched.
+        """
+        if self._instruments is None:
+            raise ValueError("Instrument groups require independent gates")
+        self._instruments.start_group(devices)
+
+    def stop_group(self, devices):
+        if self._instruments is None:
+            raise ValueError("Instrument groups require independent gates")
+        self._instruments.stop_group(devices)
+
+    def configure_group(self, devices, *, duration_s=_UNCHANGED, count_limit=_UNCHANGED):
+        """Apply shared targets atomically; per-window lengths stay independent."""
+        if self._instruments is None:
+            raise ValueError("Instrument groups require independent gates")
+        self._instruments.configure_group(devices, duration_s, count_limit)
+
     @classmethod
     def reopen(cls, experiment, seed=0, *, settings, time_s=0, rounds=(), snapshots=(),
-               configuration_history=(), acquisition_settings=None):
+               configuration_history=(), acquisition_settings=None, random_stream=None):
         """Open validated historical metadata and snapshots as a fresh idle lab.
 
         This restores no RNG continuation or unsaved measurements. Historic
@@ -328,6 +406,16 @@ class Session:
         experiment's canonical keys, without invoking a live-command adapter.
         """
         session = cls(experiment, seed)
+        from hashlib import sha256
+        stream = random_stream if random_stream is not None else {"scheme": "python-random-sha256-v1", "seed": seed, "generation": 0}
+        if (not isinstance(stream, Mapping) or stream.get("scheme") != "python-random-sha256-v1"
+                or type(stream.get("seed")) is not int or type(stream.get("generation")) is not int
+                or stream["generation"] < 0):
+            raise ValueError("Unsupported or invalid saved random stream")
+        generation = stream["generation"] + 1
+        session._random_stream = {"scheme": stream["scheme"], "seed": seed, "generation": generation}
+        material = f"python-random-sha256-v1:{seed}:{generation}".encode("ascii")
+        session._rng.seed(int.from_bytes(sha256(material).digest(), "big"))
         if session._instruments is None:
             raise ValueError("Reopening for new acquisition requires declared detector outputs")
         if not isinstance(settings, Mapping) or settings.keys() != session._parameters.keys():
@@ -385,6 +473,13 @@ class Session:
         if self._instruments is None:
             raise ValueError("Instrument clear requires independent instruments")
         return self._instruments.begin_clear(device)
+
+    def pending_clear(self, device: str):
+        """Read the same immutable clear request after reconnecting a view."""
+        if self._instruments is None:
+            return None
+        pending = self._instruments._gate(device).pending
+        return None if pending is None else pending.request
 
     def finish_clear(self, device: str, token: int, choice: str, *, writer=None):
         if self._instruments is None:
@@ -504,6 +599,7 @@ class Session:
             elif self.running:
                 self._sample_until(self._time)
             self._settings.update(checked)
+            self._particle_flow = None
             if self._instruments is not None:
                 self._instruments.note_settings(changed)
 

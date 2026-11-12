@@ -31,12 +31,12 @@ function apply() {
 }
 </script>
 <template>
-  <button id="choose-import" @click="chooseFile">导入已保存记录</button>
+  <button id="choose-import" @click="chooseFile">导入记录</button>
   <input ref="fileInput" id="import-saved-file" type="file" accept=".nuclemu,.json,.csv" hidden @change="inspect">
   <dialog ref="dialog" id="import-choice" aria-labelledby="import-title">
     <h2 id="import-title">选择一份记录导入</h2>
     <label>记录 <select id="import-selection" v-model="selected"><option v-for="choice in choices" :key="choice.id" :value="choice.id">{{ choice.title }} · {{ choice.device }}{{ choice.exposure_s === null ? ' · 刻度' : ' · ' + fmt(choice.exposure_s) + ' s' }}</option></select></label>
-    <p>导入保留来源并建立独立记录，不会替换本场测量。同一谱仪的单段测量可作为参考谱。</p>
+    <p>导入只添加实验记录，不会替换仪器当前测量。</p>
     <div class="dialog-actions"><button id="cancel-import" @click="dialog?.close()">取消</button><button id="confirm-import" class="primary" :disabled="!selected" @click="apply">导入所选记录</button></div>
   </dialog>
 </template>

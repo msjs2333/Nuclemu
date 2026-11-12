@@ -32,7 +32,7 @@ python -m nuclemu gui --path D:\MyLabs
 默认摘要显示每段起止时间、曝光、设置、各设备累计计数和计数率。`--device KIND:ID` 选择设备；也可用精确实例 ID 或唯一 kind。实例 ID 优先于其他设备的同名 kind；多个同类设备用 `kind:id` 区分。
 
 ```powershell
-python -m nuclemu run beta --duration 2.5 --set foil_spec_um=100 --set foil_count=4 --seed 42 --device counter:counter --enable-output beta_detector
+python -m nuclemu run beta --set source_present=1 --duration 2.5 --set foil_spec_um=100 --set foil_count=4 --seed 42 --device counter:counter --enable-output beta_detector
 python -m nuclemu run beta --step 1 --step 1 --device counter:counter --enable-output beta_detector
 ```
 
@@ -52,7 +52,7 @@ python -m nuclemu run split-signal --path examples/courses --seed 187 --duration
 
 ## β 本底与样品
 
-下面在同一 Session 中先采 1.25 s 本底，再采 4 片铝箔的 2.5 s 有源计数。`--background 1` 用第 1 段对其余段的计数器计算净率及独立泊松标准不确定度；编号从 1 开始，各段分别使用实际曝光，允许负净率。
+下面在同一 Session 中先采 1.25 s 本底，再采 4 片铝箔的 2.5 s 有源计数。`--background 1` 用第 1 个独立测点对其余段的计数器计算净率及独立泊松标准不确定度；编号从 1 开始，各段分别使用实际曝光，允许负净率。
 
 ```powershell
 python -m nuclemu run beta --seed 42 --device counter:counter --enable-output beta_detector --set foil_spec_um=100 --step "1.25,source_present=0" --step "2.5,source_present=1,foil_count=4" --background 1 --output beta.json --output beta.csv
@@ -63,7 +63,7 @@ python -m nuclemu run beta --seed 42 --device counter:counter --enable-output be
 ## α 参考谱、加箔谱与刻度
 
 ```powershell
-python -m nuclemu run alpha --seed 187 --device spectrum:mca --enable-output alpha_detector --step "2.25,foil_spec_um=1,foil_count=0" --step "1.25,foil_spec_um=1,foil_count=5" --roi 845:875 --output alpha.json --output alpha.csv
+python -m nuclemu run alpha --set source_present=1 --seed 187 --device spectrum:mca --enable-output alpha_detector --step "2.25,foil_spec_um=1,foil_count=0" --step "1.25,foil_spec_um=1,foil_count=5" --roi 845:875 --output alpha.json --output alpha.csv
 ```
 
 在种子 187、探测输出全程开启、两个独立轮次的上述操作下，两段分别累计 172、86 个计数，曝光分别为 2.25、1.25 s。统计窗从各轮的有效曝光起点划分；这是当前独立轮次语义的基线，已有文件中的观测计数仍按原数据读取。相同完整操作时间线下，旧厚度键与新规格/片数逐道相等。`--roi FIRST:LAST` 使用含两端的道号，输出 ROI 总计数和计数加权峰心；空 ROI 显示 `None`。该参数要求选择一台 spectrum 设备。一个 ROI 会用于所有段，因此分析能损时须在每段中选择同一条谱线的新位置；固定窗口可能包含加箔后的另一条谱线。
@@ -91,7 +91,7 @@ if shifted is not None:
 载入刻度后可再次运行相同采集计划。相同种子和调用计划产生相同计数；加载刻度、显示摘要和导出不会消耗随机数。
 
 ```powershell
-python -m nuclemu run alpha --seed 187 --step "2.25,foil_spec_um=1,foil_count=0" --step "1.25,foil_spec_um=1,foil_count=5" --enable-output alpha_detector --device spectrum:mca --roi 845:875 --calibration alpha-calibration.json --output alpha-calibrated.csv
+python -m nuclemu run alpha --set source_present=1 --seed 187 --step "2.25,foil_spec_um=1,foil_count=0" --step "1.25,foil_spec_um=1,foil_count=5" --enable-output alpha_detector --device spectrum:mca --roi 845:875 --calibration alpha-calibration.json --output alpha-calibrated.csv
 ```
 
 刻度绑定实验 ID、设备实例和道数，以 MeV 保存。设备不匹配时明确报错。更改箔厚继续使用既有刻度，不能把透射峰重新指定为无箔能量。物理依据、模型范围和推荐选峰方法见 [α 实验](alpha.md)；β 模型及统计说明见 [β 实验](beta.md)。
@@ -100,10 +100,10 @@ python -m nuclemu run alpha --seed 187 --step "2.25,foil_spec_um=1,foil_count=0"
 
 ## 产品与 GUI 对齐
 
-`run --package FILE.nuclemu` 在每个完成的 step 明确缓存一份快照，并将这些测点、轮次及配置写为可携整场文件。它与 `--output` 的普通测量 CSV/JSON 可以同时使用，但目标文件必须不同；载入的刻度也作为已保存项目带入包内，并关联到适用测量。整场文件是含版本清单和 SQLite 的 `.nuclemu` 压缩包，可离线复制到另一目录或电脑。
+`run --package FILE.nuclemu` 在每个完成的 step 明确缓存一份快照，并将这些测点、轮次及配置写为可携整场文件。它与 `--output` 的普通测量 CSV/JSON 可以同时使用，但目标文件必须不同；指定 `--background` 时也保存本底和样品的缓存 UUID 引用，重开后可用原始计数和实际曝光复算净率；载入的刻度也作为已保存项目带入包内，并关联到适用测量。整场文件是含版本清单和 SQLite 的 `.nuclemu` 压缩包，可离线复制到另一目录或电脑。
 
 ```powershell
-python -m nuclemu run alpha --seed 187 --device mca --enable-output alpha_detector --step "2.25,foil_spec_um=1,foil_count=0" --step "1.25,foil_spec_um=1,foil_count=5" --package alpha.nuclemu
+python -m nuclemu run alpha --set source_present=1 --seed 187 --device mca --enable-output alpha_detector --step "2.25,foil_spec_um=1,foil_count=0" --step "1.25,foil_spec_um=1,foil_count=5" --package alpha.nuclemu
 python -m nuclemu files inspect alpha.nuclemu
 python -m nuclemu files export alpha.nuclemu --item ITEM_UUID --output reference.csv
 python -m nuclemu files import alpha.nuclemu reference.csv --item ITEM_UUID --output alpha-with-reference.nuclemu
@@ -122,3 +122,15 @@ CLI 与浏览器工作台共用 `discover(paths)`、`catalog.describe(experiment
 ```powershell
 python -m unittest discover -s tests -p "test_cli*.py" -v
 ```
+
+## 单轮调参与不同仪器窗长
+
+新实验默认空源；有源采集须显式设置 `source_present=1` 并开启探测输出。`--window DEVICE=SECONDS` 可重复，为各仪器设置读数窗长。`--change "SECONDS,KEY=VALUE,..."` 的时刻从本轮开始计，必须严格位于 `--duration` 内；到时调用公共设置入口，采集门保持开启。相同时刻的参数写在同一个 change 中。它不与 `--step` 或 `--background` 混用。
+
+```powershell
+python -m nuclemu run beta --seed 42 --set source_present=1 --set foil_spec_um=100 --set foil_count=0 --enable-output beta_detector --window counter=1 --window counter_b=5 --duration 5 --change "2.5,foil_count=4" --package beta-windows.nuclemu
+python -m nuclemu files inspect beta-windows.nuclemu
+python -m nuclemu files export beta-windows.nuclemu --item ITEM_UUID --output counter-windows.csv
+```
+
+该轮 A 有五个 1 s 窗，B 有一个 5 s 窗。当前种子下 A 为 106、95、75、42、62，B 为 380；A 第三窗的两部分分别保留换箔前后各 0.5 s 的工况。单项 JSON 保留 `windows`；单项 CSV 每窗每道一行，`parts` 保存窗内工况与原始计数，首行元数据保留累计工况段。无逐窗信息的旧文件按旧数据读取，不凭累计计数拆造窗口。普通 `run --output` 仍是累计工况段产品；需可重新载入的逐窗文件时使用 `--package` 后 `files export`。

@@ -23,7 +23,9 @@ class WebOperationsBrowserTests(unittest.TestCase):
 
     def source(self, value):
         self.page.locator("[data-page='setup']").click()
-        self.page.locator('[data-part=source]').click()
+        self.page.locator('#operation-tab').click()
+        if self.state()['settings']['source_present'] == value:
+            return
         self.page.locator('[name=source_present]').select_option(str(value))
         with self.page.expect_response(lambda r: r.url.endswith('/api/action') and r.request.post_data_json.get('action') == 'configure') as applied:
             self.page.locator('#component form button').click()
@@ -34,14 +36,16 @@ class WebOperationsBrowserTests(unittest.TestCase):
         self.page.locator('[data-part=detector]').click()
         expect(self.page.locator('#setup')).to_be_visible()
         expect(self.page.locator('#open-instrument')).to_have_count(0)
-        self.page.locator('#part-output').check()
+        self.page.locator('#operation-tab').click()
+        output = self.state()['definition']['outputs'][0]['id']
+        self.page.locator('#output-' + output).check()
 
     def open_instrument(self, component):
         self.page.locator("[data-page='setup']").click()
         self.page.locator(f'[data-part={component}]').click()
         expect(self.page.locator('#setup')).to_be_visible()
         self.page.locator('#open-instrument').click()
-        expect(self.page.locator('#device')).to_be_focused()
+        expect(self.page.locator('#instrument')).to_be_visible()
 
     def screenshot_sizes(self, name):
         for width, suffix in ((1366, 'desktop'),):
@@ -50,31 +54,50 @@ class WebOperationsBrowserTests(unittest.TestCase):
             self.screenshot(name + '-' + suffix)
         self.page.set_viewport_size({'width': 1366, 'height': 844})
 
-    def test_beta_stacked_counters_are_separate_clickable_instruments(self):
+    def test_beta_single_counter_has_two_bound_windows_and_group_controls(self):
         self.enter('beta')
-        expect(self.page.locator('#apparatus')).to_have_class('apparatus dual-readouts')
-        first = self.page.locator('[data-part=counter]').bounding_box()
-        second = self.page.locator('[data-part=counter_b]').bounding_box()
-        self.assertAlmostEqual(first['x'], second['x'], delta=1)
-        self.assertLess(first['y'] + first['height'], second['y'])
-        for component in ('counter', 'counter_b'):
-            self.page.locator("[data-page='setup']").click()
-            self.page.locator(f'[data-part={component}]').click()
-            expect(self.page.locator('#setup')).to_be_visible()
-            expect(self.page.locator(f'[data-part={component}]')).to_have_attribute('aria-pressed', 'true')
-            with self.page.expect_response(lambda r: r.url.endswith('/api/action') and r.request.post_data_json.get('action') == 'device') as selected:
-                self.page.locator('#open-instrument').click()
-            self.assertEqual(selected.value.request.post_data_json['device'], component)
-            expect(self.page.locator('#device')).to_have_value(component)
-        self.page.locator("[data-page='setup']").click()
-        self.screenshot('beta-apparatus-stacked-desktop')
-        self.source(0)
-        self.screenshot('beta-apparatus-stacked-empty-desktop')
+        expect(self.page.locator('[data-part=counter]')).to_have_count(1)
+        expect(self.page.locator('[data-part=counter_b]')).to_have_count(0)
+        self.source(1)
+        self.detector()
+        self.open_instrument('counter')
+        expect(self.page.locator('.counter-window')).to_have_count(2)
+        first, second = [self.page.get_by_role('region', name=f'窗 {name} 逐窗数据') for name in ('A', 'B')]
+        panels = self.page.locator('.counter-window')
+        left, right = [panels.nth(i).bounding_box() for i in range(2)]
+        self.assertAlmostEqual(left['y'], right['y'], delta=1)
+        self.assertAlmostEqual(left['width'], right['width'], delta=1)
+        self.assertLess(left['x'] + left['width'], right['x'])
+        for device, window in (('counter', '2'), ('counter_b', '5'), ('counter', '1')):
+            field = self.page.locator('#window-size-' + device)
+            field.fill(window)
+            with self.page.expect_response(lambda r: r.url.endswith('/api/action') and r.request.post_data_json.get('action') == 'window_config') as configured:
+                field.press('Tab')
+            self.assertTrue(configured.value.ok)
+            self.assertEqual(configured.value.request.post_data_json['device'], device)
+            self.assertEqual(configured.value.request.post_data_json['window_s'], float(window))
+        with self.page.expect_response(lambda r: r.url.endswith('/api/action') and r.request.post_data_json.get('action') == 'start_group') as started:
+            self.page.locator('#start').click()
+        self.assertEqual(started.value.request.post_data_json['component'], 'counter')
+        expect(self.page.locator('#stop')).to_be_enabled()
+        self.now = 5
+        expect(first.locator('tbody tr')).to_have_count(5)
+        expect(second.locator('tbody tr')).to_have_count(1)
+        self.page.locator('#device').select_option('counter_b')
+        expect(self.page.locator('#stop')).to_be_enabled()
+        with self.page.expect_response(lambda r: r.url.endswith('/api/action') and r.request.post_data_json.get('action') == 'stop_group') as stopped:
+            self.page.locator('#stop').click()
+        self.assertEqual(stopped.value.request.post_data_json['component'], 'counter')
+        expect(self.page.get_by_label('计数窗 A', exact=True).locator('.window-state')).to_have_text('暂停')
+        expect(self.page.get_by_label('计数窗 B', exact=True).locator('.window-state')).to_have_text('暂停')
+        self.assertFalse(self.server.app.lab.work.session.instrument('counter').running)
+        self.assertFalse(self.server.app.lab.work.session.instrument('counter_b').running)
+        self.screenshot('beta-single-counter-two-windows-desktop')
 
     def test_beta_background_cache_clear_source_and_sample(self):
         self.enter('beta')
         expect(self.page.locator('#apparatus [aria-pressed=true]')).to_have_count(0)
-        self.source(0)
+        # New experiments start with an empty source holder.
         expect(self.page.locator('[data-part=source] img')).to_have_attribute('src', '/rig-source-empty.webp')
         expect(self.page.locator('[data-part=foil] img')).to_have_attribute('src', '/rig-foil-empty.webp')
         self.detector()
@@ -85,26 +108,27 @@ class WebOperationsBrowserTests(unittest.TestCase):
         self.page.locator('#start').click()
         expect(self.page.locator('#stop')).to_be_enabled()
         self.now = 3
-        expect(self.page.locator('#exposure')).to_have_text('实际曝光 3 s')
+        expect(self.page.locator('#exposure')).to_have_text('3 s')
         self.page.locator('#save-current').click()
-        expect(self.page.locator('#cache-count')).to_have_text('本场已保存 1 份')
+        expect(self.page.locator('#snapshot-notice')).to_contain_text('已保存')
         background = self.server.app.lab.work.session.snapshots[0]
         self.assertTrue(self.state()['running'])
         self.page.locator('#clear').click()
         expect(self.page.locator('#clear-confirm')).to_be_visible()
         self.page.locator('#clear-discard').click()
         expect(self.page.locator('#clear-confirm')).not_to_be_visible()
-        expect(self.page.locator('#exposure')).to_have_text('实际曝光 0 s')
+        expect(self.page.locator('#exposure')).to_have_text('0 s')
         self.source(1)
         self.open_instrument('counter')
-        self.page.locator('#start').click()
+        with self.page.expect_response(lambda r: r.url.endswith('/api/action') and r.request.post_data_json.get('action') == 'start_group') as resumed:
+            self.page.locator('#start').click()
+        self.assertTrue(resumed.value.ok, resumed.value.text())
         expect(self.page.locator('#stop')).to_be_enabled()
         self.now = 8
-        expect(self.page.locator('#exposure')).to_have_text('实际曝光 5 s')
+        expect(self.page.locator('#exposure')).to_have_text('5 s')
         self.page.locator('#save-current').click()
-        expect(self.page.locator('#cache-count')).to_have_text('本场已保存 2 份')
-        self.page.locator('#background').select_option('0')
-        expect(self.page.locator('#net-results tr').nth(1).locator('td').last).to_contain_text(' ± ')
+        expect(self.page.locator('#snapshot-notice')).to_contain_text('已保存')
+        expect(self.page.locator('#background, #net-results')).to_have_count(0)
         sample = self.server.app.lab.work.session.snapshots[1]
         self.assertEqual((background.exposure_s, sample.exposure_s), (3, 5))
         self.assertEqual(self.server.app.lab.work.session.snapshots[0], background)
@@ -117,28 +141,32 @@ class WebOperationsBrowserTests(unittest.TestCase):
             Path(output, 'beta-readings.json').write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding='utf-8')
 
     def clear_case(self, choice):
-        self.enter('beta')
-        self.detector()
-        self.open_instrument('counter')
-        self.page.locator('#menu-acquisition').click()
+        from nuclemu.catalog import discover
+        self.server.app.definitions = discover(['examples/courses'])
+        self.page.reload()
+        self.enter('split-signal')
+        output = self.state()['definition']['outputs'][0]['id']
+        self.page.locator('#output-' + output).check()
+        self.open_instrument('device-a')
         self.page.locator('#mode').select_option('timed')
         self.page.locator('#duration').fill('10')
-        self.page.keyboard.press('Escape')
         self.page.locator('#start').click()
         expect(self.page.locator('#stop')).to_be_enabled()
-        self.page.locator('#device').select_option('counter_b')
+        self.page.locator('#device').select_option('b')
         self.page.locator('#start').click()
         expect(self.page.locator('#stop')).to_be_enabled()
-        self.page.locator('#device').select_option('counter')
+        self.page.locator('#device').select_option('a')
         self.now = 3
-        expect(self.page.locator('#exposure')).to_have_text('实际曝光 3 s')
+        expect(self.page.locator('#exposure')).to_have_text('3 s')
         self.page.locator('#clear').click()
+        expect(self.page.locator('#clear-confirm')).to_be_visible()
+        self.page.reload()
         expect(self.page.locator('#clear-confirm')).to_be_visible()
         self.now = 5
         self.assertEqual(self.state()['time_s'], 5)
         session = self.server.app.lab.work.session
-        self.assertEqual(session.instrument('counter').exposure_s, 3)
-        self.assertEqual(session.instrument('counter_b').exposure_s, 5)
+        self.assertEqual(session.instrument('a').exposure_s, 3)
+        self.assertEqual(session.instrument('b').exposure_s, 5)
         def writer(item):
             self.assertEqual(item.exposure_s, 3)
             self.now = 7
@@ -151,12 +179,17 @@ class WebOperationsBrowserTests(unittest.TestCase):
         if choice == 'failure':
             expect(self.page.locator('#error')).to_contain_text('controlled cache failure')
         state = self.state()
-        a, b = session.instrument('counter'), session.instrument('counter_b')
+        a, b = session.instrument('a'), session.instrument('b')
         self.assertTrue(b.running)
         self.assertEqual(b.exposure_s, 7 if button == 'save' else 5)
         if choice in ('cancel', 'failure'):
             self.assertTrue(state['running'])
             self.assertEqual((a.exposure_s, a.remaining_s), (3, 7))
+            self.now = state['time_s'] + 1
+            self.state()
+            a, b = session.instrument('a'), session.instrument('b')
+            self.assertEqual((a.exposure_s, a.remaining_s), (4, 6))
+            self.assertEqual(b.exposure_s, self.now)
         else:
             self.assertFalse(state['running'])
             self.assertEqual(a.exposure_s, 0)
@@ -176,10 +209,10 @@ class WebOperationsBrowserTests(unittest.TestCase):
         self.page.locator('#start').click()
         expect(self.page.locator('#stop')).to_be_enabled()
         self.now = 1
-        expect(self.page.locator('#exposure')).to_have_text('实际曝光 1 s')
+        expect(self.page.locator('#exposure')).to_have_text('1 s')
         self.assertEqual(sum(self.state()['instrument']['counts']), 0)
         self.page.locator('#save-current').click()
-        expect(self.page.locator('#cache-count')).to_have_text('本场已保存 1 份')
+        expect(self.page.locator('#snapshot-notice')).to_contain_text('已保存')
         self.screenshot_sizes('alpha-mca')
 
 
