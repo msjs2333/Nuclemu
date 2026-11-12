@@ -16,7 +16,7 @@ from .results import Calibration, _add_windows, write_product
 from .web_download import make_download
 from .web_store import ArchiveStore
 from .web_exchange import WebExchange
-from .exchange import cache_calibration, bind_calibration, load_item, decode_measurement
+from .exchange import cache_calibration, bind_calibration, import_item, load_item, decode_measurement
 
 
 def analysis_error(error):
@@ -105,6 +105,7 @@ class WebLab:
         self._imported_count = 0
         self._imported_items = []
         self._live_calibrations = {}
+        self._loaded_calibration_items = {}
         self._saved_calibration_devices = set()
         self.saved_selection = {}
         self.saved_analysis = {}
@@ -144,6 +145,28 @@ class WebLab:
         self.exchange.document = doc
         self._decoded_items.clear()
 
+    def preserve_loaded_calibration(self, source, identity):
+        """Retain a loaded measurement's already-saved calibration and provenance."""
+        measurement = next(item for item in source['items'] if item['id'] == identity)
+        device = measurement['document']['snapshot']['device']
+        self._loaded_calibration_items.pop(device, None)
+        calibration_id = measurement.get('calibration_id')
+        if calibration_id is None:
+            return
+        calibration = next(item for item in source['items'] if item['id'] == calibration_id)
+        doc = self._refresh_exchange(device=self.work.device.id, definition=self.info,
+                                    product=self.work.product(), analysis=self.analysis,
+                                    item_indices=getattr(self.work.lab.view, 'item_indices', None),
+                                    preserved_analysis=getattr(self, 'portable_preserved_analysis', None), identity_analysis=self.saved_analysis)
+        retained = next((item['id'] for item in doc['items'] if item['kind'] == 'calibration'
+                         and item['source'] == calibration['source']
+                         and item['document'] == calibration['document']), None)
+        if retained is None:
+            retained = import_item(doc, source, calibration_id)
+            self.exchange.document = doc
+            self._decoded_items.clear()
+        self._loaded_calibration_items[device] = retained
+
     def bind_saved_calibration(self, snapshot):
         calibration = (self._live_calibrations.get(snapshot.device) if snapshot.device in self._saved_calibration_devices
                        else self.work.lab.calibrations.get(snapshot.device))
@@ -153,8 +176,11 @@ class WebLab:
                                     preserved_analysis=getattr(self, 'portable_preserved_analysis', None), identity_analysis=self.saved_analysis)
         if calibration is None or not all(calibration.applies_to(row.settings) for row in snapshot.segments):
             return
-        saved = next((item for item in reversed(doc['items']) if item['kind'] == 'calibration'
-                      and item['document'] == calibration.document()), None)
+        candidates = [item for item in reversed(doc['items']) if item['kind'] == 'calibration'
+                      and item['document'] == calibration.document()]
+        saved = next((item for item in candidates
+                      if item['id'] == self._loaded_calibration_items.get(snapshot.device)),
+                     next(iter(candidates), None))
         if saved:
             for item in doc['items']:
                 if (item['kind'] == 'measurement' and item['document'].get('snapshot', {}).get('id') == snapshot.id

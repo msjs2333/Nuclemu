@@ -43,6 +43,7 @@ def load_measurement(lab, token, identity, overwrite=False):
         lab.work.lab.calibrations[device] = decoded.calibration
     lab._live_calibrations[device] = decoded.calibration
     lab._saved_calibration_devices.discard(device)
+    lab.preserve_loaded_calibration(source, decoded.item_id)
     lab.clear_portable_reference(device, 'selected')
     lab.analysis[device]['selected'] = None
     if lab.work.device.id == device:
