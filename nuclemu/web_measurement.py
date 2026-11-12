@@ -20,8 +20,8 @@ def inspect_measurement(lab, device, raw=None):
     if not choices:
         raise ValueError('文件中没有适用于所选仪器或窗的测量记录。')
     token = uuid4().hex
-    lab._pending_measurement = token, device, source
     target = lab.work.session.instrument(device)
+    lab._pending_measurement = token, device, source, target.acquisition
     return dict(token=token, device=device, items=choices,
                 overwrite_required=target.exposure_s > 0 or any(target.counts))
 
@@ -30,7 +30,9 @@ def load_measurement(lab, token, identity, overwrite=False):
     pending = getattr(lab, '_pending_measurement', None)
     if pending is None or token != pending[0]:
         raise ValueError('载入选择已过期，请重新选择测量记录。')
-    _, device, source = pending
+    _, device, source, acquisition = pending
+    if lab.work.session.instrument(device).acquisition != acquisition:
+        raise ValueError('目标仪器的测量轮次已改变，请重新选择测量记录并确认载入。')
     decoded = decode_measurement(source, lab.work.session.experiment, device, identity)
     lab.work.session.load_measurement(device, decoded.snapshot, overwrite=overwrite)
     if decoded.calibration is None:
