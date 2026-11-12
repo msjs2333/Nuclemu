@@ -158,6 +158,7 @@ async function returnToExperiment() { replacementFile.value = null; await cancel
       <p v-if="state.portable_mode_notice" id="portable-mode" class="notice">{{ state.portable_mode_notice }}</p>
       <p v-if="Object.keys(state.portable_unresolved).length" class="notice">部分分析引用未对应一份完整保存的读数。已保存的各段仍可查看；请选择所需记录核对工况。</p>
       <SetupPage v-show="page === 'setup'" :course="state.definition" :settings="state.settings" :readonly="state.readonly" :act="act"
+        :historical-mode="!!state.portable_mode_notice"
         :particle-flow="state.particle_flow" :output-enabled="state.output_enabled" :gates="state.gates" @device="toDevice" @notice="message = $event"/>
       <InstrumentPage ref="instruments" v-show="page === 'instrument'" :state="state" :act="act" @task="fn => { message = ''; report(fn) }"
         @load-measurement="requestMeasurementLoad"/>

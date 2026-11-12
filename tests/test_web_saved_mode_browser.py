@@ -28,6 +28,7 @@ class SavedModeBrowserTests(unittest.TestCase):
         self.page.locator('#open-package').set_input_files(path)
         expect(self.page.locator('#lab-title')).to_contain_text('历史共享输入')
         expect(self.page.locator('#portable-mode')).to_contain_text('继续测量沿用原共享输入模式')
+        self.page.locator('[data-page=setup]').click()
         self.page.locator('#connections summary').click()
         expect(self.page.locator('#connections .markdown-body')).to_have_count(0)
         self.page.locator('[data-page=instrument]').click()

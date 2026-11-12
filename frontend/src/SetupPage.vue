@@ -3,14 +3,17 @@ import {computed, nextTick, onMounted, onBeforeUnmount, ref, watch} from 'vue'
 import {drawConnections} from '/draw.js'
 import ApparatusFigure from './ApparatusFigure.vue'
 import ParticleFlow from './ParticleFlow.vue'
+import MarkdownBody from './MarkdownBody.vue'
+import {apparatusOverview} from './apparatusOverview'
 import {errorMessage} from './api'
 import type {Act, Course, Part} from './types'
 
 const props = defineProps<{course: Course; settings: Record<string, number>; readonly: boolean; act: Act;
-  outputEnabled: Record<string, boolean>; gates: Record<string, boolean>; particleFlow?: {thickness_um?: number; areal_density_g_cm2?: number} | null}>()
+  outputEnabled: Record<string, boolean>; gates: Record<string, boolean>; historicalMode?: boolean; particleFlow?: {thickness_um?: number; areal_density_g_cm2?: number} | null}>()
 const animate = ref(!window.matchMedia('(prefers-reduced-motion: reduce)').matches)
 const emit = defineEmits<{device: [id: string]; notice: [message: string]}>()
 const selection = ref<string | null>(null)
+const overview = computed(() => props.historicalMode ? '' : apparatusOverview(props.course))
 const part = computed(() => props.course.components.find(p => p.id === selection.value))
 const panel = ref<'operation' | 'introduction'>('operation')
 const params = computed(() => props.course.parameters.filter(p => props.course.components.some(c => c.parameters.includes(p.key))))
@@ -119,9 +122,10 @@ async function apply() {
         </button>
       </div>
       <div class="flow-note"><label><input v-model="animate" type="checkbox">动画</label><span>装置状态示意</span></div>
-      <details v-if="course.connections.length" id="connections" class="wiring-info">
+      <details v-if="overview || course.connections.length" id="connections" class="wiring-info">
         <summary>装置与接线</summary>
-        <ul><li v-for="edge in course.connections" :key="edge.source + '/' + edge.target + '/' + edge.label">
+        <MarkdownBody v-if="overview" :source="overview"/>
+        <ul v-else><li v-for="edge in course.connections" :key="edge.source + '/' + edge.target + '/' + edge.label">
           {{ partLabel(edge.source) }} → {{ partLabel(edge.target) }} · {{ edge.label }}</li></ul>
       </details>
       </div>
@@ -172,6 +176,8 @@ async function apply() {
 #setup .apparatus button[aria-pressed=true] { border: 1px solid #7396ca; border-bottom: 4px solid #3859d9; background: #edf3fc; border-radius: 3px; }
 #setup .apparatus button[aria-pressed=true] span { box-shadow: none; }
 #setup .wiring-info { top: 0; }
+#setup .wiring-info[open] { width:560px; max-width:calc(100% - 24px); max-height:calc(100dvh - 170px); overflow:auto; }
+#setup .wiring-info :deep(.markdown-body) { margin-top:12px; font-size:14px; line-height:1.7; }
 .flow-note { display: flex; gap: 14px; align-items: baseline; margin-top: 12px; color: #536170; font-size: 12px; }
 .flow-note label { white-space: nowrap; }
 </style>
