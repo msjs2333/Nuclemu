@@ -88,8 +88,8 @@ class WebOperationsBrowserTests(unittest.TestCase):
         with self.page.expect_response(lambda r: r.url.endswith('/api/action') and r.request.post_data_json.get('action') == 'stop_group') as stopped:
             self.page.locator('#stop').click()
         self.assertEqual(stopped.value.request.post_data_json['component'], 'counter')
-        expect(self.page.get_by_label('计数窗 A', exact=True).locator('.window-state')).to_have_text('暂停')
-        expect(self.page.get_by_label('计数窗 B', exact=True).locator('.window-state')).to_have_text('暂停')
+        expect(self.page.get_by_role('region', name='窗 A', exact=True).locator('.window-state')).to_have_text('暂停')
+        expect(self.page.get_by_role('region', name='窗 B', exact=True).locator('.window-state')).to_have_text('暂停')
         self.assertFalse(self.server.app.lab.work.session.instrument('counter').running)
         self.assertFalse(self.server.app.lab.work.session.instrument('counter_b').running)
         self.screenshot('beta-single-counter-two-windows-desktop')
