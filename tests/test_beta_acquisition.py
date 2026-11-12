@@ -1,4 +1,4 @@
-"""The real beta course routes one detector into independently exposed counters."""
+"""The beta course provides two independent virtual repeats at one mean rate."""
 
 from copy import deepcopy
 from dataclasses import replace
@@ -12,7 +12,7 @@ import unittest
 from examples.beta_windows import background_comparison, counts, dual_windows
 from nuclemu.catalog import describe
 from nuclemu.core import Device, Parameter, Session
-from nuclemu.experiments.beta import DETECTOR_OUTPUT, EXPERIMENT, expected_rates, particle_flow, sample_counts
+from nuclemu.experiments.beta import DETECTOR_OUTPUT, DETECTOR_OUTPUT_B, EXPERIMENT, LEGACY_SHARED_RESPONSE, expected_rates, particle_flow, sample_counts, restore_definition
 from nuclemu.physics import AluminumFoil
 from nuclemu.results import MeasurementView, write_product
 
@@ -25,7 +25,8 @@ class BetaAcquisitionTests(unittest.TestCase):
         self.assertEqual(set(parts['foil']['parameters']), {'foil_spec_um', 'foil_count'})
         self.assertEqual(parts['detector']['output'], DETECTOR_OUTPUT)
         self.assertIsNone(parts['detector']['device'])
-        self.assertEqual([d.input for d in EXPERIMENT.devices], [DETECTOR_OUTPUT] * 2)
+        self.assertEqual([d.input for d in EXPERIMENT.devices], [DETECTOR_OUTPUT, DETECTOR_OUTPUT_B])
+        self.assertEqual(parts['detector']['outputs'], (DETECTOR_OUTPUT, DETECTOR_OUTPUT_B))
         self.assertEqual([d.channels for d in EXPERIMENT.devices], [1, 1])
         self.assertEqual(parts['counter']['devices'], ('counter', 'counter_b'))
         self.assertNotIn('counter_b', parts)
@@ -49,7 +50,12 @@ class BetaAcquisitionTests(unittest.TestCase):
 
     def test_known_input_and_offset_gates_explain_each_reading(self):
         # A dedicated ideal input checks routing, not random equality in class.
-        experiment = replace(EXPERIMENT, model=lambda settings, start, end, rng:
+        info = describe(EXPERIMENT)
+        info['outputs'] = info['outputs'][:1]
+        info['outputs'][0]['response'] = LEGACY_SHARED_RESPONSE
+        for device in info['devices']:
+            device['input'] = DETECTOR_OUTPUT
+        experiment = replace(restore_definition(info), model=lambda settings, start, end, rng:
                              {DETECTOR_OUTPUT: (round(10 * (end - start)),)})
         s = Session(experiment, seed=42)
         s.set_output(DETECTOR_OUTPUT, True)
@@ -91,8 +97,8 @@ class BetaAcquisitionTests(unittest.TestCase):
 
     def test_a_stops_while_b_continues_and_export_exposures_stay_separate(self):
         result = dual_windows(reopen=False)
-        self.assertEqual((result['A_first_5s'], result['A_second_5s'], result['B_10s']), (279, None, 550))
-        for device, duration, count in (('counter', 5, 279), ('counter_b', 10, 550)):
+        self.assertEqual((result['A_first_5s'], result['A_second_5s'], result['B_10s']), (284, None, 559))
+        for device, duration, count in (('counter', 5, 284), ('counter_b', 10, 559)):
             stream = StringIO()
             write_product(stream, 'json', result['product'], device=device)
             segment, = json.loads(stream.getvalue())['segments']
@@ -107,7 +113,7 @@ class BetaAcquisitionTests(unittest.TestCase):
         s.set('source_present', 0)
         s.set_output(DETECTOR_OUTPUT, True)
         s.start(19.5, device='counter'); s.advance(19.5)
-        self.assertEqual(counts(s, 'counter'), 32)
+        self.assertEqual(counts(s, 'counter'), 35)
         s.set_output(DETECTOR_OUTPUT, False)
         s.start(2, device='counter_b'); s.advance(10)
         self.assertEqual(s.instrument('counter_b').exposure_s, 2)
@@ -132,13 +138,13 @@ class BetaAcquisitionTests(unittest.TestCase):
     def test_background_selection_changes_only_analysis_with_unequal_exposures(self):
         result = background_comparison()
         product = deepcopy(result['product'])
-        self.assertEqual([s['readings']['counter'][0] for s in product['segments']], [32, 399, 20])
-        for reading, nb, tb in zip(result['comparisons'], (32, 20), (19.5, 9.25)):
-            self.assertEqual((reading['counts'], reading['exposure_s']), (399, 7.25))
-            self.assertAlmostEqual(reading['net_rate'], 399 / 7.25 - nb / tb)
-            self.assertAlmostEqual(reading['uncertainty'], math.sqrt(399 / 7.25**2 + nb / tb**2))
+        self.assertEqual([s['readings']['counter'][0] for s in product['segments']], [35, 388, 15])
+        for reading, nb, tb in zip(result['comparisons'], (35, 15), (19.5, 9.25)):
+            self.assertEqual((reading['counts'], reading['exposure_s']), (388, 7.25))
+            self.assertAlmostEqual(reading['net_rate'], 388 / 7.25 - nb / tb)
+            self.assertAlmostEqual(reading['uncertainty'], math.sqrt(388 / 7.25**2 + nb / tb**2))
         self.assertEqual(result['product'], product)
-        self.assertEqual([s['counts'][0] for s in result['saved_windows']], [32, 399, 20])
+        self.assertEqual([s['counts'][0] for s in result['saved_windows']], [35, 388, 15])
 
     def test_legacy_beta_archive_reads_its_own_settings_and_single_instrument(self):
         from nuclemu.web_session import WebLab

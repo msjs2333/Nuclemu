@@ -15,13 +15,13 @@ class BetaWindowRowsTests(unittest.TestCase):
         self.assertEqual(len(short), 5)
         self.assertEqual(len(long), 1)
         self.assertEqual([r['exposure_s'] for r in short], [1] * 5)
-        self.assertEqual([r['counts'] for r in short], [[106], [95], [75], [42], [62]])
-        self.assertEqual((long[0]['exposure_s'], long[0]['counts']), (5, [380]))
+        self.assertEqual([r['counts'] for r in short], [[106], [109], [74], [57], [48]])
+        self.assertEqual((long[0]['exposure_s'], long[0]['counts']), (5, [409]))
         self.assertTrue(all(r['complete'] for r in short + long))
         cross = short[2]['parts']
         self.assertEqual([(p['start_s'], p['end_s'], p['settings']['foil_count']) for p in cross],
                          [(2, 2.5, 0), (2.5, 3, 4)])
-        self.assertEqual([p['readings']['counter'] for p in cross], [[56], [19]])
+        self.assertEqual([p['readings']['counter'] for p in cross], [[49], [25]])
         self.assertEqual(session.snapshots[0].windows, session.instrument_windows('counter'))
         # Display polling and flow calls preserve this exact operation line.
         self.assertEqual(rows(acquire(chunks=.1)), result)
@@ -29,7 +29,7 @@ class BetaWindowRowsTests(unittest.TestCase):
     def test_retime_finishes_current_window_then_changes_only_a(self):
         result = rows(acquire(retime=True))
         self.assertEqual([r['exposure_s'] for r in result['counter']], [1, 1, 1, 2])
-        self.assertEqual([r['counts'] for r in result['counter']], [[106], [95], [75], [104]])
+        self.assertEqual([r['counts'] for r in result['counter']], [[106], [109], [74], [105]])
         self.assertEqual([r['exposure_s'] for r in result['counter_b']], [5])
         self.assertEqual(result['counter_b'], rows(acquire())['counter_b'])
 

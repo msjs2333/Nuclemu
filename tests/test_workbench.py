@@ -101,10 +101,10 @@ class WorkbenchTests(unittest.TestCase):
             c.advance(.1)
             c.readout()
         c.set_background(0)
-        self.assertEqual([s["readings"]["counter"] for s in c.product()["segments"]], [[1], [122]])
+        self.assertEqual([s["readings"]["counter"] for s in c.product()["segments"]], [[2], [128]])
         reading = c.readout()
         self.assertEqual(reading["exposure_s"], 2.5)
-        self.assertEqual((reading["net_rate"], reading["uncertainty"]), net_count_rate(122, 2.5, 1, 1.25))
+        self.assertEqual((reading["net_rate"], reading["uncertainty"]), net_count_rate(128, 2.5, 2, 1.25))
         records = list(c.session.records)
         with TemporaryDirectory() as directory:
             path = Path(directory) / "beta.json"
@@ -118,7 +118,7 @@ class WorkbenchTests(unittest.TestCase):
             with path.with_suffix(".csv").open(encoding="utf-8", newline="") as stream:
                 rows = list(csv.DictReader(stream))
             self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["counts"], "1")
+            self.assertEqual(rows[0]["counts"], "2")
         for _ in range(10):
             c.product()
             c.readout()

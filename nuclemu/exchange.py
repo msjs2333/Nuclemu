@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4, uuid5
 from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
-from .catalog import describe
+from .catalog import describe, resolve_saved_experiment
 from .download_names import calibration_label, download_prefix, measurement_label
 from .results import Calibration, configuration_document, round_document, snapshot_product, write_product
 
@@ -454,12 +454,15 @@ def decode_measurement(source, experiment, device, item_id=None):
         item = next((i for i in candidates if i["id"] == item_id), None)
         if item is None:
             raise ValueError("Selected measurement is not in the source")
-    bound = next((d for d in experiment.devices if d.id == device), None)
+    restored = resolve_saved_experiment(experiment, bundle["definition"])
+    bound = next((d for d in restored.devices if d.id == device), None)
+    target = next((d for d in experiment.devices if d.id == device), None)
     product = item["document"]
     saved = product["devices"].get(device)
     archived = next((d for d in bundle["definition"]["devices"] if d["id"] == device), None)
-    if (product["experiment"] != experiment.id or bound is None or saved is None
+    if (product["experiment"] != experiment.id or bound is None or target is None or saved is None
             or product["snapshot"]["device"] != device or archived is None
+            or (saved["kind"], saved["channels"]) != (target.kind, target.channels)
             or (saved["kind"], saved["channels"], archived.get("input")) !=
                (bound.kind, bound.channels, bound.input)):
         raise ValueError("Measurement does not match the target experiment and instrument")
@@ -482,6 +485,13 @@ def reopen_session(doc, experiment, *, seed=None):
     validate_document(doc)
     if doc.get("legacy") or experiment.id != doc["definition"]["id"]:
         raise ValueError("Open historical data for viewing, or import it into a new experiment")
+    experiment = resolve_saved_experiment(experiment, doc["definition"])
+    saved_outputs = {o["id"]: (o.get("channels", 1), o.get("unit", "count"),
+                              o.get("time_unit", "s"), o.get("response", ""))
+                     for o in doc["definition"].get("outputs", ())}
+    current_outputs = {o.id: (o.channels, o.unit, o.time_unit, o.response) for o in experiment.outputs}
+    if saved_outputs != current_outputs:
+        raise ValueError("The current course does not match the archived signal output bindings")
     current_devices = {d.id: d for d in experiment.devices}
     for saved in doc["definition"]["devices"]:
         current = current_devices.get(saved["id"])

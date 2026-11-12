@@ -360,6 +360,7 @@ class Session:
         return MappingProxyType({}) if self._instruments is None else self._instruments.output_enabled
 
     def set_output(self, output: str, enabled: bool) -> None:
+        """Switch an output and its declared component group atomically."""
         if self._instruments is None:
             raise ValueError("This experiment has no independent detector outputs")
         self._instruments.set_output(output, enabled)

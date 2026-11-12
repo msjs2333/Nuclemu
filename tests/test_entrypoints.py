@@ -21,7 +21,7 @@ class EntryPointParityTests(unittest.TestCase):
               (1.25, {"foil_spec_um": 1, "foil_count": 5})], [172, 86]),
             ("beta", "counter", "beta_detector", 42,
              [(1.25, {"source_present": 0, "foil_spec_um": 100}),
-              (2.5, {"source_present": 1, "foil_count": 4})], [1, 122]),
+              (2.5, {"source_present": 1, "foil_count": 4})], [2, 128]),
         )
         for experiment, device, output, seed, steps, expected_counts in scenarios:
             with self.subTest(experiment=experiment), TemporaryDirectory() as directory:

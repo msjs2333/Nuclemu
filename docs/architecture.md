@@ -131,7 +131,7 @@ assert session.instrument("a").exposure_s == 10
 
 独立门记录的 `readings` 仅包含当时开门的仪器。结果视图分别合并每台仪器连续、同工况、同轮次的窗，输出的每段曝光只属于其列出的仪器，导出时按设备筛选；空缺仪器不表示零曝光测量。`MeasurementView.changed_start_since(record_count)` 返回从客户端记录游标起最早受影响的段索引，能同时覆盖多个仪器的尾段更新。未声明 `outputs` 的旧实验仍返回设备 ID，并保持原共享门、时间推进和随机流行为。已有旧文件格式与调用方式继续兼容。
 
-课程可提供 `Experiment.restore_definition(saved_info)`，由受信任的本地课程实现返回适用历史文件的完整 `Experiment`。`catalog.resolve_saved_experiment()` 统一选择并核验定义；默认使用当前课程。文件只提供已存定义数据，不加载文件中指定的代码。整场文件可据此保留历史模型；单项记录载入当前仪器仅恢复固定数据前缀，后续仍使用当前会话模型。
+课程可提供 `Experiment.restore_definition(saved_info)`，由受信任的本地课程实现返回适用历史文件的完整 `Experiment`。`catalog.resolve_saved_experiment()` 统一选择，并核对返回定义的类型与实验 ID；文件接口继续严格核对设备及输出绑定。默认使用当前课程。文件只提供已存定义数据，不加载文件中指定的代码。整场文件可据此保留历史模型；单项记录载入当前仪器仅恢复固定数据前缀，后续仍使用当前会话模型。
 
 ### 测量轮次、可读快照与局部清空
 

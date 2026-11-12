@@ -81,14 +81,14 @@ class CliTests(unittest.TestCase):
             expected = dict(MeasurementView(session, 42).product())
             expected["devices"] = {"counter": expected["devices"]["counter"]}
             self.assertEqual(product, expected)
-            self.assertEqual([s["readings"]["counter"][0] for s in product["segments"]], [1, 122])
-            self.assertIn("net=48", output)
+            self.assertEqual([s["readings"]["counter"][0] for s in product["segments"]], [2, 128])
+            self.assertIn("net=49.6", output)
             with (target / "beta.csv").open(encoding="utf-8", newline="") as stream:
                 rows = list(csv.DictReader(stream))
             self.assertEqual([float(row["exposure_s"]) for row in rows], [1.25, 2.5])
-            self.assertEqual([int(row["counts"]) for row in rows], [1, 122])
+            self.assertEqual([int(row["counts"]) for row in rows], [2, 128])
 
-    def test_beta_independent_steps_sum_to_shared_long_window(self):
+    def test_beta_each_selected_instrument_matches_its_own_plan(self):
         with TemporaryDirectory() as temporary:
             target = Path(temporary)
             common = ("run", "beta", "--seed", "42", "--enable-output", "beta_detector",
@@ -99,8 +99,22 @@ class CliTests(unittest.TestCase):
                     "--output", str(target / "long.json"))
             short = json.loads((target / "short.json").read_text(encoding="utf-8"))["segments"]
             long = json.loads((target / "long.json").read_text(encoding="utf-8"))["segments"]
-            self.assertEqual([s["readings"]["counter"][0] for s in short], [279, 271])
-            self.assertEqual(long[0]["readings"]["counter_b"][0], 550)
+            # A and B now use separate repeated observations. Compare each real
+            # command to the same selected device and gate plan, not to each other.
+            for device, durations, actual in (("counter", (5, 5), short),
+                                               ("counter_b", (10,), long)):
+                reference = Session(discover()["beta"], seed=42)
+                reference.configure({"source_present": 1, "foil_spec_um": 100, "foil_count": 4})
+                reference.set_output("beta_detector", True)
+                self.assertTrue(reference.output_enabled["beta_detector_b"])
+                for index, duration in enumerate(durations):
+                    if index:
+                        reference.clear(device=device)
+                    reference.start(duration, device=device)
+                    reference.advance(duration)
+                self.assertEqual(actual, MeasurementView(reference).product()["segments"])
+            self.assertEqual(long[0]["acquisition"], 1)
+            self.assertEqual(long[0]["end_s"]-long[0]["start_s"], 10)
             self.assertEqual([s["end_s"] - s["start_s"] for s in short], [5, 5])
             self.assertEqual([s["acquisition"] for s in short], [1, 2])
 

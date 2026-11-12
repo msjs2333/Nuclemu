@@ -59,8 +59,8 @@ class CliBackgroundTests(unittest.TestCase):
                 "1.25,source_present=0", "2.5,source_present=1,foil_count=4"), 1)
             background = self.measurement(document, 1)
             sample = self.measurement(document, 2)
-            self.assertEqual(self.reading(background), (1, 1.25))
-            self.assertEqual(self.reading(sample), (122, 2.5))
+            self.assertEqual(self.reading(background), (2, 1.25))
+            self.assertEqual(self.reading(sample), (128, 2.5))
             self.assert_background(document, background)
             self.assertEqual(document["analysis"]["counter"]["selected"], sample["id"])
             # Reopen bytes independently; no live session or CLI summary is needed.
@@ -69,9 +69,9 @@ class CliBackgroundTests(unittest.TestCase):
             cached = next(item for item in reopened["items"] if item["id"] == reference)
             rate, uncertainty = net_count_rate(*self.reading(self.measurement(reopened, 2)),
                                               *self.reading(cached))
-            self.assertEqual(rate, 48)
-            self.assertAlmostEqual(uncertainty, 4.489988864, places=8)
-            self.assertIn("net=48 +/- 4.48999", output)
+            self.assertEqual(rate, 49.6)
+            self.assertAlmostEqual(uncertainty, 4.664761516, places=8)
+            self.assertIn("net=49.6 +/- 4.66476", output)
 
     def test_background_second_uses_its_measurement_identity(self):
         with TemporaryDirectory() as temporary:
@@ -108,8 +108,8 @@ class CliBackgroundTests(unittest.TestCase):
             document, output = self.run_package(Path(temporary) / "raw.nuclemu", (
                 "1.25,source_present=0", "2.5,source_present=1,foil_count=4"))
             self.assertIsNone(document.get("analysis", {}).get("counter", {}).get("background"))
-            self.assertEqual(self.reading(self.measurement(document, 1)), (1, 1.25))
-            self.assertEqual(self.reading(self.measurement(document, 2)), (122, 2.5))
+            self.assertEqual(self.reading(self.measurement(document, 1)), (2, 1.25))
+            self.assertEqual(self.reading(self.measurement(document, 2)), (128, 2.5))
             self.assertNotIn("net=", output)
 
 
