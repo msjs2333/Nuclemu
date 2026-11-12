@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {computed, nextTick, ref, watch} from 'vue'
 import {fmt, inputValue} from './display'
+import {deviceName, instrumentBinding, instrumentDevices} from './instrumentBindings'
 import CounterPanel from './CounterPanel.vue'
 import SpectrumPanel from './SpectrumPanel.vue'
 import type {Act, State} from './types'
@@ -24,7 +25,9 @@ const segment = computed(() => {
 })
 const input = computed(() => props.state.definition.outputs?.find(o => o.id === instrument.value.input))
 const independent = computed(() => !!props.state.definition.outputs?.length)
-const group = computed(() => props.state.definition.components.find(p => p.kind === 'instrument' && (p.devices?.length ?? 0) > 1 && p.devices?.includes(instrument.value.id)))
+const binding = computed(() => instrumentBinding(props.state.definition, instrument.value.id))
+const group = computed(() => binding.value.devices.length > 1 ? binding.value.component : undefined)
+const targets = computed(() => instrumentDevices(props.state.definition))
 const groupRunning = computed(() => group.value ? group.value.devices!.some(id => props.state.gates[id]) : props.state.running)
 const groupAllRunning = computed(() => group.value ? group.value.devices!.every(id => props.state.gates[id]) : props.state.running)
 const hasExposure = computed(() => group.value ? group.value.devices!.some(id => (props.state.instruments[id]?.exposure_s ?? 0) > 0) : !!props.state.instrument?.readable_exposure_s)
@@ -51,7 +54,7 @@ async function start() {
     durationInput.value.reportValidity()
     return
   }
-  const device = instrument.value.id, session = props.state.id, fields = targets()
+  const device = instrument.value.id, session = props.state.id, fields = acquisitionTargets()
   emit('task', async () => {
     if (group.value) {
       await props.act('instrument_group_config', {component: group.value.id, duration_s: fields.duration_s, count_limit: fields.count_limit}, session)
@@ -62,11 +65,11 @@ async function start() {
     } else await props.act('start', {duration: mode.value === 'manual' ? null : duration.value}, session)
   })
 }
-function targets() { return {duration_s: mode.value === 'timed' ? duration.value : null,
+function acquisitionTargets() { return {duration_s: mode.value === 'timed' ? duration.value : null,
   count_limit: mode.value === 'count' ? countLimit.value : null, window_s: windowSize.value} }
 function configureTarget() {
-  if (group.value) run('instrument_group_config', {component: group.value.id, duration_s: targets().duration_s, count_limit: targets().count_limit})
-  else run('instrument_config', {device: instrument.value.id, ...(props.state.running ? {window_s: windowSize.value} : targets())})
+  if (group.value) run('instrument_group_config', {component: group.value.id, duration_s: acquisitionTargets().duration_s, count_limit: acquisitionTargets().count_limit})
+  else run('instrument_config', {device: instrument.value.id, ...(props.state.running ? {window_s: windowSize.value} : acquisitionTargets())})
 }
 function pause() { group.value ? run('stop_group', {component: group.value.id,
   gate_cycles: Object.fromEntries(group.value.devices!.map(id => [id, props.state.instruments[id].cycle]))})
@@ -126,7 +129,7 @@ function finishClear(choice: 'save' | 'discard' | 'cancel') {
     <aside class="instrument-controls" aria-label="仪器操作">
       <label v-if="state.definition.devices.length > 1" class="device-select">{{ group ? '保存、清空与载入目标' : '操作仪器' }}
         <select ref="selector" id="device" :value="state.device" @change="run('device', {device: inputValue($event)})">
-          <option v-for="(d, i) in state.definition.devices" :key="d.id" :value="d.id">{{ instrument.kind === 'counter' ? '窗 ' + (i === 0 ? 'A' : 'B') : d.label }}</option>
+          <option v-for="d in targets" :key="d.id" :value="d.id">{{ deviceName(state.definition, d.id) }}</option>
         </select>
       </label>
       <div class="instrument-status">

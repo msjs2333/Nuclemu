@@ -2,6 +2,7 @@
 import {computed, reactive} from 'vue'
 import {downloadProducts, downloadExperiment} from './api'
 import {describe, exposure, fmt, inputValue, segmentName} from './display'
+import {deviceName} from './instrumentBindings'
 import ImportSaved from './ImportSaved.vue'
 import type {Act, Course, Segment, State} from './types'
 
@@ -18,7 +19,7 @@ function calibrationName(item: RecordDetails, spectrum: boolean) {
 const rows = computed(() => {
   const course = props.course
   const devices = course.devices.map(d => ({
-    ...d, name: course.devices.some(other => other !== d && other.label === d.label) ? d.label + ' · 窗 ' + String.fromCharCode(65 + course.devices.indexOf(d)) : d.label,
+    ...d, name: deviceName(course, d.id),
   }))
   if (props.cached) return [...props.snapshots.map(snapshot => ({
     key: 's/' + snapshot.id, device: snapshot.device, name: devices.find(d => d.id === snapshot.device)!.name,
