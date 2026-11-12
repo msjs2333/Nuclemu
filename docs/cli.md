@@ -58,7 +58,7 @@ python -m nuclemu run split-signal --path examples/courses --seed 187 --duration
 python -m nuclemu run beta --seed 42 --device counter:counter --enable-output beta_detector --set foil_spec_um=100 --step "1.25,source_present=0" --step "2.5,source_present=1,foil_count=4" --background 1 --output beta.json --output beta.csv
 ```
 
-当前模型和种子下，两段计数为 1、122，净率约为 `48 +/- 4.48999 1/s`。短曝光用于重现验收，课堂测量建议增加曝光以减小涨落；同一本底用于多个样品时，净率之间存在共享本底引入的相关性。
+当前独立重复观测模型和种子下，上述命令的两段计数为 2、128，净率约为 `49.6 +/- 4.66476 1/s`。短曝光用于重现验收，课堂测量建议增加曝光以减小涨落；同一本底用于多个样品时，净率之间存在共享本底引入的相关性。
 
 ## α 参考谱、加箔谱与刻度
 
@@ -133,4 +133,4 @@ python -m nuclemu files inspect beta-windows.nuclemu
 python -m nuclemu files export beta-windows.nuclemu --item ITEM_UUID --output counter-windows.csv
 ```
 
-该轮 A 有五个 1 s 窗，B 有一个 5 s 窗。当前种子下 A 为 106、95、75、42、62，B 为 380；A 第三窗的两部分分别保留换箔前后各 0.5 s 的工况。单项 JSON 保留 `windows`；单项 CSV 每窗每道一行，`parts` 保存窗内工况与原始计数，首行元数据保留累计工况段。无逐窗信息的旧文件按旧数据读取，不凭累计计数拆造窗口。普通 `run --output` 仍是累计工况段产品；需可重新载入的逐窗文件时使用 `--package` 后 `files export`。
+该轮 A 有五个 1 s 窗，B 有一个 5 s 窗。本课 A、B 按同一平均响应分别取样，是同工况的两组虚拟重复观测，不要求五短窗之和与同期一长窗相等或不同。按上述命令读取本次实得计数与实际曝光，并核对 A 第三窗保留换箔前后各 0.5 s 的工况。单项 JSON 保留 `windows`；单项 CSV 每窗每道一行，`parts` 保存窗内工况与原始计数，首行元数据保留累计工况段。无逐窗信息的旧文件按旧数据读取，不凭累计计数拆造窗口。普通 `run --output` 仍是累计工况段产品；需可重新载入的逐窗文件时使用 `--package` 后 `files export`。
