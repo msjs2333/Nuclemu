@@ -54,7 +54,7 @@ class WindowDeltaBrowserTests(unittest.TestCase):
         self.action('begin_clear', lambda: self.page.locator('#clear').click())
         self.action('finish_clear', lambda: self.page.locator('#clear-discard').click())
         expect(rows).to_have_count(1)
-        expect(rows).to_contain_text('开始采集后')
+        expect(rows).to_contain_text('暂无逐窗读数')
         self.page.get_by_role('button', name='从本场实验记录选择').click()
         expect(self.page.locator('#measurement-load')).to_be_visible()
         self.action('load_measurement', lambda: self.page.locator('#measurement-confirm').click())

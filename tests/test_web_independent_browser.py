@@ -36,7 +36,7 @@ class IndependentWebBrowserTests(unittest.TestCase):
         expect(self.page.locator('#start')).to_be_enabled()
         expect(self.page.locator('#stop')).to_be_disabled()
         expect(self.page.locator('#exposure')).to_have_text('0 s')
-        expect(self.page.get_by_role('region', name='计数器 B', exact=True).locator('.window-reading output')).to_have_text('尚无结清窗')
+        expect(self.page.get_by_role('region', name='计数器 B', exact=True).locator('.window-reading output')).to_have_text('等待首个完整窗')
         self.records()
         expect(self.page.locator('#products .product')).to_have_count(1)
         expect(self.page.locator('#products [data-device=a]')).to_have_count(1)
@@ -46,7 +46,7 @@ class IndependentWebBrowserTests(unittest.TestCase):
         expect(self.page.locator('#stop')).to_be_enabled()
         self.now = 1.75
         expect(self.page.locator('#exposure')).to_have_text('0.5 s')
-        expect(self.page.get_by_role('region', name='计数器 B', exact=True).locator('.window-reading output')).to_have_text('尚无结清窗')
+        expect(self.page.get_by_role('region', name='计数器 B', exact=True).locator('.window-reading output')).to_have_text('等待首个完整窗')
         self.now = 2.5
         expect(self.page.locator('#exposure')).to_have_text('1.25 s')
         expect(self.page.get_by_role('region', name='计数器 B 逐窗数据').locator('tbody tr')).to_have_count(1)

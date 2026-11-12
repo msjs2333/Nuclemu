@@ -13,7 +13,9 @@ const group = computed(() => binding.value.devices.length > 1 ? binding.value.co
 const panels = computed(() => binding.value.devices.filter(d => d.kind === 'counter').map(device => {
   const instrument = props.state?.instruments?.[device.id]
   const windows = props.state?.counter_windows?.[device.id] ?? instrument?.windows ?? []
-  return {device, label: counterWindowName(props.course, device.id) ?? deviceName(props.course, device.id), windows, latest: windows.filter(w => w.complete !== false).at(-1), running: props.state?.gates[device.id] ?? false}
+  const last = windows.at(-1)
+  const latest = last?.complete === false ? windows.at(-2) : last
+  return {device, label: counterWindowName(props.course, device.id) ?? deviceName(props.course, device.id), windows, latest, running: props.state?.gates[device.id] ?? false}
 }))
 function windowExposure(window: Window) { return window.exposure_s ?? ((window.end_exposure_s ?? 0) - (window.start_exposure_s ?? 0)) }
 function counts(window: Window) { return Array.isArray(window.counts) ? window.counts.reduce((a, b) => a + b, 0) : window.counts }
@@ -51,12 +53,12 @@ watch(() => panels.value.map(p => p.windows.length).join('/'), async () => {
     <section v-for="panel in course.outputs?.length ? panels : []" :key="panel.device.id" class="counter-window" :data-device="panel.device.id" :aria-label="panel.label">
       <header><h2>{{ panel.label }}</h2><span class="window-state" :data-running="panel.running">{{ panel.running ? '采集中' : ['time_limit', 'count_limit'].includes(state?.instruments[panel.device.id]?.stop_reason ?? '') ? '到限暂停' : state?.instruments[panel.device.id]?.acquisition ? '暂停' : '等待开始' }}</span></header>
       <div class="window-reading"><strong>{{ panel.latest ? counts(panel.latest).toLocaleString('zh-CN') : '—' }}</strong><span>次</span>
-        <output>{{ panel.latest ? '本窗实际曝光 ' + fmt(windowExposure(panel.latest)) + ' s' : '尚无结清窗' }}</output></div>
+        <output>{{ panel.latest ? '本窗实际曝光 ' + fmt(windowExposure(panel.latest)) + ' s' : '等待首个完整窗' }}</output></div>
       <label v-if="group" class="window-setting">单次曝光 / s <input :id="'window-size-' + panel.device.id" type="number" min="0.000001" step="any" :value="windowDraft[panel.device.id] ?? state?.instruments[panel.device.id]?.next_window_s ?? state?.instruments[panel.device.id]?.window_s" :disabled="readonly || state?.instruments[panel.device.id]?.clearing" @input="windowDraft[panel.device.id] = ($event.target as HTMLInputElement).value" @change="configureWindow(panel.device.id, $event)"></label>
       <div :ref="el => { if (el) ledgers.set(panel.device.id, el as HTMLElement) }" class="window-ledger" tabindex="0" role="region" :aria-label="panel.label + ' 逐窗数据'" @scroll="follow(panel.device.id, $event)"><table>
-        <thead><tr><th>窗号</th><th>实际曝光 / s</th><th>计数 / 次</th><th>状态</th></tr></thead>
-        <tbody><tr v-for="(window, i) in panel.windows" :key="i"><td>{{ window.number ?? window.index ?? window.window ?? i + 1 }}</td><td>{{ fmt(windowExposure(window)) }}</td><td>{{ counts(window).toLocaleString('zh-CN') }}</td><td>{{ window.complete === false ? '进行中' : '已结清' }}<details v-if="changedConditions(window)"><summary>窗内工况</summary><div v-for="(part, j) in window.parts" :key="j">{{ fmt(part.start_s) }}–{{ fmt(part.end_s) }} s：{{ course.parameters.map(p => p.label + ' ' + part.settings[p.key] + (p.unit ? ' ' + p.unit : '')).join('，') }}</div></details></td></tr>
-          <tr v-if="!panel.windows.length"><td colspan="4">{{ readonly ? '此存档没有逐窗数据。' : '开始采集后，已结清的窗显示在这里。' }}</td></tr></tbody>
+        <thead><tr><th>窗号</th><th>实际曝光 / s</th><th>计数 / 次</th></tr></thead>
+        <tbody><tr v-for="(window, i) in panel.windows" :key="i"><td>{{ window.number ?? window.index ?? window.window ?? i + 1 }}<small v-if="window.complete === false" class="unfinished-window">{{ panel.running ? '未满窗' : '未满窗 · 已暂停' }}</small><details v-if="changedConditions(window)"><summary>窗内工况</summary><div v-for="(part, j) in window.parts" :key="j">{{ fmt(part.start_s) }}–{{ fmt(part.end_s) }} s：{{ course.parameters.map(p => p.label + ' ' + part.settings[p.key] + (p.unit ? ' ' + p.unit : '')).join('，') }}</div></details></td><td>{{ fmt(windowExposure(window)) }}</td><td>{{ counts(window).toLocaleString('zh-CN') }}</td></tr>
+          <tr v-if="!panel.windows.length"><td colspan="3">{{ readonly ? '此存档没有逐窗数据。' : '暂无逐窗读数' }}</td></tr></tbody>
       </table></div>
     </section>
   </div>
@@ -79,5 +81,6 @@ watch(() => panels.value.map(p => p.windows.length).join('/'), async () => {
 table { width:100%; border-collapse:collapse; font-size:14px; }
 th, td { padding:7px 8px; text-align:right; font-variant-numeric:tabular-nums; }
 th:first-child, td:first-child { text-align:left; }
+.unfinished-window { display:block; font-size:12px; color:#65552e; }
 th { position:sticky; top:0; background:#edf1f4; }
 </style>
