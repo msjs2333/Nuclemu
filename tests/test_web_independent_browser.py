@@ -60,7 +60,7 @@ class IndependentWebBrowserTests(unittest.TestCase):
         a_rows = self.page.get_by_role('region', name='计数器 A 逐窗数据').locator('tbody tr')
         expect(a_rows).to_have_count(3)
         expect(a_rows.last.locator('td').nth(1)).to_have_text('0.5')
-        expect(a_rows.last.locator('td').last).to_contain_text('进行中')
+        expect(a_rows.last.locator('td').first.locator('.unfinished-window')).to_have_text('未满窗')
         self.page.locator('#save-current').click()
         expect(self.page.locator('#snapshot-notice')).to_contain_text('已保存')
         session = self.server.app.lab.work.session

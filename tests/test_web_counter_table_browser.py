@@ -50,5 +50,6 @@ class CounterTableBrowserTests(unittest.TestCase):
         expect(b.locator('tbody td:first-child details')).to_have_count(1)
         b.locator('summary').click()
         expect(b.locator('details')).to_contain_text('铝箔片数 4')
-        expect(self.page.locator('.counter-window tbody')).not_to_contain_text(['已结清', '状态'])
+        self.assertTrue(b.locator('.window-ledger').evaluate('(el) => el.scrollWidth <= el.clientWidth'))
+        expect(self.page.locator('#counter')).not_to_contain_text('已结清')
         self.screenshot('counter-table-complete-conditions')

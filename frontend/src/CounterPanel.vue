@@ -79,6 +79,8 @@ watch(() => panels.value.map(p => p.windows.length).join('/'), async () => {
 .window-setting { display:flex; align-items:center; gap:8px; margin:12px 0; }
 .window-ledger { max-height:calc(100dvh - 310px); overflow:auto; border-top:1px solid #c5ccd3; }
 table { width:100%; border-collapse:collapse; font-size:14px; }
+.window-ledger table { table-layout:fixed; }
+.window-ledger details { overflow-wrap:anywhere; font-size:13px; }
 th, td { padding:7px 8px; text-align:right; font-variant-numeric:tabular-nums; }
 th:first-child, td:first-child { text-align:left; }
 .unfinished-window { display:block; font-size:12px; color:#65552e; }
