@@ -487,6 +487,7 @@ class WebLab:
                     readout=readout, readout_error=readout_error,
                     counter_analysis=self._counter_analysis if w.device.kind == "counter" else [], readonly=self.readonly,
                     portable_loaded=self.portable_loaded,
+                    portable_mode_notice=getattr(self, 'portable_mode_notice', ''),
                     portable_unresolved=getattr(self, 'portable_unresolved', {}),
                     dirty=any(pending.values()), unsaved=pending, recovered_s=self.recovered_s,
                     draft_error=self.draft_error,

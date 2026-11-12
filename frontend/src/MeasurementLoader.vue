@@ -5,7 +5,7 @@ import type {Act} from './types'
 const props = defineProps<{session: string; act: Act}>()
 const emit = defineEmits<{task: [fn: () => Promise<void>]; notice: [message: string]}>()
 const input = ref<HTMLInputElement>(), dialog = ref<HTMLDialogElement>()
-type Preview = {token: string; device: string; items: {id: string; title: string; exposure_s: number}[]; overwrite_required: boolean}
+type Preview = {token: string; device: string; items: {id: string; title: string; exposure_s: number}[]; overwrite_required: boolean; notice?: string}
 const preview = ref<Preview | null>(null), selected = ref(''), busy = ref(false)
 let device = '', session = ''
 async function inspect(file?: File) {
@@ -32,7 +32,7 @@ function load() {
     try {
       await props.act('load_measurement', {token: target.token, item_id: identity, overwrite: target.overwrite_required}, original)
       dialog.value?.close()
-      emit('notice', '测量数据已载入，可继续采集。')
+      emit('notice', target.notice || '测量数据已载入，可继续采集。')
     } finally { busy.value = false }
   })
 }
@@ -45,6 +45,7 @@ defineExpose({open})
     <label>测量记录 <select id="measurement-choice" v-model="selected"><option v-for="item in preview?.items" :key="item.id" :value="item.id">{{ item.title }} · {{ item.exposure_s }} s</option></select></label>
     <p v-if="preview?.overwrite_required" id="measurement-overwrite">载入将覆盖当前测量数据</p>
     <p>只替换所选仪器或窗，原记录和另一窗保持不变。</p>
+    <p v-if="preview?.notice" id="measurement-mode">{{ preview.notice }}</p>
     <div class="dialog-actions"><button id="measurement-cancel" :disabled="busy" autofocus @click="dialog?.close()">取消</button><button id="measurement-confirm" class="primary" :disabled="busy || !selected" @click="load">{{ preview?.overwrite_required ? '确认覆盖并载入' : '载入' }}</button></div>
   </dialog>
 </template>

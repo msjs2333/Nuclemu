@@ -57,6 +57,7 @@ export interface State {
   clear_confirmation: {device: string; token: number; exposure_s: number} | null
   readout_error: string | null
   portable_loaded: boolean
+  portable_mode_notice: string
   portable_unresolved: Record<string, Record<string, unknown>>
   cached_calibrations: {id: string; device: string; title: string}[]
   counter_analysis: {index: number; net_rate?: number; uncertainty?: number; background_reference?: boolean; error?: string}[]

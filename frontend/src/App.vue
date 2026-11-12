@@ -155,6 +155,7 @@ async function returnToExperiment() { replacementFile.value = null; await cancel
       <p v-if="state.draft_error" class="notice" role="alert">最近草稿未更新。{{ state.draft_error }}</p>
       <p v-if="convertedFile" id="portable-view" class="notice">历史转存文件只供查看，可从实验记录导出读数。</p>
       <p v-else-if="state.portable_loaded && state.selected !== null" id="portable-view" class="notice">正在查看文件中已保存的读数。仪器当前门关闭，开始后建立新的测量轮次。</p>
+      <p v-if="state.portable_mode_notice" id="portable-mode" class="notice">{{ state.portable_mode_notice }}</p>
       <p v-if="Object.keys(state.portable_unresolved).length" class="notice">部分分析引用未对应一份完整保存的读数。已保存的各段仍可查看；请选择所需记录核对工况。</p>
       <SetupPage v-show="page === 'setup'" :course="state.definition" :settings="state.settings" :readonly="state.readonly" :act="act"
         :particle-flow="state.particle_flow" :output-enabled="state.output_enabled" :gates="state.gates" @device="toDevice" @notice="message = $event"/>

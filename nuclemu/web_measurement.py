@@ -2,6 +2,7 @@
 
 from uuid import uuid4
 
+from .catalog import resolve_saved_experiment
 from .exchange import decode_measurement, load_item, load_package
 
 
@@ -24,7 +25,14 @@ def inspect_measurement(lab, device, raw=None):
     token = uuid4().hex
     target = lab.work.session.instrument(device)
     lab._pending_measurement = token, device, source, target.acquisition
+    current = lab.work.session.experiment
+    restored = resolve_saved_experiment(current, source['definition'])
+    changed_inputs = ({d.id: d.input for d in restored.devices} !=
+                      {d.id: d.input for d in current.devices})
+    notice = ('原有读数保留；继续采集采用当前课程的测量模式。' + current.description
+              if restored is not current and changed_inputs else '')
     return dict(token=token, device=device, items=choices,
+                notice=notice,
                 overwrite_required=target.exposure_s > 0 or any(target.counts))
 
 

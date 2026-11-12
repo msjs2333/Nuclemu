@@ -3,7 +3,7 @@
 from copy import deepcopy
 import json
 
-from .catalog import describe
+from .catalog import describe, resolve_saved_experiment
 from .exchange import load_package
 from .results import Calibration, MeasurementView
 from .web_exchange import WebExchange
@@ -100,11 +100,16 @@ def open_portable(data, definitions, store, clock):
     definition = definitions.get(doc["definition"]["id"])
     if definition is None:
         raise ValueError("找不到该可携文件对应的课程。")
+    current = definition
+    definition = resolve_saved_experiment(current, doc["definition"])
     info = describe(definition)
     if not _compatible(doc["definition"], info):
         raise ValueError("可携文件中的仪器或信号绑定与当前课程不符。")
     exchange, session = WebExchange.load(data, definition)
     lab = WebLab(definition, info, session.seed, store, clock)
+    if definition is not current and ({d.id: d.input for d in definition.devices} !=
+                                      {d.id: d.input for d in current.devices}):
+        lab.portable_mode_notice = definition.description
     lab.work.lab.session = session
     overlay = SavedOverlay(session, doc["items"], package_id=doc['id'])
     lab.work.lab.view = overlay
