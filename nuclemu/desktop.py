@@ -25,6 +25,9 @@ class _Launcher:
         self.settings_path, self.settings_error = settings_path, settings_error
         self.service_factory, self.instance = service_factory, instance
         self.settings_window = None
+        self.close_window = None
+        self.close_context = None
+        self._close_busy = self._choosing_path = False
         self._auto_pending = self.settings.open_browser
         self._automatic_opened = False
         self.closed = self.closing = self.checking_close = False
@@ -294,12 +297,14 @@ class _Launcher:
         self.start()
 
     def activate(self):
-        if self.closed:
+        if self.closed or self._choosing_path:
             return
         self.root.deiconify()
         self.root.lift()
         self.root.focus_force()
-        if self.settings_window is not None:
+        if self.close_window is not None:
+            self.close_window.activate()
+        elif self.settings_window is not None and not self.checking_close:
             self.settings_window.activate()
 
     def open_browser(self):
@@ -316,43 +321,101 @@ class _Launcher:
         self.message.set(text)
 
     def copy_address(self):
-        if self.url and not self.closing:
+        if self.url and not self.closing and not self.checking_close:
             self.root.clipboard_clear()
             self.root.clipboard_append(self.url)
             self._notice('地址已复制，可粘贴到浏览器中打开。')
 
     def request_close(self):
-        if self.closing or self.checking_close:
+        if self.closing:
+            return
+        if self.checking_close:
+            if self.close_window is not None and self.close_window.completed:
+                self._closing_service()
+                return
+            self.activate()
             return
         self.checking_close = True
-        self._enable(self.close_button, False)
-        self._enable(self.settings_button, False)
-        self._enable(self.retry_button, False)
-        def check():
+        self._auto_pending = False
+        self._close_controls(False)
+        if self.settings_window is not None:
+            self.settings_window.root.withdraw()
+        self._close_call('begin', self.service.begin_close)
+
+    def _close_controls(self, enabled):
+        for button in (self.close_button, self.settings_button, self.retry_button,
+                       self.open_button, self.copy_button):
+            self._enable(button, enabled)
+
+    def _close_call(self, action, operation):
+        self._close_busy = True
+        if self.close_window is not None:
+            self.close_window.set_busy(True)
+        def run():
             try:
-                self.messages.put(('close', self.service.stop_if_idle()))
+                self.messages.put((action, operation(), None))
             except Exception as error:
-                self.messages.put(('error', str(error)))
-        Thread(target=check, name='nuclemu-desktop-close', daemon=True).start()
+                self.messages.put((action, None, error))
+        Thread(target=run, name=f'nuclemu-desktop-{action}', daemon=True).start()
+
+    def close_action(self, action, path=None):
+        if self._close_busy or self._choosing_path or self.close_context is None or self.closing:
+            return
+        context = self.close_context
+        operations = {'cancel': lambda: self.service.cancel_close(context),
+                      'discard': lambda: self.service.discard_close(context),
+                      'save': lambda: self.service.save_close(context, path)}
+        self._close_call(action, operations[action])
+
+    def _return_from_close(self, notice, *, error=False):
+        if self.close_window is not None:
+            self.close_window.destroy()
+        self.close_context = None
+        self.checking_close = self._close_busy = False
+        self._close_controls(True)
+        self._notice(notice, error=error)
+        if self.settings_window is not None:
+            self.settings_window.root.deiconify()
+
+    def _closing_service(self):
+        if self.close_window is not None:
+            self.close_window.destroy()
+        self.close_context = None
+        self.checking_close = False
+        self.closing = True
+        self.status.set('正在关闭…')
+        self._close_controls(False)
+
+    def _close_result(self, action, result, error):
+        from .web_service import StaleCloseError
+        self._close_busy = False
+        if error is not None:
+            if action == 'begin' or isinstance(error, StaleCloseError):
+                self._return_from_close(f'未关闭：{error}', error=True)
+            elif self.close_window is not None:
+                self.close_window.set_busy(False)
+                self.close_window.notice(f'未能完成：{error} 可重试，或取消关闭返回实验。', error=True)
+            return
+        if action == 'begin' and result is not None:
+            from .desktop_exit import ExitWindow
+            self.close_context = result
+            self.close_window = ExitWindow(self, result)
+            self.close_window.activate()
+        elif action == 'cancel':
+            self._return_from_close('已取消关闭，实验继续运行。')
+        elif action == 'save' and getattr(result, 'warning', None):
+            self.close_context = None
+            self.close_window.saved(result.warning)
+        else:
+            self._closing_service()
 
     def poll(self):
         while True:
             try:
-                kind, result = self.messages.get_nowait()
+                action, result, error = self.messages.get_nowait()
             except Empty:
                 break
-            self.checking_close = False
-            if kind == 'close' and result:
-                self.closing = True
-                self.status.set('正在关闭…')
-                self._enable(self.open_button, False)
-                self._enable(self.copy_button, False)
-            else:
-                self._enable(self.close_button, True)
-                self._enable(self.settings_button, True)
-                self._enable(self.retry_button, True)
-                self._notice('实验仍在工作台中。请返回工作台退出实验，再关闭启动器。'
-                             if kind == 'close' else f'无法关闭服务：{result}', error=kind == 'error')
+            self._close_result(action, result, error)
         state = self.service.status()
         if self.closing:
             if state.phase in ('stopped', 'failed') and self.service.join(0):

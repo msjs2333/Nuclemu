@@ -1018,6 +1018,13 @@ def _convert_archive(database, identifier):
         if [r[0] for r in rows] != list(range(len(rows))):
             raise ValueError("Legacy archive is missing measurement segments")
         old["product"]["segments"] = [json.loads(r[1]) for r in rows]
+    return archive_package(old, identifier)
+
+
+def archive_package(old, identifier, *, original=None):
+    """Convert a consistent archive document without touching its source store."""
+    if original is not None:
+        return _resave_archive(old, original)
     info, product = old["definition"], old["product"]
     identity = str(uuid4())
     doc = dict(format=FORMAT, id=identity, definition=info, seed=product["seed"],
@@ -1050,5 +1057,41 @@ def _convert_archive(database, identifier):
         for key in ("selected", "reference", "background"):
             index = selection.get(key)
             doc["analysis"][device][key] = references.get((index, device)) if index is not None else None
+    validate_document(doc)
+    return doc
+
+
+def _resave_archive(old, original):
+    """Keep identities and extra items of a converted read-only package."""
+    doc = deepcopy(original)
+    previous = original['legacy']['document']
+    archive_id = original['legacy']['archive']
+    doc['legacy']['document'] = deepcopy(old)
+    doc['device'] = old['device']
+    native = [item for item in doc['items'] if item['kind'] == 'measurement'
+              and item.get('source', {}).get('archive') == archive_id]
+    for device, selection in old.get('analysis', {}).items():
+        before = previous.get('analysis', {}).get(device, {})
+        target = doc['analysis'].setdefault(device, {})
+        for key, value in selection.items():
+            if key in before and value == before[key]:
+                continue
+            if key in ('selected', 'reference', 'background') and value is not None:
+                matches = [item['id'] for item in native if device in item['document']['devices']
+                           and item['document'].get('snapshot', {}).get('id') == value + 1]
+                if len(matches) != 1:
+                    raise ValueError('历史分析引用与原文件不一致，请重新查看记录。')
+                value = matches[0]
+            target[key] = deepcopy(value)
+    for device, fields in old.get('calibrations', {}).items():
+        calibration = Calibration(**fields)
+        before = previous.get('calibrations', {}).get(device)
+        if before is not None and calibration == Calibration(**before):
+            continue
+        identity = cache_calibration(doc, calibration)
+        for item in native:
+            product = item['document']
+            if device in product['devices'] and all(calibration.applies_to(s['settings']) for s in product['segments']):
+                item['calibration_id'] = identity
     validate_document(doc)
     return doc

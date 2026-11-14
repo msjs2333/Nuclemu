@@ -14,6 +14,25 @@ class ServiceStatus:
     error: Exception | None = None
 
 
+@dataclass(frozen=True)
+class CloseContext:
+    session: str
+    confirmation_id: int
+    readonly: bool
+    has_uncached: bool
+    filename: str
+
+
+class StaleCloseError(ValueError):
+    """The service, session or confirmation no longer belongs to this closer."""
+
+
+@dataclass(frozen=True)
+class CloseSaveResult:
+    path: str
+    warning: str | None = None
+
+
 class WorkbenchService:
     def __init__(self, paths=(), *, port=0, directory=None, clock=monotonic):
         self.paths = tuple(paths)
@@ -85,6 +104,129 @@ class WorkbenchService:
 
     def stop_if_idle(self):
         return self.stop()
+
+    def begin_close(self):
+        """Freeze one exit round, or atomically stop an idle/starting service.
+
+        Run closing methods on a GUI worker, since application requests can be
+        in flight. No full state or spectrum is sent to the window.
+        """
+        with self._condition:
+            if self._phase in ('failed', 'stopped', 'stopping'):
+                return None
+            if self._phase != 'ready' or self._server is None:
+                self._request_stop()
+                return None
+            server = self._server
+        with server.app_lock:
+            self._check_close_service(server)
+            if server.app.lab is None:
+                with self._condition:
+                    server.accepting_requests = False
+                    self._request_stop()
+                return None
+            lab = server.app.lab
+            lab.act(dict(action='freeze'))
+            pending = lab.unsaved()
+            from .download_names import download_prefix
+            return CloseContext(lab.id, lab.confirmation_id, lab.readonly,
+                not lab.readonly and bool(pending['measurements'] or pending['calibrations']),
+                download_prefix(lab.info) + '.nuclemu')
+
+    def _close_server(self):
+        with self._condition:
+            if self._phase != 'ready' or self._server is None:
+                raise StaleCloseError('服务已停止，请重新查看工作台。')
+            return self._server
+
+    def _check_close_service(self, server):
+        with self._condition:
+            if self._phase != 'ready' or self._server is not server:
+                raise StaleCloseError('服务已停止，请重新查看工作台。')
+
+    def _check_close(self, server, context):
+        # Caller holds app_lock, then takes the status lock in the same order
+        # as readiness and stopping. Recheck after all lock-free file I/O.
+        self._check_close_service(server)
+        lab = server.app.lab
+        if not isinstance(context, CloseContext) or lab is None or lab.id != context.session:
+            raise StaleCloseError('会话已改变，请重新确认关闭。')
+        try:
+            lab.check_confirmation(dict(action='discard', confirmation_id=context.confirmation_id))
+        except ValueError as error:
+            raise StaleCloseError(str(error)) from error
+        return lab
+
+    def cancel_close(self, context):
+        """Resume only the still-current frozen session and confirmation."""
+        server = self._close_server()
+        with server.app_lock:
+            lab = self._check_close(server, context)
+            lab.act(dict(action='continue', confirmation_id=context.confirmation_id))
+
+    def _finish_close(self, server, context, *, saved=False):
+        lab = server.app.lab if saved else self._check_close(server, context)
+        if saved:
+            # The file commit has succeeded. No more fallible disk operations
+            # may masquerade as a failed save before publishing that result.
+            lab.confirmation_id = None
+        else:
+            lab.act(dict(action='discard', confirmation_id=context.confirmation_id))
+        server.app.lab = None
+        with self._condition:
+            server.accepting_requests = False
+            if self._phase == 'ready':
+                self._request_stop()
+
+    def discard_close(self, context):
+        """Discard this confirmed session and stop accepting mutations atomically."""
+        server = self._close_server()
+        with server.app_lock:
+            self._finish_close(server, context)
+
+    def save_close(self, context, path):
+        """Save cached measurements atomically, then close the confirmed session.
+
+        Slow writes run outside app_lock. Failed or obsolete attempts leave the
+        destination and session intact and remove their temporary file.
+        """
+        from pathlib import Path
+        import os
+        from tempfile import mkstemp
+
+        server = self._close_server()
+        with server.app_lock:
+            lab = self._check_close(server, context)
+            if lab.readonly or not lab.work.session.experiment.outputs:
+                from .exchange import archive_package, package_bytes
+                content = package_bytes(archive_package(lab.document(finish=True), lab.archive_id,
+                    original=getattr(lab, 'portable_archive', None)))
+            else:
+                content = lab.portable_download()[2]
+            cleanup_draft = not lab.readonly and not lab.work.session.experiment.outputs
+        target = Path(path).absolute()
+        fd, temporary = mkstemp(prefix='.' + target.name + '.', suffix='.tmp', dir=target.parent)
+        try:
+            with os.fdopen(fd, 'wb') as output:
+                output.write(content)
+                output.flush()
+                os.fsync(output.fileno())
+            with server.app_lock:
+                self._check_close(server, context)
+                os.replace(temporary, target)
+                self._finish_close(server, context, saved=True)
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+        warning = None
+        if cleanup_draft:
+            try:
+                lab.store.remove(lab.draft_id)
+            except Exception as error:
+                warning = f'文件已保存，旧恢复草稿未清理：{error}'
+        return CloseSaveResult(str(target), warning)
 
     def stop(self, *, force=False):
         """Check and gate mutations under the same lock as HTTP requests.

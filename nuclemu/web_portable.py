@@ -115,6 +115,7 @@ def open_portable(data, definitions, store, clock):
         if not archive["definition"].get("short_code") and course and course.short_code:
             lab.info["short_code"] = course.short_code
         lab.portable_loaded = True
+        lab.portable_archive = doc
         return lab
     definition = definitions.get(doc["definition"]["id"])
     if definition is None:

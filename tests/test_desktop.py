@@ -176,7 +176,7 @@ class DesktopTkTests(unittest.TestCase):
         window.message_text.yview_moveto(1)
         self.assertAlmostEqual(window.message_text.yview()[1], 1)
 
-    def test_active_session_close_preserves_data_then_workbench_exit_allows_close(self):
+    def test_active_session_close_cancel_preserves_data_then_workbench_exit_allows_close(self):
         window = self.window()
         self.until(lambda: window.url is not None)
         opened = self.post('open', {'experiment':'beta'})
@@ -187,14 +187,16 @@ class DesktopTkTests(unittest.TestCase):
             before = json.load(response)
         self.assertGreater(sum(before['instruments']['counter']['counts']), 0)
         window.close_button.invoke()
-        self.until(lambda: not window.checking_close)
+        self.until(lambda: window.close_window is not None)
         self.assertFalse(window.closed)
-        self.assertIn('返回工作台退出实验', window.message.get())
         with urlopen(window.url + 'api/state', timeout=3) as response:
             after = json.load(response)
         self.assertEqual(after['id'], opened['id'])
         self.assertEqual(after['instruments'], before['instruments'])
         self.assertTrue(after['any_running'])
+        self.assertTrue(after['frozen'])
+        window.close_window.cancel_button.invoke()
+        self.until(lambda: not window.checking_close)
         frozen = self.post('action', {'session':opened['id'], 'action':'freeze'})
         self.post('action', {'session':opened['id'], 'action':'discard', 'confirmation_id':frozen['confirmation_id']})
         window.close_button.invoke()
