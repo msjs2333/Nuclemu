@@ -10,13 +10,13 @@ from nuclemu.workbench import Workbench
 
 
 def zero_sample():
-    """Actual short exposures give a valid zero sample and negative net rate."""
-    bench = Workbench(definitions={"beta": EXPERIMENT}, seed=0)
+    """A millisecond boundary example, not the course's recommended exposure."""
+    bench = Workbench(definitions={"beta": EXPERIMENT}, seed=2)
     bench.set_output(DETECTOR_OUTPUT, True)
     for source in (0, 1):
         bench.configure({"source_present": source, "foil_count": 24})
-        bench.start(.1, device="counter")
-        bench.advance(.1)
+        bench.start(.001, device="counter")
+        bench.advance(.001)
         bench.snapshot(device="counter")
         bench.clear(device="counter")
     bench.set_output(DETECTOR_OUTPUT, False)
@@ -27,7 +27,7 @@ def zero_sample():
     bench.set_background(0)
     corrected = bench.readout()
     assert bench.product() == raw and saved_windows(bench.session) == saved
-    return {"seed": 0, "background_segment": 0, "sample_segment": 1,
+    return {"seed": 2, "background_segment": 0, "sample_segment": 1,
             "uncorrected": uncorrected, "corrected": corrected,
             "uncertainty_interpretation": "独立泊松计数代入传播的近似标准不确定度，不是精确置信区间",
             "saved_windows": saved, "product": raw}

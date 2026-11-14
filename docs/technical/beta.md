@@ -4,9 +4,11 @@
 
 ## 模型、单位与适用域
 
-固定几何经验总率为 `R = B + source_present × S0 × 2^(−m/H)`，`B=2 s⁻¹`、`S0=100 s⁻¹`、`H=0.112 g/cm²`。`m=2.70 × foil_spec_um × foil_count × 10⁻⁴ g/cm²`，密度2.70 g/cm³；本课50/100 µm每片、0–24片，总厚度0–2.4 mm。`expected_rates(settings)`给出用于抽样的同一有效探测率。
+固定几何经验总率为 `R = 50 + source_present × [10000 exp(−39.5m) + 1600 exp(−2.2m)]`，单位s⁻¹，`m`单位g/cm²；指数系数单位cm²/g。`m=2.70 × foil_spec_um × foil_count × 10⁻⁴ g/cm²`，Al密度2.70 g/cm³。两项为课程选定的有效响应，不指派为特定核素、散射或光子成分。空源时保留50 s⁻¹本底，零箔有源总率11650 s⁻¹、净率11600 s⁻¹。`expected_rates(settings)`给出两组用于抽样的同一有效平均率。
 
-`S0`是已包含固定源窗、接受度和探测效率的净计数率，不是总源活度，不再乘几何效率或另扣空气损失。模型不提供单粒子轨迹、散射角、停点或连续能谱输运。有效半值面密度借用了文献的剂量衰减尺度，并非由该论文直接测得本课计数器响应，详见[模型来源与限制](../model-reference.md#beta)。
+本课允许50/100 µm每片、0–24片，总厚度0–2.4 mm。课程曲线校核范围为0–0.4 g/cm²；100 µm规格15片起超过该范围，16片为0.432、24片为0.648 g/cm²，均属教学外推。50 µm规格24片为0.324 g/cm²，仍在范围内。允许设置不等于已核实模型准确度。
+
+响应已包含固定源窗、接受度和探测效率，不是源总活度，不再另乘效率或扣空气损失。模型不提供单粒子轨迹、散射角、停点或连续能谱输运，也不以单一半值厚度描述整段曲线。参数是Nuclemu课程经验设定，不声称来自独立真实探测器标定；公开物理背景和适用边界见[模型参考](../model-reference.md#beta)。
 
 新实验`source_present=0`，探测输出开启时仍有环境本底；关闭探测输出由公共层给零输入。物理源发射与电信号开关分开。装置动画只表器材状态，散开源束与空气背景点为视觉元素，与真实计数完全无关，不映射有效率、泊松抽样或单粒子轨迹；绘制不得调用采样或推进曝光。真实本底仍按本课计数模型处理，与画面背景点无关。
 
@@ -16,9 +18,9 @@
 
 A设1 s、B设5 s，在共同起点开门5 s后，A有五条完整窗、B一条。2.5 s换箔时不停门，A第3窗和B第1窗包含多段工况。运行修改A窗长，当前窗仍按原长度收完，下一窗采用新长度，B不变。已知确定脉冲的专用测试用于核门边界，随机学生实验不以两路相等或不等作为通过条件。
 
-ORTEC 995资料支持双路独立门控，ST260手册支持每次读数与经过时间。本课学生面板A左B右，大计数下设置单次曝光，整机“开始测量／继续测量”和“暂停测量”同时控制双窗；各列设置单次曝光，右栏另选保存、清空和载入目标。底层独立门是公共接口能力，不能写成当前学生需要逐窗启停。显示及整机控制为教学约定，不冒称任一实物型号具备全部行为。[995资料](https://www.ortec-online.com/-/media/ametekortec/brochures/9/995-a4.pdf) · [ST260手册](https://www.spectrumtechniques.com/wp-content/uploads/ST260-Manual.pdf)
+ORTEC 995资料支持双路独立门控，ST260手册支持每次读数与经过时间。本课学生面板A左B右，大计数下设置单次曝光，整机“开始测量／继续测量”和“暂停测量”同时控制双窗；各列设置单次曝光，保存、清空和载入均按整台计数器处理。底层独立门是公共接口能力，不能写成当前学生需要逐窗启停。显示及整机控制为教学约定，不冒称任一实物型号具备全部行为。[995资料](https://www.ortec-online.com/-/media/ametekortec/brochures/9/995-a4.pdf) · [ST260手册](https://www.spectrumtechniques.com/wp-content/uploads/ST260-Manual.pdf)
 
-Web整机操作绑定计数器组件的`devices`，以`start_group`、`stop_group`及`configure_group`调用公共原子接口；模式与目标同时设置两窗，保留各列单次曝光。单次曝光输入在各列大计数下方，右栏目标选择仅影响保存、清空、载入。若A已清空或载入、B已有曝光，整机继续从各自已有值接续；不能因整机开始而重置B。
+Web整机操作绑定计数器组件的`devices`，以`start_group`、`stop_group`及`configure_group`调用公共原子接口；模式与目标同时设置两窗，保留各列单次曝光。单次曝光输入在各列大计数下方，学生界面不提供选窗入口，A/B各自的曝光与读数仍分别保留。整体载入后，整机继续从各自已恢复值接续，不把一侧曝光复制到另一侧；可读部分曝光按实际值保留并标记`complete=False`，不补成完整窗；0 s无读数的一侧不造测量项。
 
 ## 原始数据与文件边界
 
@@ -28,9 +30,9 @@ Web整机操作绑定计数器组件的`devices`，以`start_group`、`stop_grou
 
 “保存”留存原始数据；记录页“导入”只加缓存；仪器“载入测量数据”才恢复目标当前数据并可续采。`.nuclemu`保留已留存快照、轮次和设置历史，未保存轮次只留元数据。逐窗序列必须经缓存、JSON/CSV和整场重开逐行核对，不能用仅一行累计值冒充可恢复的五窗数据。[文件交换](../exchange.md) · [公共采集语义](../measurement-workflow.md)
 
-旧整场文件若声明两窗共享同一个输出，重开及续采保留其历史共享输入模型；新课程的分别取样约定不重写旧记录或历史模型。单项旧记录载入当前课程时，只把已存计数与曝光作为固定前缀，新增曝光按当前两组分别取样的模式采集；旧前缀不重新抽样，也不能据此宣称整份累计数据都是独立重复观测。
+已识别的历史整场文件按文件声明恢复原模型：旧单指数本底2 s⁻¹、无箔净率100 s⁻¹、半值面密度0.112 g/cm²；原共享输入或原独立两组的抽样关系均保留。重开及续采不静默切换到当前双成分响应，不重写旧读数。单项旧记录载入当前课程时，只把已存计数与曝光作为固定前缀，新增曝光按当前两组分别取样的模式采集；旧前缀不重新抽样，也不能据此宣称整份累计数据都是独立重复观测。
 
-旧档缺逐窗明细时只保留已知累计前缀`window_prefix`的曝光与计数，不能拆造过去的窗。新窗接着前缀曝光累计。跨场载入时，旧`parts`的物理坐标与`origin`来源不改写为本场时刻；本场可以从0 s、已有3 s曝光起继续测量。载入只替换目标数据，不自动换源、换箔或改另一窗。
+旧档缺逐窗明细时只保留已知累计前缀`window_prefix`的曝光与计数，不能拆造过去的窗。新窗接着前缀曝光累计。跨场载入时，旧`parts`的物理坐标与`origin`来源不改写为本场时刻；本场可以从0 s、已有3 s曝光起继续测量。整机载入只恢复测量数据，不自动换源或换箔；两窗分别保留其已存曝光、读数及来源。
 
 ## 本底分析的适用条件
 
@@ -42,7 +44,7 @@ Web整机操作绑定计数器组件的`devices`，以`start_group`、`stop_grou
 
 ### 一行填写示例的复验
 
-下面时间线取得60 s本底与20 s样品，显式装源以免依赖默认值。整数计数以当前课程模型实际输出为准，不沿用旧抽样方式的固定基线。分别保存后，使用公共文件接口导出并重开：
+下面时间线取得30 s本底与5 s样品，显式装源以免依赖默认值。整数计数以当前课程模型实际输出为准，不沿用旧抽样方式的固定基线。分别保存后，使用公共文件接口导出并重开：
 
 ```python
 from nuclemu.catalog import discover
@@ -52,16 +54,16 @@ from nuclemu.exchange import capture_session, save_package, load_package, export
 s = Session(discover()["beta"], seed=42)
 s.set_output("beta_detector", True)
 group = ("counter", "counter_b")
-s.configure_group(group, duration_s=60, count_limit=None)
+s.configure_group(group, duration_s=30, count_limit=None)
 s.start_group(group)
-s.advance(60)
+s.advance(30)
 background = s.snapshot("counter")
 for device in group:
     s.clear(device=device)
 s.configure({"source_present": 1, "foil_spec_um": 100, "foil_count": 4})
-s.configure_group(group, duration_s=20, count_limit=None)
+s.configure_group(group, duration_s=5, count_limit=None)
 s.start_group(group)
-s.advance(20)
+s.advance(5)
 sample = s.snapshot("counter")
 doc = capture_session(s)
 save_package("beta-example.nuclemu", doc)
@@ -86,4 +88,4 @@ python -m unittest discover -s tests -p "test_beta*.py" -v
 
 [β器材与采集](../beta-acquisition.md)维护最新可运行调用、字段与文件例。复验记录实验、种子、参数、各操作物理时刻、目标窗、实际曝光与逐窗计数。比较GUI/CLI须使用同一时间线；只相同种子不足以保证不同操作流程逐次相同。
 
-文件验收至少走一次三窗保存、分别导出JSON/CSV、载回目标、续采一窗得到四行；非空目标取消或无效文件保持原值，另一窗不受影响。另走1 s/5 s、跨工况和未保存轮次重开。课程专项不替代最终页面及文件链路走读。
+文件验收至少走一次三窗保存、分别导出JSON/CSV、整体载回、续采一窗得到四行；任一侧非空只确认一次，取消或无效文件保持两窗原值。另走1 s/5 s、跨工况和未保存轮次重开。课程专项不替代最终页面及文件链路走读。

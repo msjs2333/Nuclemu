@@ -10,14 +10,14 @@ class BetaBackgroundExamplesTests(unittest.TestCase):
         result = zero_sample()
         windows = result['saved_windows']
         self.assertEqual([s['counts'] for s in windows], [[1], [0]])
-        self.assertEqual([s['exposure_s'] for s in windows], [.1, .1])
+        self.assertEqual([s['exposure_s'] for s in windows], [.001, .001])
         self.assertNotEqual(windows[0]['acquisition'], windows[1]['acquisition'])
-        self.assertEqual(result['uncorrected'], {'counts': 0, 'exposure_s': .1, 'rate': 0})
-        self.assertEqual(result['corrected']['net_rate'], -10)
-        self.assertEqual(result['corrected']['uncertainty'], 10)
+        self.assertEqual(result['uncorrected'], {'counts': 0, 'exposure_s': .001, 'rate': 0})
+        self.assertEqual(result['corrected']['net_rate'], -1000)
+        self.assertEqual(result['corrected']['uncertainty'], 1000)
         rows = result['product']['segments']
         self.assertEqual([r['settings']['source_present'] for r in rows], [0, 1])
-        self.assertEqual([(r['start_s'], r['end_s']) for r in rows], [(0, .1), (.1, .2)])
+        self.assertEqual([(r['start_s'], r['end_s']) for r in rows], [(0, .001), (.001, .002)])
 
     def test_cumulative_snapshots_keep_their_own_cutoff_and_shared_round(self):
         result = overlapping_snapshots()

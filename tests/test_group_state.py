@@ -4,10 +4,17 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from nuclemu.core import Component, Device, Session
-from nuclemu.experiments.beta import EXPERIMENT
+from nuclemu.catalog import describe
+from nuclemu.experiments.beta import EXPERIMENT as CURRENT, LEGACY_INDEPENDENT_RESPONSES, restore_definition
 from nuclemu.web_session import Application
 
 GROUP = ('counter', 'counter_b')
+# The 97/105 boundary is a historical-response regression, not the current
+# course's much higher-rate response. Restore its explicit saved contract.
+_info = describe(CURRENT)
+for _output, _response in zip(_info['outputs'], LEGACY_INDEPENDENT_RESPONSES):
+    _output['response'] = _response
+EXPERIMENT = restore_definition(_info)
 
 
 def beta():

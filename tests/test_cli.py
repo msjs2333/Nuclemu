@@ -81,12 +81,12 @@ class CliTests(unittest.TestCase):
             expected = dict(MeasurementView(session, 42).product())
             expected["devices"] = {"counter": expected["devices"]["counter"]}
             self.assertEqual(product, expected)
-            self.assertEqual([s["readings"]["counter"][0] for s in product["segments"]], [2, 128])
-            self.assertIn("net=49.6", output)
+            self.assertEqual([s["readings"]["counter"][0] for s in product["segments"]], [61, 3774])
+            self.assertIn("net=1460.8", output)
             with (target / "beta.csv").open(encoding="utf-8", newline="") as stream:
                 rows = list(csv.DictReader(stream))
             self.assertEqual([float(row["exposure_s"]) for row in rows], [1.25, 2.5])
-            self.assertEqual([int(row["counts"]) for row in rows], [2, 128])
+            self.assertEqual([int(row["counts"]) for row in rows], [61, 3774])
 
     def test_beta_each_selected_instrument_matches_its_own_plan(self):
         with TemporaryDirectory() as temporary:

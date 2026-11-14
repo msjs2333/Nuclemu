@@ -74,7 +74,7 @@ class BetaAcquisitionTests(unittest.TestCase):
         s = Session(EXPERIMENT, seed=42)
         self.assertEqual(s.settings['source_present'], 0)
         empty = particle_flow(s.settings)
-        self.assertEqual((empty['incident_rate_s'], empty['transmitted_rate_s'], empty['background_rate_s']), (0, 0, 2))
+        self.assertEqual((empty['incident_rate_s'], empty['transmitted_rate_s'], empty['background_rate_s']), (0, 0, 50))
         s.configure({'source_present': 1, 'foil_count': 4})
         twin = Session(EXPERIMENT, seed=42)
         twin.configure({'source_present': 1, 'foil_count': 4})
@@ -84,7 +84,7 @@ class BetaAcquisitionTests(unittest.TestCase):
             self.assertEqual(flow['transmitted_rate_s'] + flow['background_rate_s'], rates['detector_cps'])
         self.assertEqual(s.time_s, 0)
         self.assertAlmostEqual(flow['areal_density_g_cm2'], .108)
-        self.assertAlmostEqual(flow['transmission'], 2 ** (-.108 / .112))
+        self.assertAlmostEqual(flow['transmission'], (10000*math.exp(-39.5*.108)+1600*math.exp(-2.2*.108))/11600)
         s.set_output(DETECTOR_OUTPUT, True)
         self.assertEqual(particle_flow(s.settings), flow)
         s.set_output(DETECTOR_OUTPUT, False)
@@ -97,8 +97,8 @@ class BetaAcquisitionTests(unittest.TestCase):
 
     def test_a_stops_while_b_continues_and_export_exposures_stay_separate(self):
         result = dual_windows(reopen=False)
-        self.assertEqual((result['A_first_5s'], result['A_second_5s'], result['B_10s']), (284, None, 559))
-        for device, duration, count in (('counter', 5, 284), ('counter_b', 10, 559)):
+        self.assertEqual((result['A_first_5s'], result['A_second_5s'], result['B_10s']), (7348, None, 14727))
+        for device, duration, count in (('counter', 5, 7348), ('counter_b', 10, 14727)):
             stream = StringIO()
             write_product(stream, 'json', result['product'], device=device)
             segment, = json.loads(stream.getvalue())['segments']
@@ -113,7 +113,7 @@ class BetaAcquisitionTests(unittest.TestCase):
         s.set('source_present', 0)
         s.set_output(DETECTOR_OUTPUT, True)
         s.start(19.5, device='counter'); s.advance(19.5)
-        self.assertEqual(counts(s, 'counter'), 35)
+        self.assertEqual(counts(s, 'counter'), 988)
         s.set_output(DETECTOR_OUTPUT, False)
         s.start(2, device='counter_b'); s.advance(10)
         self.assertEqual(s.instrument('counter_b').exposure_s, 2)
@@ -138,13 +138,13 @@ class BetaAcquisitionTests(unittest.TestCase):
     def test_background_selection_changes_only_analysis_with_unequal_exposures(self):
         result = background_comparison()
         product = deepcopy(result['product'])
-        self.assertEqual([s['readings']['counter'][0] for s in product['segments']], [35, 388, 15])
-        for reading, nb, tb in zip(result['comparisons'], (35, 15), (19.5, 9.25)):
-            self.assertEqual((reading['counts'], reading['exposure_s']), (388, 7.25))
-            self.assertAlmostEqual(reading['net_rate'], 388 / 7.25 - nb / tb)
-            self.assertAlmostEqual(reading['uncertainty'], math.sqrt(388 / 7.25**2 + nb / tb**2))
+        self.assertEqual([s['readings']['counter'][0] for s in product['segments']], [988, 10571, 448])
+        for reading, nb, tb in zip(result['comparisons'], (988, 448), (19.5, 9.25)):
+            self.assertEqual((reading['counts'], reading['exposure_s']), (10571, 7.25))
+            self.assertAlmostEqual(reading['net_rate'], 10571 / 7.25 - nb / tb)
+            self.assertAlmostEqual(reading['uncertainty'], math.sqrt(10571 / 7.25**2 + nb / tb**2))
         self.assertEqual(result['product'], product)
-        self.assertEqual([s['counts'][0] for s in result['saved_windows']], [35, 388, 15])
+        self.assertEqual([s['counts'][0] for s in result['saved_windows']], [988, 10571, 448])
 
     def test_legacy_beta_archive_reads_its_own_settings_and_single_instrument(self):
         from nuclemu.web_session import WebLab

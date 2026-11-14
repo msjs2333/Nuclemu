@@ -22,7 +22,8 @@ def session_for_counter(seed):
 
 class BetaAbsorptionTests(unittest.TestCase):
     def test_observed_rate_matches_reference_at_several_thicknesses(self):
-        for count, expected_cps in ((0, 102.0), (4, 53.25), (8, 28.27), (16, 8.90)):
+        for count, expected_cps in ((0, 11650.0), (1, 4999.84), (4, 1452.01),
+                                    (8, 1046.79), (14, 746.57), (24, 434.58)):
             with self.subTest(foil_count=count):
                 settings = {"source_present": 1, "foil_count": count}
                 rng = Random(123)
@@ -37,7 +38,7 @@ class BetaAbsorptionTests(unittest.TestCase):
                 sample_counts({"source_present": 0, "foil_count": foil_count}, 0, 10, rng)[DETECTOR_OUTPUT][0]
                 for _ in range(2000)
             ]
-            self.assertAlmostEqual(mean(samples), 20, delta=0.5)
+            self.assertAlmostEqual(mean(samples), 500, delta=3)
 
     def test_acquire_background_then_sample_with_different_exposures(self):
         session = session_for_counter(42)

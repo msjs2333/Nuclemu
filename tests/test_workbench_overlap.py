@@ -112,28 +112,30 @@ class LoadedBackgroundOverlapTests(unittest.TestCase):
     def test_imported_background_loaded_and_extended_is_not_independent(self):
         document, saved = self.source()
         original = deepcopy(document)
-        self.assertEqual((saved.counts, saved.exposure_s), ((7,), 3))
+        self.assertEqual(saved.exposure_s, 3)
         self.import_reference(document)
         self.load_and_extend(document)
         current = self.work.session.instrument('counter')
-        self.assertEqual((current.counts, current.exposure_s), ((121,), 4))
+        self.assertEqual(current.exposure_s, 4)
         with self.assertRaisesRegex(ValueError, 'nonoverlapping'):
             self.work.readout()
         # This truly new one-second segment has a different live origin even
         # though its physical coordinates overlap the imported file's 0..3s.
         sample = self.work.readout_for(1)
-        self.assertEqual((sample['counts'], sample['exposure_s']), (114, 1))
-        self.assertEqual((sample['net_rate'], sample['uncertainty']), net_count_rate(114, 1, 7, 3))
+        self.assertEqual(sample['exposure_s'], 1)
+        self.assertEqual(current.counts[0], saved.counts[0] + sample['counts'])
+        self.assertEqual((sample['net_rate'], sample['uncertainty']),
+                         net_count_rate(sample['counts'], 1, saved.counts[0], 3))
         self.assertEqual(document, original)
 
     def test_same_clock_coordinates_from_different_packages_are_independent(self):
-        reference, _ = self.source()
+        reference, background = self.source()
         independent, _ = self.source(seed=8)
         self.import_reference(reference)
         self.load_and_extend(independent)
         counts = self.work.session.instrument('counter').counts[0]
         result = self.work.readout()
-        self.assertEqual((result['net_rate'], result['uncertainty']), net_count_rate(counts, 4, 7, 3))
+        self.assertEqual((result['net_rate'], result['uncertainty']), net_count_rate(counts, 4, background.counts[0], 3))
 
     def test_switching_to_an_independent_background_does_not_change_raw_counts(self):
         source, _ = self.source()
@@ -145,7 +147,7 @@ class LoadedBackgroundOverlapTests(unittest.TestCase):
         before = self.work.session.instrument('counter')
         corrected = self.work.readout()
         self.assertEqual((corrected['net_rate'], corrected['uncertainty']),
-                         net_count_rate(121, 4, other_snapshot.counts[0], 3))
+                         net_count_rate(before.counts[0], 4, other_snapshot.counts[0], 3))
         self.work.set_background(first)
         with self.assertRaisesRegex(ValueError, 'nonoverlapping'):
             self.work.readout()
@@ -215,7 +217,7 @@ class LoadedBackgroundOverlapTests(unittest.TestCase):
             self.work.readout()
 
     def test_overlap_survives_real_package_save_reopen_and_another_load(self):
-        document, _ = self.source()
+        document, background = self.source()
         self.import_reference(document)
         self.load_and_extend(document)
         self.work.snapshot(device='counter')
@@ -236,7 +238,8 @@ class LoadedBackgroundOverlapTests(unittest.TestCase):
         # or make the newly observed suffix dependent on that old reference.
         index = reopened.work.lab.view.item_indices[accumulated['id']][-1]
         suffix = reopened.work.readout_for(index)
-        self.assertEqual((suffix['net_rate'], suffix['uncertainty']), net_count_rate(114, 1, 7, 3))
+        self.assertEqual((suffix['net_rate'], suffix['uncertainty']),
+                         net_count_rate(suffix['counts'], 1, background.counts[0], 3))
 
 
 if __name__ == '__main__':

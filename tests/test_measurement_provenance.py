@@ -101,7 +101,12 @@ class MeasurementProvenanceTests(unittest.TestCase):
                     path.write_bytes(package_bytes(capture_session(session)))
                     doc = load_package(path.read_bytes())
                 restored = reopen_session(doc, beta.EXPERIMENT)
-                self.assertEqual([s.counts for s in restored.snapshots], [(393,), (401,)])
+                fresh = target()
+                fresh.set_output(beta.DETECTOR_OUTPUT, True)
+                fresh.start_group(('counter', 'counter_b'))
+                fresh.advance(1)
+                self.assertEqual([s.counts for s in restored.snapshots],
+                                 [(296 + fresh.instrument(d).counts[0],) for d in ('counter', 'counter_b')])
                 again = target()
                 for item in doc['items']:
                     device = item['document']['snapshot']['device']
