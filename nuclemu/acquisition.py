@@ -25,6 +25,8 @@ class InstrumentState:
     stop_reason: str | None
     clearing: bool
     next_window_s: float | None = None
+    window_prefix_exposure_s: float = 0
+    window_prefix_counts: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -236,7 +238,8 @@ class InstrumentAcquisition:
                                float(g.readable_exposure), g.count_limit,
                                None if g.duration is None else float(g.duration), float(g.window),
                                g.reason, g.pending is not None,
-                               None if g.pending_window is None else float(g.pending_window))
+                               None if g.pending_window is None else float(g.pending_window),
+                               g.window_prefix_exposure, g.window_prefix_counts)
 
     @property
     def rounds(self):
@@ -602,6 +605,7 @@ class InstrumentAcquisition:
                              loaded_exposure_s=source.exposure_s, loaded_source=source.source or "load-validation")
         _, validated, _ = load_history(self.session.experiment, source.time_s, (metadata,), (source,), ())
         source = validated[0]
+        receiver_window = g.pending_window or g.window
         acquisition = g.acquisition + 1
         from uuid import uuid4
         origin = source.source or str(uuid4())
@@ -610,14 +614,14 @@ class InstrumentAcquisition:
                            parts=tuple(replace(p, acquisition=acquisition, origin=p.origin or origin) for p in w.parts)) for w in source.windows]
         loaded = _Gate(acquisition=acquisition, cycle=g.cycle, current=True,
                        exposure=Decimal(str(source.exposure_s)), readable_exposure=Decimal(str(source.exposure_s)),
-                       duration=g.duration, count_limit=g.count_limit, window=g.window,
+                       duration=g.duration, count_limit=g.count_limit, window=receiver_window,
                        counts=source.counts, segments=rows, started=self.session.time_s,
                        loaded_exposure=source.exposure_s, loaded_source=origin,
                        initial_settings=MappingProxyType(dict(self.session.settings)), initial_outputs=MappingProxyType(dict(self.enabled)),
                        reason="loaded", ended=self.session.time_s,
                        initial_duration=None if g.duration is None else float(g.duration),
                        initial_count_limit=g.count_limit, window_counts=(0,) * len(source.counts))
-        loaded.initial_window = float(g.window)
+        loaded.initial_window = float(receiver_window)
         loaded.window_prefix_exposure = source.window_prefix_exposure_s if source.windows else source.exposure_s
         loaded.window_prefix_counts = source.window_prefix_counts if source.windows else source.counts
         if windows and not windows[-1].complete:
@@ -628,12 +632,12 @@ class InstrumentAcquisition:
             if partial.window_s is not None:
                 loaded.window = Decimal(str(partial.window_s))
                 loaded.next_check = loaded.window_start + loaded.window
-                loaded.pending_window = g.window if g.window != loaded.window else None
+                loaded.pending_window = receiver_window if receiver_window != loaded.window else None
             else:
-                loaded.next_check = loaded.readable_exposure + g.window
+                loaded.next_check = loaded.readable_exposure + receiver_window
         else:
             loaded.window_start = loaded.readable_exposure
-            loaded.next_check = loaded.readable_exposure + g.window
+            loaded.next_check = loaded.readable_exposure + receiver_window
         loaded.windows = windows
         return loaded
 
@@ -669,6 +673,23 @@ class InstrumentAcquisition:
         if cache:
             items = self._cache_group(items, writer)
         return items
+
+    def cache_snapshots(self, devices, snapshots, *, writer=None):
+        ids = tuple(devices) if not isinstance(devices, str) else devices
+        self._group(ids)
+        items = tuple(snapshots)
+        if (not items or any(not isinstance(item, Snapshot) for item in items)
+                or len({item.device for item in items}) != len(items)
+                or any(item.device not in ids for item in items)):
+            raise ValueError("Captured observations must belong to distinct instrument members")
+        # Validate the captured data at this publication boundary, including old
+        # rounds. Reading and publication never flush or sample the live gates.
+        from .restoration import load_history
+        keys = {(item.device, item.acquisition) for item in items}
+        rounds = tuple(r for r in self.rounds if (r.device, r.acquisition) in keys)
+        _, checked, _ = load_history(self.session.experiment, self.session.time_s, rounds,
+            tuple(replace(item, id=index) for index, item in enumerate(items, 1)), ())
+        return self._cache_group(checked, writer)
 
     def _cache_group(self, items, writer):
         items = tuple(replace(item, id=self._snapshot_id + index) for index, item in enumerate(items, 1))

@@ -39,7 +39,7 @@ def validate_action(lab, data):
     return devices
 
 
-def stage_writer(lab, devices, title, staged):
+def stage_writer(lab, devices, title, staged, *, calibrations=None, calibration_items=None):
     def write(snapshots):
         try:
             if lab.cache_writer is not None:
@@ -60,14 +60,16 @@ def stage_writer(lab, devices, title, staged):
             else:
                 rename_record(doc, identities[0], title)
             for snapshot in snapshots:
-                calibration = (lab._live_calibrations.get(snapshot.device)
+                calibration = (calibrations.get(snapshot.device) if calibrations is not None else
+                    lab._live_calibrations.get(snapshot.device)
                     if snapshot.device in lab._saved_calibration_devices
                     else lab.work.lab.calibrations.get(snapshot.device))
                 if calibration is None or not all(calibration.applies_to(s.settings) for s in snapshot.segments):
                     continue
                 candidates = [i for i in reversed(doc['items']) if i['kind'] == 'calibration'
                               and i['document'] == calibration.document()]
-                saved = next((i for i in candidates if i['id'] == lab._loaded_calibration_items.get(snapshot.device)),
+                loaded = lab._loaded_calibration_items if calibration_items is None else calibration_items
+                saved = next((i for i in candidates if i['id'] == loaded.get(snapshot.device)),
                              next(iter(candidates), None))
                 if saved:
                     bind_calibration(doc, native_snapshot_id(doc, snapshot), saved['id'])

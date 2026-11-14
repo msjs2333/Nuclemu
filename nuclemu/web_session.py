@@ -17,6 +17,7 @@ from .web_download import make_download
 from .web_store import ArchiveStore
 from .web_exchange import WebExchange
 from .web_spectrum_analysis import calculate_roi, roi_context, spectrum_readout
+from .web_snapshot import pending_state as pending_snapshot_state
 from .exchange import cache_calibration, bind_calibration, load_item, decode_measurement, list_records, validate_record_name
 
 
@@ -113,6 +114,7 @@ class WebLab:
         self.saved_analysis = {}
         self._decoded_items = {}
         self._roi_results = {}
+        self._pending_snapshot = None
 
     def _refresh_exchange(self, **fields):
         document = self.exchange.refresh(self.work.session, **fields)
@@ -456,6 +458,7 @@ class WebLab:
                                          for item in (self.exchange.document or {}).get('items', ()) if item['kind'] == 'calibration'],
                     gates={d.id: (w.session.instrument(d.id).running if w.session.experiment.outputs else w.session.running)
                            for d in w.session.experiment.devices},
+                    pending_snapshot=pending_snapshot_state(self),
                     clear_confirmation=({k: v for k, v in self._group_clear.items() if k != 'requests'}
                         if getattr(self, '_group_clear', None) else dict(device=pending_clear[0], token=pending_clear[1].token,
                         exposure_s=pending_clear[1].snapshot.exposure_s if pending_clear[1].snapshot else 0)
@@ -692,8 +695,31 @@ class WebLab:
     def act(self, data):
         """Apply one action, settling its clock only after exit-round validation."""
         self.check_confirmation(data)
+        if data['action'] in ('instrument_config', 'instrument_group_config') and 'expected' in data:
+            keys = {'duration_s', 'count_limit'}
+            if data['action'] == 'instrument_config':
+                self._check_device_target(data)
+                devices = (self.work.device.id,)
+                keys.add('window_s')
+            else:
+                devices = self.instrument_group(data['component'])
+            expected = data['expected']
+            if (not isinstance(expected, dict) or set(expected) != keys
+                    or any(value is not None and (type(value) not in (int, float))
+                           for value in expected.values())):
+                raise ValueError('采集设置已改变，请核对后重新应用。')
+            for device in devices:
+                state = self.work.session.instrument(device)
+                applied = dict(duration_s=state.duration_s, count_limit=state.count_limit)
+                if 'window_s' in keys:
+                    applied['window_s'] = state.next_window_s if state.next_window_s is not None else state.window_s
+                if applied != expected:
+                    raise ValueError('采集设置已改变，请核对后重新应用。')
         if 'operation_device' in data:
             raise ValueError('请选择所用仪器，保存与清空作用于整台仪器。')
+        if data['action'] in ('begin_snapshot_group', 'commit_snapshot_group', 'cancel_snapshot_group'):
+            from .web_snapshot import validate_action
+            validate_action(self, data)
         if data['action'] in ('snapshot_group', 'begin_clear_group', 'finish_clear_group'):
             from .web_instrument_records import validate_action
             validate_action(self, data)
@@ -730,7 +756,7 @@ class WebLab:
         action, w = data["action"], self.work
         if self.frozen and action not in ("freeze", "continue", "suspend", "save", "discard"):
             raise ValueError("先返回实验，再执行此操作。")
-        if self.readonly and action in ("start", "stop", "configure", "speed", "pause", "output", "snapshot", "begin_clear", "finish_clear", "instrument_config", "cache_calibration", 'start_group', 'stop_group', 'instrument_group_config', 'window_config', 'load_measurement', 'snapshot_group', 'begin_clear_group', 'finish_clear_group'):
+        if self.readonly and action in ("start", "stop", "configure", "speed", "pause", "output", "snapshot", "begin_clear", "finish_clear", "instrument_config", "cache_calibration", 'start_group', 'stop_group', 'instrument_group_config', 'window_config', 'load_measurement', 'snapshot_group', 'begin_clear_group', 'finish_clear_group', 'begin_snapshot_group', 'commit_snapshot_group', 'cancel_snapshot_group'):
             raise ValueError("已保存的实验只支持查看和分析。")
         if action in ("calibrate", "load_calibration", "cache_calibration"):
             if data.get("calibration_context") != self.calibration_context():
@@ -787,6 +813,9 @@ class WebLab:
         elif action == "output":
             w.set_output(data["output"], data["enabled"])
             self.edits += 1
+        elif action in ('begin_snapshot_group', 'commit_snapshot_group', 'cancel_snapshot_group'):
+            from .web_snapshot import act
+            act(self, data)
         elif action in ('snapshot_group', 'begin_clear_group', 'finish_clear_group'):
             from .web_instrument_records import act
             act(self, data)
@@ -1012,10 +1041,18 @@ class Application:
             raise ValueError("会话已结束，请返回目录。")
         if path == '/api/replace_package':
             self.lab.check_confirmation(dict(action='discard', confirmation_id=data.get('confirmation_id')))
+            save = data.get('save', False)
+            if type(save) is not bool:
+                raise ValueError('保存选项无效。')
             from .web_portable import open_portable
             replacement = open_portable(b64decode(data['file'], validate=True), self.definitions, self.store, self.clock)
+            state = replacement.state()
+            # Decode the incoming file first. Reuse the ordinary save/discard
+            # transaction; a failed archive write leaves this session available.
+            self.lab.act(dict(action='save' if save else 'discard', exit=save,
+                              confirmation_id=data.get('confirmation_id')))
             self.lab = replacement
-            return replacement.state()
+            return state
         if path == "/api/action":
             if self.lab.act(data):
                 self.lab = None

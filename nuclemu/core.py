@@ -403,6 +403,12 @@ class Session:
             raise ValueError("Snapshots require independent instruments")
         return self._instruments.snapshot_group(devices, cache=cache, writer=writer)
 
+    def cache_snapshots(self, devices, snapshots, *, writer=None):
+        """Publish captured observations without reading or stopping live gates."""
+        if self._instruments is None:
+            raise ValueError("Snapshots require independent instruments")
+        return self._instruments.cache_snapshots(devices, snapshots, writer=writer)
+
     def load_measurements(self, devices, snapshots, *, overwrite=False):
         """Replace an explicit whole instrument after all saved members validate."""
         if self._instruments is None:
