@@ -561,13 +561,37 @@ class InstrumentAcquisition:
         return tuple(g.windows) + ((self._window(device, g, False),) if g.window_parts else ())
 
     def load_measurement(self, device, snapshot, *, overwrite=False):
-        g = self._gate(device)
+        self.load_measurements((device,), (snapshot,), overwrite=overwrite)
+
+    def load_measurements(self, devices, snapshots, *, overwrite=False):
+        ids = tuple(devices) if not isinstance(devices, str) else devices
+        gates = self._group(ids)
+        snapshots = tuple(snapshots)
         if type(overwrite) is not bool:
             raise ValueError("Measurement overwrite confirmation must be boolean")
-        if g.pending is not None:
-            raise ValueError("Finish the instrument clear request before loading")
-        if g.current and self.state(device).exposure_s > 0 and not overwrite:
-            raise ValueError("Loading will overwrite current measurement data; confirmation required")
+        if (any(not isinstance(s, Snapshot) for s in snapshots)
+                or len({s.device for s in snapshots}) != len(snapshots)
+                or any(s.device not in ids for s in snapshots)):
+            raise ValueError("Saved measurements must belong to distinct instrument members")
+        for device, g in zip(ids, gates):
+            if g.pending is not None:
+                raise ValueError("Finish the instrument clear request before loading")
+            if g.current and self.state(device).exposure_s > 0 and not overwrite:
+                raise ValueError("Loading will overwrite current measurement data; confirmation required")
+        prepared = {s.device: self._prepare_measurement(s.device, s) for s in snapshots}
+        prepared.update((device, self._empty_gate(g)) for device, g in zip(ids, gates) if device not in prepared)
+        # Nothing destructive happens until every member, including empty sides,
+        # is prepared. Other instruments settle once and keep their own gates.
+        self.flush()
+        for device, g in zip(ids, gates):
+            if g.current:
+                self._close(g, "replaced")
+                self._round_history.append(self._round_info(device, g))
+        self.gates.update(prepared)
+        self._idle()
+
+    def _prepare_measurement(self, device, snapshot):
+        g = self._gate(device)
         if not isinstance(snapshot, Snapshot) or snapshot.device != device or not snapshot.segments:
             raise ValueError("Saved measurement belongs to another instrument or has no exposure")
         from .restoration import load_history
@@ -578,12 +602,6 @@ class InstrumentAcquisition:
                              loaded_exposure_s=source.exposure_s, loaded_source=source.source or "load-validation")
         _, validated, _ = load_history(self.session.experiment, source.time_s, (metadata,), (source,), ())
         source = validated[0]
-        # Validation precedes the only physical mutation: settle all current
-        # gates, then replace this instrument while other gates remain open.
-        self.flush()
-        if g.current:
-            self._close(g, "replaced")
-            self._round_history.append(self._round_info(device, g))
         acquisition = g.acquisition + 1
         from uuid import uuid4
         origin = source.source or str(uuid4())
@@ -617,8 +635,14 @@ class InstrumentAcquisition:
             loaded.window_start = loaded.readable_exposure
             loaded.next_check = loaded.readable_exposure + g.window
         loaded.windows = windows
-        self.gates[device] = loaded
-        self._idle()
+        return loaded
+
+    @staticmethod
+    def _empty_gate(g):
+        return _Gate(acquisition=g.acquisition, cycle=g.cycle,
+                     duration=g.duration, count_limit=g.count_limit,
+                     window=g.pending_window or g.window, next_check=g.pending_window or g.window,
+                     counts=(0,) * len(g.counts), window_counts=(0,) * len(g.counts))
 
     def snapshot(self, device, *, cache=True, writer=None):
         g = self._gate(device)
@@ -634,6 +658,73 @@ class InstrumentAcquisition:
             self._snapshot_id += 1
             self.snapshots.append(item)
         return item
+
+    def snapshot_group(self, devices, *, cache=True, writer=None):
+        ids = tuple(devices) if not isinstance(devices, str) else devices
+        gates = self._group(ids)
+        items = tuple(self.snapshot(device, cache=False) for device, g in zip(ids, gates)
+                      if g.current and g.readable_exposure)
+        if not items:
+            raise ValueError("There is no readable exposure for this instrument")
+        if cache:
+            items = self._cache_group(items, writer)
+        return items
+
+    def _cache_group(self, items, writer):
+        items = tuple(replace(item, id=self._snapshot_id + index) for index, item in enumerate(items, 1))
+        if writer is not None:
+            writer(items)
+        self.snapshots.extend(items)
+        self._snapshot_id += len(items)
+        return items
+
+    def begin_clear_group(self, devices):
+        ids = tuple(devices) if not isinstance(devices, str) else devices
+        gates = self._group(ids)
+        if any(g.pending is not None for g in gates):
+            raise ValueError("Finish the instrument clear request before clearing")
+        prior = [(g.opened is not None, g.reason) for g in gates]
+        self.stop_group(ids)
+        requests = []
+        for device, g, (was_running, reason) in zip(ids, gates, prior):
+            self._clear_token += 1
+            item = self.snapshot(device, cache=False) if g.readable_exposure else None
+            request = ClearRequest(self._clear_token, device, g.acquisition if g.current else None, item, was_running)
+            g.pending = _Clear(request, reason)
+            g.reason = "clearing"
+            requests.append(request)
+        return tuple(requests)
+
+    def finish_clear_group(self, devices, tokens, choice, *, writer=None):
+        ids = tuple(devices) if not isinstance(devices, str) else devices
+        gates = self._group(ids)
+        if (not isinstance(tokens, Mapping) or set(tokens) != set(ids)
+                or any(type(tokens[d]) is not int or g.pending is None
+                       or g.pending.request.token != tokens[d] for d, g in zip(ids, gates))):
+            raise ValueError("Instrument clear request has expired")
+        if choice not in ("save", "discard", "cancel"):
+            raise ValueError("Clear choice must be save, discard or cancel")
+        def restore():
+            self.flush()
+            for g in gates:
+                self._restore(g, g.pending, flush=False)
+        if choice == "cancel":
+            restore()
+            return ()
+        saved = ()
+        try:
+            items = tuple(g.pending.request.snapshot for g in gates if g.pending.request.snapshot is not None)
+            if choice == "save" and items:
+                saved = self._cache_group(items, writer)
+        except Exception:
+            restore()
+            raise
+        for device, g in zip(ids, gates):
+            if g.current:
+                self._round_history.append(self._round_info(device, g, cleared=True))
+            self.gates[device] = self._empty_gate(g)
+        self._idle()
+        return saved
 
     def begin_clear(self, device):
         g = self._gate(device)
@@ -686,10 +777,11 @@ class InstrumentAcquisition:
         self._idle()
         return saved
 
-    def _restore(self, g, pending):
+    def _restore(self, g, pending, *, flush=True):
         # Finish input belonging only to the other active gates before this
         # gate reopens, including a partial physical window during confirmation.
-        self.flush()
+        if flush:
+            self.flush()
         g.pending = None
         g.reason = pending.reason
         if pending.request.was_running:

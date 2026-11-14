@@ -397,6 +397,28 @@ class Session:
             raise ValueError("Snapshots require independent instruments")
         return self._instruments.snapshot(device, cache=cache, writer=writer)
 
+    def snapshot_group(self, devices, *, cache=True, writer=None):
+        """Save all readable members together; zero-exposure members stay empty."""
+        if self._instruments is None:
+            raise ValueError("Snapshots require independent instruments")
+        return self._instruments.snapshot_group(devices, cache=cache, writer=writer)
+
+    def load_measurements(self, devices, snapshots, *, overwrite=False):
+        """Replace an explicit whole instrument after all saved members validate."""
+        if self._instruments is None:
+            raise ValueError("Loading requires independent instruments")
+        self._instruments.load_measurements(devices, snapshots, overwrite=overwrite)
+
+    def begin_clear_group(self, devices):
+        if self._instruments is None:
+            raise ValueError("Clearing requires independent instruments")
+        return self._instruments.begin_clear_group(devices)
+
+    def finish_clear_group(self, devices, tokens, choice, *, writer=None):
+        if self._instruments is None:
+            raise ValueError("Clearing requires independent instruments")
+        return self._instruments.finish_clear_group(devices, tokens, choice, writer=writer)
+
     def instrument_windows(self, device: str):
         if self._instruments is None:
             raise ValueError("Instrument windows require declared detector outputs")
