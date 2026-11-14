@@ -261,6 +261,59 @@ class InstrumentReviewBrowserTests(unittest.TestCase):
         self.assertTrue(self.state()['running'])
         self.assertEqual(self.state()['instrument']['duration_s'], 12)
 
+    def test_start_waits_until_an_explicit_preset_application_finishes(self):
+        self.instrument('alpha')
+        self.page.locator('#mode').select_option('timed')
+        self.page.locator('#duration').fill('1')
+        held = []
+        def hold_config_response(route):
+            if route.request.post_data_json.get('action') == 'instrument_config' and not held:
+                held.append((route, route.fetch()))
+            else:
+                route.continue_()
+        self.page.route('**/api/action', hold_config_response)
+        try:
+            self.page.locator('#apply-acquisition').click()
+            expect(self.page.locator('#start')).to_be_disabled()
+            expect(self.page.locator('#apply-acquisition')).to_be_disabled()
+        finally:
+            if held:
+                with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
+                                               r.request.post_data_json.get('action') == 'instrument_config'):
+                    held[0][0].fulfill(response=held[0][1])
+            self.page.unroute('**/api/action', hold_config_response)
+        expect(self.page.locator('#start')).to_be_enabled()
+        configured = []
+        self.page.on('request', lambda r: configured.append(r.post_data_json['action'])
+                     if r.url.endswith('/api/action') else None)
+        self.action('start', lambda: self.page.locator('#start').click())
+        self.assertEqual(configured, ['start'])
+        expect(self.page.locator('#stop')).to_be_enabled()
+        self.assertEqual(self.state()['instrument']['duration_s'], 1)
+
+    def test_failed_explicit_preset_unlocks_controls_and_preserves_input(self):
+        self.instrument('beta')
+        self.page.locator('#mode').select_option('timed')
+        self.page.locator('#duration').fill('12')
+        def fail_config(route):
+            if route.request.post_data_json.get('action') == 'instrument_group_config':
+                route.fulfill(status=500, json={'error':'设置写入失败，请重试'})
+            else:
+                route.continue_()
+        self.page.route('**/api/action', fail_config)
+        self.action('instrument_group_config', lambda: self.page.locator('#apply-acquisition').click(), ok=False)
+        expect(self.page.locator('#error')).to_contain_text('设置写入失败')
+        expect(self.page.locator('#start')).to_be_enabled()
+        expect(self.page.locator('#apply-acquisition')).to_be_enabled()
+        expect(self.page.locator('#duration')).to_have_value('12')
+        self.assertFalse(self.state()['running'])
+        self.assertIsNone(self.state()['instrument']['duration_s'])
+        self.page.unroute('**/api/action', fail_config)
+        self.action('instrument_group_config', lambda: self.page.locator('#apply-acquisition').click())
+        self.action('start_group', lambda: self.page.locator('#start').click())
+        expect(self.page.locator('#stop')).to_be_enabled()
+        self.assertEqual(self.state()['instrument']['duration_s'], 12)
+
 
 if __name__ == '__main__':
     unittest.main()

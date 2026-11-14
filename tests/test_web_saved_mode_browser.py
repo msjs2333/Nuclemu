@@ -50,6 +50,7 @@ class SavedModeBrowserTests(unittest.TestCase):
         item = next(i for i in doc['items'] if i['document']['snapshot']['device'] == 'counter_b')
         path = Path(self.folder.name, 'saved-window.' + fmt)
         path.write_bytes(export_item(doc, item['id'], fmt))
+        original = path.read_bytes()
         self.enter('beta')
         self.page.locator('[data-page=instrument]').click()
         # A real 1 s zero-count observation still needs overwrite protection.
@@ -60,18 +61,22 @@ class SavedModeBrowserTests(unittest.TestCase):
         with self.page.expect_file_chooser() as choosing:
             fixtures.measurement_operation(self.page, 'file')
         choosing.value.set_files(path)
-        expect(self.page.locator('#measurement-mode')).to_contain_text('原有读数保留')
-        expect(self.page.locator('#measurement-mode')).to_contain_text('独立')
+        expect(self.page.locator('#measurement-mode')).to_contain_text('输入或响应版本与当前课程不同')
+        expect(self.page.locator('#measurement-mode')).to_contain_text('原有计数与实际曝光保留')
+        expect(self.page.locator('#measurement-mode')).to_contain_text('继续测量使用当前课程的独立双窗响应')
         expect(self.page.locator('#measurement-overwrite')).to_be_visible()
         self.page.locator('#measurement-confirm').click()
-        expect(self.page.locator('#message')).to_contain_text('原有读数保留')
-        expect(self.page.locator('#message')).to_contain_text('独立')
+        expect(self.page.locator('#message')).to_contain_text('输入或响应版本与当前课程不同')
+        expect(self.page.locator('#message')).to_contain_text('原有计数与实际曝光保留')
+        expect(self.page.locator('#message')).to_contain_text('继续测量使用当前课程的独立双窗响应')
         current = self.state()
         self.assertEqual(current['instruments']['counter_b']['counts'], [296])
         self.assertEqual(current['instruments']['counter_b']['exposure_s'], 3)
         self.assertEqual(current['instruments']['counter']['exposure_s'], 1)
         self.assertEqual(current['instruments']['counter']['counts'], [0])
         self.assertEqual(len(current['definition']['outputs']), 2)
+        self.assertEqual({d['id']: d['input'] for d in current['definition']['devices']},
+                         {'counter': 'beta_detector', 'counter_b': 'beta_detector_b'})
         self.screenshot('saved-single-' + fmt + '-current-mode')
         self.page.locator('[data-page=setup]').click()
         self.page.locator('[name=source_present]').select_option('1')
@@ -90,6 +95,7 @@ class SavedModeBrowserTests(unittest.TestCase):
         self.assertEqual(continued['instruments']['counter']['exposure_s'], 2)
         windows = self.server.app.lab.work.session.instrument_windows('counter_b')
         self.assertEqual(sum(w.counts[0] for w in windows[:3]), 296)
+        self.assertEqual(path.read_bytes(), original)
         self.screenshot('saved-single-' + fmt + '-continued')
 
     def test_old_single_csv_preserves_prefix_and_continues_current_model(self):

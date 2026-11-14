@@ -121,6 +121,7 @@ const status = computed(() => group.value ? groupRunning.value ? '采集中' : h
   : ['time_limit', 'count_limit'].includes(props.state.instrument?.stop_reason ?? '') ? '到限暂停'
   : props.state.instrument?.acquisition ? '手动暂停' : '等待开始')
 const formEdited = ref(false), formConflict = ref(false), acquisitionError = ref('')
+const applyingTarget = ref(false)
 let formExpected: Record<string, number | null> = {}
 function appliedTargets() {
   const target = props.state.instrument
@@ -155,6 +156,7 @@ function run(name: string, fields: Record<string, unknown> = {}) {
   emit('task', async () => { await props.act(name, fields, session) })
 }
 async function start() {
+  if (applyingTarget.value) return
   if (formConflict.value) {
     acquisitionError.value = '采集设置已在其他页面更新，请先核对并应用当前输入。'
     return
@@ -193,13 +195,17 @@ async function start() {
 function acquisitionTargets() { return {duration_s: mode.value === 'timed' ? duration.value : null,
   count_limit: mode.value === 'count' ? countLimit.value : null, window_s: windowSize.value} }
 function configureTarget() {
+  if (applyingTarget.value) return
   const component = group.value?.id, device = instrument.value.id, session = props.state.id
   const fields = component ? {component, duration_s: acquisitionTargets().duration_s, count_limit: acquisitionTargets().count_limit}
     : {device, ...(props.state.running ? {window_s: windowSize.value} : acquisitionTargets())}
+  applyingTarget.value = true
   emit('task', async () => {
-    await props.act(component ? 'instrument_group_config' : 'instrument_config', fields, session)
-    await nextTick()
-    if (props.state.id === session && props.state.device === device) syncForm()
+    try {
+      await props.act(component ? 'instrument_group_config' : 'instrument_config', fields, session)
+      await nextTick()
+      if (props.state.id === session && props.state.device === device) syncForm()
+    } finally { applyingTarget.value = false }
   })
 }
 function pause() { group.value ? run('stop_group', {component: group.value.id,
@@ -269,7 +275,7 @@ function finishClear(choice: 'save' | 'discard' | 'cancel') {
         </dl>
       </div>
       <form id="acquisition" class="fixed-acquisition" @submit.prevent="start">
-        <button class="primary" id="start" :disabled="(groupActions ? !groupActions.can_start : state.running) || state.readonly || state.instrument?.clearing">{{ group ? hasExposure ? '继续测量' : '开始测量' : state.instrument?.readable_exposure_s ? '继续采集' : '开始采集' }}</button>
+        <button class="primary" id="start" :disabled="applyingTarget || (groupActions ? !groupActions.can_start : state.running) || state.readonly || state.instrument?.clearing">{{ group ? hasExposure ? '继续测量' : '开始测量' : state.instrument?.readable_exposure_s ? '继续采集' : '开始采集' }}</button>
         <button type="button" id="stop" :disabled="(groupActions ? !groupActions.can_stop : !state.running) || state.readonly" @click="pause">{{ group ? '暂停测量' : '暂停采集' }}</button>
       </form>
       <div v-if="instrument.kind === 'spectrum'" class="instrument-tabs" role="tablist" aria-label="仪器工具" @keydown="toolKey">
@@ -284,7 +290,7 @@ function finishClear(choice: 'save' | 'discard' | 'cancel') {
         <label v-if="mode === 'timed'">目标曝光 / s <input ref="durationInput" id="duration" v-model.number="duration" type="number" min="0.000001" step="any" required :disabled="groupRunning || state.readonly" @input="editForm"></label>
         <label v-if="mode === 'count'">目标计数 / 次 <input id="count-limit" v-model.number="countLimit" type="number" min="1" step="1" :disabled="groupRunning || state.readonly" @input="editForm"></label>
         <label v-if="!group">统计窗 / s <input id="window-size" v-model.number="windowSize" type="number" min="0.000001" step="any" :disabled="state.readonly" @input="editForm"></label>
-        <button id="apply-acquisition" :disabled="state.readonly" @click="configureTarget">应用采集设置</button>
+        <button id="apply-acquisition" :disabled="applyingTarget || state.readonly" @click="configureTarget">应用采集设置</button>
         <p v-if="mode === 'count'" class="notice">在完整统计窗末判断目标，计数可能超过目标。</p>
         <fieldset class="load-measurement"><legend>载入测量数据</legend>
           <button :disabled="state.readonly || state.instrument?.clearing" @click="emit('loadMeasurement', instrument.id, 'cache')">从本场实验记录选择</button>
