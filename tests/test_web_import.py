@@ -46,6 +46,7 @@ class WebImportTests(unittest.TestCase):
 
     def test_two_packages_have_distinct_identity_and_preserve_live_state(self):
         source_a, source_b = self.source(30), self.source(31)
+        source_a['items'][0]['title'] = source_b['items'][0]['title'] = '同名道谱'
         self.assertEqual(source_a["items"][0]["title"], source_b["items"][0]["title"])
         work = self.lab.work
         before = (work.session.time_s, work.session.instrument("mca"),
@@ -183,9 +184,12 @@ class WebImportTests(unittest.TestCase):
         for index, slope in ((first, .006), (second, .003), (first, .006)):
             reopened.act(dict(action='select', device='mca', index=index))
             state = reopened.state()
+            reopened.act(dict(action='calculate_roi', device='mca', roi=state['analysis']['roi'],
+                              roi_context=state['roi_context']))
+            state = reopened.state()
             calibration = reopened.work.active_calibration()
             self.assertAlmostEqual(calibration.energy(1000), slope * 1000)
-            energies.append(state['readout']['energy_MeV'])
+            energies.append(state['roi_result']['readout']['energy_MeV'])
             self.assertEqual(state['reference_calibration']['energy2'], 3)
         self.assertAlmostEqual(energies[0], energies[1] * 2)
         self.assertEqual(energies[0], energies[2])

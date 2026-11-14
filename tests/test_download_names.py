@@ -14,7 +14,7 @@ from nuclemu.core import Session
 from nuclemu.experiments.alpha import EXPERIMENT
 from nuclemu.experiments.beta import EXPERIMENT as BETA
 from nuclemu.exchange import (batch_download, cache_calibration, capture_session, load_item,
-                              load_package, package_download, package_bytes)
+                              load_package, package_download, package_bytes, link_measurements)
 from nuclemu.results import Calibration
 from nuclemu.web_download import make_download
 from nuclemu.web_session import Application
@@ -46,7 +46,7 @@ class DownloadNameTests(unittest.TestCase):
         doc, measurement, calibration = self.document()
         original = deepcopy(doc)
         name, _, data = package_download(doc)
-        self.assertEqual(name, "AEL_20261112-150405-123456.nuclemu")
+        self.assertRegex(name, r"^AEL_20261112-150405-\d{6}\.nuclemu$")
         self.assertEqual(load_package(data), original)
         names = {name}
         for identity, kind, fmt in ((measurement, "spectrum", "json"),
@@ -62,15 +62,22 @@ class DownloadNameTests(unittest.TestCase):
         doc, measurement, calibration = self.document()
         choices = [{"id": measurement, "format": "csv"}]*2 + [{"id": calibration, "format": "json"}]
         name, mime, data = batch_download(doc, choices)
-        self.assertEqual(name, "AEL_20261112-150405-123456_records.zip")
+        self.assertRegex(name, r"^AEL_20261112-150405-\d{6}_records\.zip$")
         self.assertEqual(mime, "application/zip")
         with ZipFile(BytesIO(data)) as archive:
             members = archive.namelist()
             self.assertEqual(len(set(members)), 3)
-            self.assertTrue(all(n.startswith("AEL_20261112-150405-123456_") for n in members))
+            self.assertTrue(all(n.startswith(name.removesuffix('_records.zip') + '_') for n in members))
             self.assertTrue(all("nuclemu" not in n for n in members))
             self.assertEqual([load_item(archive.read(n))["items"][0]["id"] for n in members],
                              [measurement, measurement, calibration])
+
+    def test_single_spectrum_saved_through_instrument_group_keeps_spectrum_label(self):
+        doc,measurement,_=self.document()
+        link_measurements(doc,[measurement],members=['mca'])
+        name,_,data=batch_download(doc,[dict(id=measurement,format='csv')])
+        self.assertRegex(name,r'^AEL_\d{8}-\d{6}-\d{6}_spectrum\.csv$')
+        self.assertEqual(load_item(data)['items'][0]['id'],measurement)
 
     def test_legacy_measurement_calibration_and_batch_names(self):
         lab = SimpleNamespace(info={"id": "beta", "short_code": "BABS"}, export=lambda item: b"unchanged")

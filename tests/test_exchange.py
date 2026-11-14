@@ -131,6 +131,7 @@ class ExchangeTests(unittest.TestCase):
 
     def test_import_same_names_and_local_snapshot_ids_does_not_replace_target(self):
         left, right = capture_session(saved()), capture_session(saved())
+        left['items'][0]['title'] = right['items'][0]['title'] = 'same name'
         self.assertEqual(left["items"][0]["title"], right["items"][0]["title"])
         original = deepcopy(left)
         cal = cache_calibration(right, Calibration("portable", "mca", 8, 0, 0, 7, 7))
@@ -231,7 +232,9 @@ class ExchangeTests(unittest.TestCase):
             state = lab.state()
             self.assertTrue(state["readonly"])
             self.assertEqual(state["settings"], {"foil_um": 2.5})
-            self.assertEqual(state["readout"]["energy_MeV"], 3)
+            lab.act(dict(action='calculate_roi', device='mca', roi=state['analysis']['roi'],
+                         roi_context=state['roi_context']))
+            self.assertEqual(lab.state()['roi_result']['readout']["energy_MeV"], 3)
             self.assertEqual(state["readout"]["counts"], 172)
             self.assertEqual(state["readout"]["exposure_s"], 2.25)
             with self.assertRaisesRegex(ValueError, "只支持查看"):

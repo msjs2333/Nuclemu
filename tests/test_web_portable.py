@@ -130,7 +130,8 @@ class PortableWebTests(unittest.TestCase):
         lab = self.open(package_bytes(doc), {"spectrum": definition})
         model.assert_not_called()
         self.assertEqual(lab.work.lab.calibrations["mca"], calibration)
-        self.assertEqual(lab.state()["readout"]["energy_MeV"], 2)
+        lab.act(dict(action='calculate_roi', device='mca', roi=[0, 3], roi_context=lab.state()['roi_context']))
+        self.assertEqual(lab.state()['roi_result']['readout']["energy_MeV"], 2)
 
     def test_converted_package_missing_archived_observations_is_rejected(self):
         doc = deepcopy(self.doc)

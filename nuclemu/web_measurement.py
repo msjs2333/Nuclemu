@@ -3,58 +3,109 @@
 from uuid import uuid4
 
 from .catalog import resolve_saved_experiment
-from .exchange import decode_measurement, load_item, load_package
+from .exchange import (decode_measurement, decode_measurements, load_item, load_package,
+                       list_records, capture_session, import_item)
 
 
-def inspect_measurement(lab, device, raw=None):
+def inspect_measurement(lab, device, raw=None, *, component=None):
     if lab.readonly or not lab.work.session.experiment.outputs:
         raise ValueError('请在可继续采集的实验中载入测量数据。')
-    if device not in lab.analysis:
+    if component is not None:
+        from .web_instrument_records import members
+        devices = members(lab, component)
+    elif device not in lab.analysis:
         raise ValueError('请选择有效的仪器或窗。')
+    else:
+        devices = (device,)
     if lab.exchange.document is not None:
         lab.work.bind_source(lab.exchange.document['id'])
     source = lab.exchange.document if raw is None else (
         load_package(raw) if raw.startswith((b'PK', b'SQLite format 3')) else load_item(raw))
     if source is None:
         raise ValueError('本场还没有可载入的测量记录。')
-    choices = [dict(id=item['id'], title=item['title'], exposure_s=item['document']['snapshot']['exposure_s'])
-               for item in source['items'] if item['kind'] == 'measurement'
-               and item['document']['snapshot']['device'] == device]
+    if component is not None:
+        choices = []
+        for row in list_records(source):
+            if row['kind'] != 'measurement':
+                continue
+            scope = row.get('group', {}).get('members', [row['device']])
+            if ('group' in row and set(scope) != set(devices)) or ('group' not in row and row['device'] not in devices):
+                continue
+            choices.append(dict(row, devices=list(scope), historical_single='group' not in row and len(devices) > 1,
+                exposures={m['device']: m['exposure_s'] for m in row.get('measurements', [row])}))
+    else:
+        choices = [dict(id=item['id'], title=item['title'], exposure_s=item['document']['snapshot']['exposure_s'])
+                   for item in source['items'] if item['kind'] == 'measurement'
+                   and item['document']['snapshot']['device'] == device]
     if not choices:
         raise ValueError('文件中没有适用于所选仪器或窗的测量记录。')
     token = uuid4().hex
-    target = lab.work.session.instrument(device)
-    lab._pending_measurement = token, device, source, target.acquisition
+    targets = {d: lab.work.session.instrument(d) for d in devices}
+    for row in choices:
+        row['overwrite_required'] = any(targets[d].exposure_s > 0 or any(targets[d].counts)
+                                        for d in row.get('devices', (device,)))
+    lab._pending_measurement = dict(token=token, devices=devices, source=source, component=component,
+        acquisitions={d: target.acquisition for d, target in targets.items()},
+        choices={row['id']: tuple(row.get('devices', (device,))) for row in choices})
     current = lab.work.session.experiment
     restored = resolve_saved_experiment(current, source['definition'])
     changed_inputs = ({d.id: d.input for d in restored.devices} !=
                       {d.id: d.input for d in current.devices})
     notice = ('原有读数保留；继续采集采用当前课程的测量模式。' + current.description
               if restored is not current and changed_inputs else '')
-    return dict(token=token, device=device, items=choices,
+    return dict(token=token, device=device, component=component, items=choices,
                 notice=notice,
-                overwrite_required=target.exposure_s > 0 or any(target.counts))
+                overwrite_required=any(t.exposure_s > 0 or any(t.counts) for t in targets.values()))
 
 
 def load_measurement(lab, token, identity, overwrite=False):
     pending = getattr(lab, '_pending_measurement', None)
-    if pending is None or token != pending[0]:
+    if pending is None or token != pending['token']:
         raise ValueError('载入选择已过期，请重新选择测量记录。')
-    _, device, source, acquisition = pending
-    if lab.work.session.instrument(device).acquisition != acquisition:
+    devices, source = pending['devices'], pending['source']
+    if any(lab.work.session.instrument(d).acquisition != pending['acquisitions'][d] for d in devices):
         raise ValueError('目标仪器的测量轮次已改变，请重新选择测量记录并确认载入。')
-    decoded = decode_measurement(source, lab.work.session.experiment, device, identity)
-    lab.work.session.load_measurement(device, decoded.snapshot, overwrite=overwrite)
-    if decoded.calibration is None:
-        lab.work.lab.calibrations.pop(device, None)
+    if identity not in pending['choices']:
+        raise ValueError('请选择所列的测量记录。')
+    if pending['component'] is not None:
+        from .web_instrument_records import members
+        if members(lab, pending['component']) != devices:
+            raise ValueError('目标仪器已改变，请重新选择测量记录。')
+        devices = pending['choices'][identity]
+        decoded = decode_measurements(source, lab.work.session.experiment, devices, identity)
     else:
-        lab.work.lab.calibrations[device] = decoded.calibration
-    lab._live_calibrations[device] = decoded.calibration
-    lab._saved_calibration_devices.discard(device)
-    lab.preserve_loaded_calibration(source, decoded.item_id)
-    lab.clear_portable_reference(device, 'selected')
-    lab.analysis[device]['selected'] = None
-    if lab.work.device.id == device:
+        decoded = (decode_measurement(source, lab.work.session.experiment, devices[0], identity),)
+    # Prepare calibration imports before changing any gate or live selection.
+    doc = capture_session(lab.work.session, lab.exchange.document, definition=lab.info,
+                          device=lab.work.device.id)
+    retained = {}
+    for measurement in decoded:
+        item = next(i for i in source['items'] if i['id'] == measurement.item_id)
+        calibration_id = item.get('calibration_id')
+        if calibration_id is None:
+            continue
+        calibration = next(i for i in source['items'] if i['id'] == calibration_id)
+        existing = next((i['id'] for i in doc['items'] if i['kind'] == 'calibration'
+                         and i['source'] == calibration['source'] and i['document'] == calibration['document']), None)
+        retained[measurement.snapshot.device] = existing or import_item(doc, source, calibration_id)
+    lab.work.session.load_measurements(devices, tuple(d.snapshot for d in decoded), overwrite=overwrite)
+    lab.exchange.document = doc
+    lab.work.bind_source(doc['id'])
+    by_device = {d.snapshot.device: d for d in decoded}
+    for device in devices:
+        calibration = by_device[device].calibration if device in by_device else None
+        if calibration is None:
+            lab.work.lab.calibrations.pop(device, None)
+        else:
+            lab.work.lab.calibrations[device] = calibration
+        lab._live_calibrations[device] = calibration
+        lab._saved_calibration_devices.discard(device)
+        lab._loaded_calibration_items.pop(device, None)
+        if device in retained:
+            lab._loaded_calibration_items[device] = retained[device]
+        lab.clear_portable_reference(device, 'selected')
+        lab.analysis[device]['selected'] = None
+    if lab.work.device.id in devices:
         lab.work.select(None)
     del lab._pending_measurement
     lab.edits += 1

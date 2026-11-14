@@ -64,7 +64,9 @@ class LoadedCalibrationTests(unittest.TestCase):
         reopened = open_portable(path.read_bytes(), self.definitions, lab.store, lambda: 0)
         reopened.act(dict(action='select', device='mca', item_id=measurement['id']))
         reopened.act(dict(action='analysis', device='mca', roi=[900, 929]))
-        whole_energy = reopened.state()['readout']['energy_MeV']
+        reopened.act(dict(action='calculate_roi', device='mca', roi=[900, 929],
+                          roi_context=reopened.state()['roi_context']))
+        whole_energy = reopened.state()['roi_result']['readout']['energy_MeV']
         self.assertIsNotNone(whole_energy)
         for fmt in ('json', 'csv'):
             with self.subTest(download=fmt):

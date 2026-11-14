@@ -16,7 +16,8 @@ from .results import Calibration, _add_windows, write_product
 from .web_download import make_download
 from .web_store import ArchiveStore
 from .web_exchange import WebExchange
-from .exchange import cache_calibration, bind_calibration, import_item, load_item, decode_measurement
+from .web_spectrum_analysis import calculate_roi, roi_context, spectrum_readout
+from .exchange import cache_calibration, bind_calibration, load_item, decode_measurement, list_records
 
 
 def analysis_error(error):
@@ -111,6 +112,7 @@ class WebLab:
         self.saved_selection = {}
         self.saved_analysis = {}
         self._decoded_items = {}
+        self._roi_results = {}
 
     def _refresh_exchange(self, **fields):
         document = self.exchange.refresh(self.work.session, **fields)
@@ -145,28 +147,6 @@ class WebLab:
                 bind_calibration(doc, item['id'], identity)
         self.exchange.document = doc
         self._decoded_items.clear()
-
-    def preserve_loaded_calibration(self, source, identity):
-        """Retain a loaded measurement's already-saved calibration and provenance."""
-        measurement = next(item for item in source['items'] if item['id'] == identity)
-        device = measurement['document']['snapshot']['device']
-        self._loaded_calibration_items.pop(device, None)
-        calibration_id = measurement.get('calibration_id')
-        if calibration_id is None:
-            return
-        calibration = next(item for item in source['items'] if item['id'] == calibration_id)
-        doc = self._refresh_exchange(device=self.work.device.id, definition=self.info,
-                                    product=self.work.product(), analysis=self.analysis,
-                                    item_indices=getattr(self.work.lab.view, 'item_indices', None),
-                                    preserved_analysis=getattr(self, 'portable_preserved_analysis', None), identity_analysis=self.saved_analysis)
-        retained = next((item['id'] for item in doc['items'] if item['kind'] == 'calibration'
-                         and item['source'] == calibration['source']
-                         and item['document'] == calibration['document']), None)
-        if retained is None:
-            retained = import_item(doc, source, calibration_id)
-            self.exchange.document = doc
-            self._decoded_items.clear()
-        self._loaded_calibration_items[device] = retained
 
     def bind_saved_calibration(self, snapshot):
         calibration = (self._live_calibrations.get(snapshot.device) if snapshot.device in self._saved_calibration_devices
@@ -432,8 +412,12 @@ class WebLab:
         readout_error = None
         try:
             selected_id = self.saved_selection.get(w.device.id, {}).get('selected')
-            readout = (w.readout_snapshot(self.saved_measurement(selected_id).snapshot, *analysis['roi'], calibration=calibration)
-                       if selected_id else w.readout(*analysis["roi"]))
+            if w.device.kind == 'spectrum':
+                readout = spectrum_readout(self)
+            elif selected_id:
+                readout = w.readout_snapshot(self.saved_measurement(selected_id).snapshot, *analysis['roi'], calibration=calibration)
+            else:
+                readout = w.readout(*analysis['roi'])
         except ValueError as error:
             readout, readout_error = None, analysis_error(error)
         if w.device.kind == "counter":
@@ -463,12 +447,14 @@ class WebLab:
                                    if flow is not None else None),
                     **self.counter_window_payload(window_cursor, instruments),
                     snapshots=self._snapshot_summaries,
+                    records=list_records(package) if package else [],
                     imported_items=self._imported_items,
                     cached_calibrations=[dict(id=item['id'], device=item['document']['device'], title=item['title'])
                                          for item in (self.exchange.document or {}).get('items', ()) if item['kind'] == 'calibration'],
                     gates={d.id: (w.session.instrument(d.id).running if w.session.experiment.outputs else w.session.running)
                            for d in w.session.experiment.devices},
-                    clear_confirmation=(dict(device=pending_clear[0], token=pending_clear[1].token,
+                    clear_confirmation=({k: v for k, v in self._group_clear.items() if k != 'requests'}
+                        if getattr(self, '_group_clear', None) else dict(device=pending_clear[0], token=pending_clear[1].token,
                         exposure_s=pending_clear[1].snapshot.exposure_s if pending_clear[1].snapshot else 0)
                         if pending_clear else None),
                     exposure_s=instrument.exposure_s if instrument else None,
@@ -487,6 +473,7 @@ class WebLab:
                     calibration=asdict(calibration) if calibration else None,
                     reference_calibration=(asdict(self.reference_calibration()) if self.reference_calibration() else None),
                     calibration_context=self.calibration_context(),
+                    roi_context=roi_context(self), roi_result=self._roi_results.get(w.device.id),
                     calibrated_devices=list(w.lab.calibrations),
                     readout=readout, readout_error=readout_error,
                     counter_analysis=self._counter_analysis if w.device.kind == "counter" else [], readonly=self.readonly,
@@ -659,19 +646,6 @@ class WebLab:
             raise ValueError('请选择包含多个窗的仪器。')
         return part.devices
 
-    def _operation_device(self, data):
-        """Keep the page context while targeting a member of its instrument."""
-        self._check_device_target(data)
-        current = self.work.device.id
-        target = data.get('operation_device', current)
-        if not isinstance(target, str) or target not in self.analysis:
-            raise ValueError('请选择有效的操作目标。')
-        if target != current and not any(
-                part.kind == 'instrument' and current in part.devices and target in part.devices
-                for part in self.work.session.experiment.components):
-            raise ValueError('操作目标不属于当前仪器。')
-        return target
-
     def change_analysis(self, data):
         self._check_device_target(data)
         w = self.work
@@ -715,10 +689,15 @@ class WebLab:
     def act(self, data):
         """Apply one action, settling its clock only after exit-round validation."""
         self.check_confirmation(data)
+        if 'operation_device' in data:
+            raise ValueError('请选择所用仪器，保存与清空作用于整台仪器。')
+        if data['action'] in ('snapshot_group', 'begin_clear_group', 'finish_clear_group'):
+            from .web_instrument_records import validate_action
+            validate_action(self, data)
         operation_device = None
-        if data['action'] in ('snapshot', 'begin_clear') or (
-                data['action'] == 'finish_clear' and 'operation_device' in data):
-            operation_device = self._operation_device(data)
+        if data['action'] in ('snapshot', 'begin_clear'):
+            self._check_device_target(data)
+            operation_device = self.work.device.id
         if data['action'] == 'stop_group':
             devices = self.instrument_group(data['component'])
             cycles = data.get('gate_cycles')
@@ -748,7 +727,7 @@ class WebLab:
         action, w = data["action"], self.work
         if self.frozen and action not in ("freeze", "continue", "suspend", "save", "discard"):
             raise ValueError("先返回实验，再执行此操作。")
-        if self.readonly and action in ("start", "stop", "configure", "speed", "pause", "output", "snapshot", "begin_clear", "finish_clear", "instrument_config", "cache_calibration", 'start_group', 'stop_group', 'instrument_group_config', 'window_config', 'load_measurement'):
+        if self.readonly and action in ("start", "stop", "configure", "speed", "pause", "output", "snapshot", "begin_clear", "finish_clear", "instrument_config", "cache_calibration", 'start_group', 'stop_group', 'instrument_group_config', 'window_config', 'load_measurement', 'snapshot_group', 'begin_clear_group', 'finish_clear_group'):
             raise ValueError("已保存的实验只支持查看和分析。")
         if action in ("calibrate", "load_calibration", "cache_calibration"):
             if data.get("calibration_context") != self.calibration_context():
@@ -805,6 +784,12 @@ class WebLab:
         elif action == "output":
             w.set_output(data["output"], data["enabled"])
             self.edits += 1
+        elif action in ('snapshot_group', 'begin_clear_group', 'finish_clear_group'):
+            from .web_instrument_records import act
+            act(self, data)
+        elif action == 'rename_record':
+            from .web_instrument_records import rename
+            rename(self, data['item_id'], data['title'])
         elif action == "snapshot":
             snapshot = w.snapshot(device=operation_device, writer=self.write_cache)
             self.bind_saved_calibration(snapshot)
@@ -875,6 +860,8 @@ class WebLab:
                 self.select_saved_item('reference', data['reference_item_id'])
                 self.analysis[w.device.id]['reference'] = None
             self.change_analysis(data)
+        elif action == 'calculate_roi':
+            calculate_roi(self, data)
         elif action == "calibrate":
             identity = self.saved_selection.get(w.device.id, {}).get('selected')
             if identity:
@@ -1038,7 +1025,8 @@ class Application:
             return inspect_import(self.lab, b64decode(data['file'], validate=True))
         if path == '/api/inspect_measurement':
             from .web_measurement import inspect_measurement
-            return inspect_measurement(self.lab, data['device'], b64decode(data['file'], validate=True) if 'file' in data else None)
+            return inspect_measurement(self.lab, data.get('device'), b64decode(data['file'], validate=True) if 'file' in data else None,
+                                       component=data.get('component'))
         if path in ("/api/export", "/api/download"):
             self.lab.update_draft()
         if path == "/api/export":

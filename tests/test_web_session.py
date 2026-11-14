@@ -221,7 +221,8 @@ class WebSessionTests(unittest.TestCase):
         old = self.action("select", device="left", index=0)
         self.assertEqual(old["settings"]["gain"], 2)
         self.assertEqual(old["spectrum_settings"]["gain"], 1)
-        self.assertEqual(old["readout"]["energy_MeV"], 1)
+        calculated = self.action('calculate_roi', device='left', roi=[0, 2], roi_context=old['roi_context'])
+        self.assertEqual(calculated['roi_result']['readout']["energy_MeV"], 1)
         self.action("device", device="right")
         self.action("analysis", device="right", roi=[2, 4], reference=1)
         self.action("select", device="right", index=1)
@@ -237,7 +238,9 @@ class WebSessionTests(unittest.TestCase):
         switched = app.request("/api/action", dict(session=app.lab.id, action="device", device="left"))
         self.assertEqual(switched["analysis"]["roi"], [0, 2])
         self.assertEqual(switched["selected"], 0)
-        self.assertEqual(switched["readout"]["energy_MeV"], 1)
+        calculated = app.request('/api/action', dict(session=app.lab.id, action='calculate_roi',
+            device='left', roi=[0, 2], roi_context=switched['roi_context']))
+        self.assertEqual(calculated['roi_result']['readout']["energy_MeV"], 1)
 
     def test_refresh_does_not_close_gate_and_restart_draft_reports_completed_endpoint(self):
         self.open(self.use_legacy("beta"))
