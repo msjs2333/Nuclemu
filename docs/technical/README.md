@@ -17,3 +17,9 @@ Nuclemu · **A Virtual Nuclear Physics Lab**
 先明确模型的物理量、单位和适用域，再核设备实例、输入、门和窗，最后核保存快照及导出读回。历史查看读取保存值，不重新抽样。种子之外还需记录设置与操作时间线；重开后的新轮次与旧记录具有各自的随机来源。
 
 复验至少包含实际曝光、有效零计数、暂停续采、跨工况和手动保存。涉及文件必须导出并重开，逐道或逐窗核对，不能仅检查按钮成功提示。只验证课程函数不能证明 GUI、CLI 和文件链路已经接通。
+
+## 维护工作台与内置资料
+
+课程作者可用 `python -m nuclemu gui --path D:\MyLabs` 加载可信课程模块；Python入口为 `from nuclemu.gui import launch`、`launch(paths=("课程目录",))`。
+
+Vue 3/TypeScript源码位于 `frontend/src/`。修改后在 `frontend/` 使用支持的Node.js版本运行 `npm ci`、`npm run build`，构建会检查类型并写入可离线资源 `nuclemu/static/`；源码和构建产物一起交付。学生机运行时从本机读取资源。学生正文为 `docs/alpha.md`、`docs/beta.md`，由 `frontend/src/studentMaterials.ts` 导入，目录简介读取首节“实验简介与目的”。修改正文后也需重新构建。

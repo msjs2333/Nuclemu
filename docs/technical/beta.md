@@ -20,7 +20,7 @@ A设1 s、B设5 s，在共同起点开门5 s后，A有五条完整窗、B一条�
 
 ORTEC 995资料支持双路独立门控，ST260手册支持每次读数与经过时间。本课学生面板A左B右，大计数下设置单次曝光，整机“开始测量／继续测量”和“暂停测量”同时控制双窗；各列设置单次曝光，保存、清空和载入均按整台计数器处理。底层独立门是公共接口能力，不能写成当前学生需要逐窗启停。显示及整机控制为教学约定，不冒称任一实物型号具备全部行为。[995资料](https://www.ortec-online.com/-/media/ametekortec/brochures/9/995-a4.pdf) · [ST260手册](https://www.spectrumtechniques.com/wp-content/uploads/ST260-Manual.pdf)
 
-Web整机操作绑定计数器组件的`devices`，以`start_group`、`stop_group`及`configure_group`调用公共原子接口；模式与目标同时设置两窗，保留各列单次曝光。单次曝光输入在各列大计数下方，学生界面不提供选窗入口，A/B各自的曝光与读数仍分别保留。整体载入后，整机继续从各自已恢复值接续，不把一侧曝光复制到另一侧；可读部分曝光按实际值保留并标记`complete=False`，不补成完整窗；0 s无读数的一侧不造测量项。
+Web整机操作绑定计数器组件的`devices`；HTTP动作`start_group`、`stop_group`、`instrument_group_config`分别调用`Session.start_group()`、`stop_group()`、`configure_group()`，后者是Session方法名而不是HTTP动作名。模式与目标同时设置两窗，保留各列单次曝光。单次曝光输入在各列大计数下方，学生界面不提供选窗入口，A/B各自的曝光与读数仍分别保留。整体载入后，整机继续从各自已恢复值接续，不把一侧曝光复制到另一侧；可读部分曝光按实际值保留并标记`complete=False`，不补成完整窗；0 s无读数的一侧不造测量项。
 
 ## 原始数据与文件边界
 

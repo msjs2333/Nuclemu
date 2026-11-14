@@ -67,7 +67,7 @@ session.set_output("alpha_detector", False)
 
 当前本地目录按单个 Python 文件加载实验定义。可从已安装的 Python 包导入共用模型，并以模块的 `__file__` 定位旁边的参考数据。目录本身不会加入 Python 的模块搜索路径；多文件课程库可安装为包，再由目录中的实验定义导入。
 
-Web 目录读取 `Experiment` 的 `question` 和 `guide` 展示测量问题与步骤。各部件通过 `Component.parameters` 绑定同名模型参数，通过 `Component.device` 绑定读出仪器的实例 ID。同一探测器和仪器面板可以指向同一个读出实例。按装置顺序声明部件，用 `Connection` 明确照射路径（`particle`）和信号连线（`signal`）。已声明的装置图需能定位每个参数和设备。省略装置图的模块自动生成参数区和各设备入口。
+Web 目录读取 `Experiment` 的 `question` 和 `guide` 展示测量问题与步骤。各部件通过 `Component.parameters` 绑定同名模型参数，通过 `Component.device` 绑定读出仪器的实例 ID。旧兼容定义允许探测器部件和仪器部件指向同一读出实例；当前课程推荐探测器用`Component.output`绑定信号输出，仪器用`Component.device`或`devices`绑定读出实例，操作入口归仪器。按装置顺序声明部件，用 `Connection` 明确照射路径（`particle`）和信号连线（`signal`）。已声明的装置图需能定位每个参数和设备。省略装置图的模块自动生成参数区和各设备入口。
 
 部件可用 `Component.illustration` 选择内置设备插图。源座、箔架、硅探头、β 探头、多道谱仪和计数器分别对应 `source`、`foil`、`silicon`、`beta-probe`、`mca` 和 `counter`。省略此项或使用未知图名时，界面以部件名称标记连接节点。仪器面板和测量始终由设备绑定决定。
 
@@ -144,6 +144,8 @@ assert session.instrument("a").exposure_s == 10
 `snapshot(device, cache=True, writer=None)` 保存当时已经可读的累计状态，不调用模型、不停门。返回不可变 `Snapshot`，含快照 ID、设备、轮次、按键时刻 `time_s`、读数对应的 `exposure_s`、累计 `counts` 和保留工况的 `segments`；`cache=False` 仅查看，`Session.snapshots` 仅含显式保存的快照。可注入 `writer(snapshot)`，成功后才加入缓存；失败不加入快照，也不停门或丢弃读数。采到 3 s 和 5 s 保存两次，旧快照保持 3 s。若在 5.4 s 保存而最后已读窗截止 5 s，保存的是 5 s 的读数和曝光。`results.snapshot_product(experiment, snapshot, seed)` 将其转换为可导出的测量产品。快照不以当前门时钟代替实际已有数据的曝光。
 
 清空确认使用 `request = begin_clear(device)`，再调用 `finish_clear(device, request.token, choice, writer=None)`，其中 `choice` 为 `save`、`discard` 或 `cancel`。开始确认时只结清并暂缓目标仪器，返回固定读数和防止旧确认生效的 token，其他仪器和探测输出继续运行。`save` 可先调用 `writer(snapshot)` 写入外部缓存，成功后加入显式快照并清空当前仪器；`discard` 直接清空，均保留已有快照和历史记录。取消或写入异常恢复原轮次、读数和剩余曝光，异常仍报告给调用方。重复提交已结束的 token 报错。程序执行独立重测可直接用 `clear(device=...)`；省略设备表示清全部仪器。
+
+整台仪器的成员操作使用`Session.snapshot_group(devices, *, cache=True, writer=None)`、`load_measurements(devices, snapshots, *, overwrite=False)`、`begin_clear_group(devices)`和`finish_clear_group(devices, tokens, choice, *, writer=None)`。保存与清空的`writer`一次接收实际可读快照的tuple，成功后才提交全部成员；载入先核全组再替换。完整`devices`范围包含缺测侧，缺测侧不造快照，新整机载入按该范围清空缺测侧；历史单项则只按文件所记设备恢复，另一侧保持原值。无需另建仪器或档案层。[β整机可跑例](technical/beta.md#一行填写示例的复验)与[文件字段](exchange.md#保存什么)给出调用和首项关联。
 
 `Session.rounds` 提供轮次元数据，包括初始有效设置、实际曝光、状态和设置变更的位置；其中没有未保存的计数或道谱。设置未变不重复登记。保存于 3 s、继续采到 5 s 时，轮次曝光可以是 5 s，唯一保存的谱仍只有 3 s。文件层应分别使用这些元数据与显式快照，不根据轮次曝光补造读数。
 
