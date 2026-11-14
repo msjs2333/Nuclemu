@@ -14,9 +14,35 @@ from urllib.request import Request, urlopen
 
 from nuclemu import desktop
 from nuclemu import desktop_dpi
+from nuclemu import desktop_chrome
 
 
 class DesktopImportTests(unittest.TestCase):
+    def test_caption_icon_is_owned_until_root_destroy_and_big_icon_is_untouched(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        root, library = Mock(), Mock()
+        library.CreateIcon.return_value = 123
+        library.SendMessageW.return_value = 456
+        library.IsWindow.return_value = True
+        library.SetWindowThemeAttribute.return_value = 0
+        with patch('sys.platform', 'win32'), patch('ctypes.WinDLL', return_value=library, create=True):
+            self.assertTrue(desktop_chrome.blend_windows_caption(root))
+        release = root.bind.call_args.args[1]
+        self.assertEqual(library.SendMessageW.call_args.args[1:], (0x80, 0, 123))
+        release(SimpleNamespace(widget=object()))
+        library.DestroyIcon.assert_not_called()
+        release(SimpleNamespace(widget=root))
+        self.assertEqual(library.SendMessageW.call_args.args[1:], (0x80, 0, 456))
+        library.DestroyIcon.assert_called_once_with(123)
+        release(SimpleNamespace(widget=root))
+        library.DestroyIcon.assert_called_once_with(123)
+
+    def test_other_platforms_do_not_load_windows_caption_apis(self):
+        with patch('sys.platform', 'linux'), patch('ctypes.WinDLL', create=True) as load:
+            self.assertFalse(desktop_chrome.blend_windows_caption(None))
+            load.assert_not_called()
+
     def test_import_does_not_initialize_tk_or_the_web_service(self):
         result = subprocess.run([sys.executable, '-c',
             "import sys; import nuclemu.desktop; "

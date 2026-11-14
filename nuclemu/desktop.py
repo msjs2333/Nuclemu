@@ -7,6 +7,7 @@ import sys
 import webbrowser
 
 from .desktop_dpi import enable_windows_dpi_awareness, window_dpi, work_area
+from .desktop_chrome import blend_windows_caption
 
 INK, MUTED, EDGE = '#101010', '#46525b', '#c8d1d6'
 ACCENT, HOVER, PLANE, FOCUS = '#2956a1', '#204984', '#f7f9fa', '#376cc2'
@@ -28,7 +29,7 @@ class _Launcher:
         self.scale = self.dpi / 96
         root.title('Nuclemu')
         root.configure(background='white')
-        root.resizable(False, False)
+        root.resizable(sys.platform == 'win32', sys.platform == 'win32')
         root.columnconfigure(0, weight=1)
         families = {name.casefold(): name for name in font.families(root)}
         preferred = (['Microsoft YaHei UI', 'Microsoft YaHei', 'Segoe UI'] if sys.platform == 'win32'
@@ -46,7 +47,7 @@ class _Launcher:
         self.header = tk.Frame(self.body, background='white')
         self.header.grid(row=0, sticky='ew')
         self.header.columnconfigure(0, weight=1)
-        tk.Label(self.header, text='本机工作台', font=self.fonts['brand'], background='white', foreground=INK).grid(row=0, column=0, sticky='w')
+        tk.Label(self.header, text='Nuclemu', font=self.fonts['brand'], background='white', foreground=INK).grid(row=0, column=0, sticky='w')
         self.status = tk.StringVar(value='正在启动…')
         self.status_label = tk.Label(self.header, textvariable=self.status, font=self.fonts['body'], background='white', foreground=MUTED)
         self.status_label.grid(row=0, column=1, sticky='e')
@@ -86,10 +87,14 @@ class _Launcher:
         self.open_button.shell.grid_remove()
         self.close_button = self.button(self.actions, '关闭', self.request_close)
         self.close_button.shell.grid(row=0, column=1, sticky='e')
+        if sys.platform == 'win32':
+            self.close_button.shell.grid_remove()
         self.message.trace_add('write', self._message_changed)
         self._message_changed()
         self._apply_dpi(self.dpi)
         self._load_icon()
+        root.update_idletasks()
+        self.blended_caption = blend_windows_caption(root)
         root.bind('<Configure>', self._configured, add='+')
         root.bind('<Destroy>', self._destroyed, add='+')
         root.protocol('WM_DELETE_WINDOW', self.request_close)
@@ -169,6 +174,8 @@ class _Launcher:
         self.copy_button.shell.grid_configure(padx=(self.px(8), 0))
         self.actions.grid_configure(pady=(self.px(16), 0))
         self.close_button.shell.grid_configure(padx=(self.px(12), 0))
+        if sys.platform == 'win32':
+            self.close_button.shell.grid_remove()
         for button in (self.copy_button, self.open_button, self.close_button):
             button.configure(padx=self.px(16), pady=self.px(8))
             button.pack_configure(padx=self.px(1), pady=self.px(1))
