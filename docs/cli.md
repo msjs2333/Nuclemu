@@ -8,6 +8,8 @@ python -m nuclemu list
 python -m nuclemu list alpha
 python -m nuclemu validate
 python -m nuclemu gui
+python -m nuclemu serve --gui
+python -m nuclemu serve --no-gui
 ```
 
 `list` 给出实验 ID、测量问题、操作指引、参数键、单位、默认值、范围、整数要求及设备 `kind:id` 和道数。装置部件列出用途、所控制的参数和绑定的设备实例；连接区分粒子路径 `particle` 与电信号 `signal`。两课的箔架都用单片规格 `foil_spec_um` 和片数 `foil_count` 设置，总厚度由两者相乘得到；源座与探测输出另行控制。仪器输入绑定探测输出，`--device` 使用读出仪器的实例 ID。`list alpha` 只显示该实验的详情。
@@ -16,11 +18,14 @@ python -m nuclemu gui
 
 `gui` 惰性调用 `launch(paths=...)`，默认启动本机 Web 服务并打开默认浏览器中的实验工作台。额外模块目录照常传给工作台；停止服务使用启动命令所在终端的 `Ctrl+C`。`list`、`validate` 和 `run` 不启动 Web 服务或浏览器，不需要图形窗口。
 
+`serve` 必须明确选择 `--gui` 或 `--no-gui`，漏选或同时使用两项会在启动前报用法错误。`serve --gui` 调用桌面服务窗口；窗口不可用时，终端报告原因并提示改用 `serve --no-gui`。`serve --no-gui` 在当前终端前台运行，就绪后打印实际回环 URL，不初始化 Tk、不自动打开浏览器，也不读取桌面的自动打开偏好。复制 URL 到浏览器即可进入工作台。终端 `Ctrl+C` 停止服务并释放端口，**不会代为保存实验**，应先在工作台缓存并下载需要带走的数据。启动失败写标准错误并返回非零状态。设置持久化、单实例唤回和原生保存退出仍属于后续批次。
+
 额外实验目录通过重复 `--path DIRECTORY` 指定，可放在子命令前或后。目录内非下划线开头的 `.py` 文件须导出公共 `Experiment` 类型的 `EXPERIMENT`。模块会执行 Python 代码，只加载自己信任的目录。重复实验 ID、无效定义及目录不存在均报错。
 
 ```powershell
 python -m nuclemu list --path D:\MyLabs
 python -m nuclemu gui --path D:\MyLabs
+python -m nuclemu --path D:\MyLabs serve --no-gui --path D:\OtherLabs
 ```
 
 ## 设置和多段采集

@@ -111,6 +111,9 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             route = urlsplit(self.path).path
             filename = None
             with self.server.app_lock:
+                if not self.server.accepting_requests:
+                    self.payload(503, {"error": "服务正在启动或关闭，请稍后重试。"})
+                    return
                 value = self.server.app.request(route, data)
                 if route == "/api/download":
                     filename, mime, body = value
@@ -128,22 +131,35 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
 
 
 def make_server(paths=(), *, port=0, directory=None, clock=monotonic):
+    if type(port) is not int or not 0 <= port <= 65535:
+        raise ValueError('Port must be 0 or an integer from 1 to 65535')
     definitions = discover(paths)
     store = Path.home() / ".nuclemu" / "workbench" if directory is None else directory
     server = ThreadingHTTPServer(("127.0.0.1", port), WorkbenchHandler)
-    server.app = Application(definitions, store, clock)
+    try:
+        server.app = Application(definitions, store, clock)
+    except BaseException:
+        server.server_close()
+        raise
     server.app_lock = RLock()
+    server.accepting_requests = True
     return server
 
 
 def launch(paths=(), *, port=0, open_browser=True, directory=None):
     """Open the local workbench and serve it until the user presses Ctrl+C."""
-    with make_server(paths, port=port, directory=directory) as server:
-        url = f"http://127.0.0.1:{server.server_port}/"
+    from .web_service import WorkbenchService
+    service = WorkbenchService(paths, port=port, directory=directory)
+    try:
+        service.start()
+        url = service.wait_ready()
         print(f"Nuclemu · {url}  (Ctrl+C to stop)", flush=True)
         if open_browser:
             webbrowser.open(url)
-        try:
-            server.serve_forever()
-        except KeyboardInterrupt:
+        while not service.join(.1):
             pass
+    except KeyboardInterrupt:
+        pass
+    finally:
+        service.stop(force=True)
+        service.join()
