@@ -30,7 +30,7 @@ Web整机操作绑定计数器组件的`devices`，以`start_group`、`stop_grou
 
 “保存”留存原始数据；记录页“导入”只加缓存；仪器“载入测量数据”才恢复目标当前数据并可续采。`.nuclemu`保留已留存快照、轮次和设置历史，未保存轮次只留元数据。逐窗序列必须经缓存、JSON/CSV和整场重开逐行核对，不能用仅一行累计值冒充可恢复的五窗数据。[文件交换](../exchange.md) · [公共采集语义](../measurement-workflow.md)
 
-已识别的历史整场文件按文件声明恢复原模型：旧单指数本底2 s⁻¹、无箔净率100 s⁻¹、半值面密度0.112 g/cm²；原共享输入或原独立两组的抽样关系均保留。重开及续采不静默切换到当前双成分响应，不重写旧读数。单项旧记录载入当前课程时，只把已存计数与曝光作为固定前缀，新增曝光按当前两组分别取样的模式采集；旧前缀不重新抽样，也不能据此宣称整份累计数据都是独立重复观测。
+已识别的历史整场文件按文件声明恢复原模型：旧单指数本底2 s⁻¹、无箔净率100 s⁻¹、半值面密度0.112 g/cm²；原共享输入或原独立两组的抽样关系均保留。重开及续采不静默切换到当前双成分响应，不重写旧读数。单项旧记录载入当前课程时，只把已存计数与曝光作为固定前缀，新增曝光按当前两组分别取样的模式采集；旧前缀不重新抽样，也不能据此宣称整份累计数据都是独立重复观测。历史单窗载入按文件设备恢复该窗，保留另一窗；新版整机文件按完整成员范围恢复，缺测侧清为空态，不造测量项。
 
 旧档缺逐窗明细时只保留已知累计前缀`window_prefix`的曝光与计数，不能拆造过去的窗。新窗接着前缀曝光累计。跨场载入时，旧`parts`的物理坐标与`origin`来源不改写为本场时刻；本场可以从0 s、已有3 s曝光起继续测量。整机载入只恢复测量数据，不自动换源或换箔；两窗分别保留其已存曝光、读数及来源。
 
@@ -44,12 +44,13 @@ Web整机操作绑定计数器组件的`devices`，以`start_group`、`stop_grou
 
 ### 一行填写示例的复验
 
-下面时间线取得30 s本底与5 s样品，显式装源以免依赖默认值。整数计数以当前课程模型实际输出为准，不沿用旧抽样方式的固定基线。分别保存后，使用公共文件接口导出并重开：
+下面时间线取得30 s本底与5 s样品，显式装源以免依赖默认值。整数计数以当前课程模型实际输出为准，不沿用旧抽样方式的固定基线。两次均整机保存并命名，沿用已有测量项和首项关联，使用公共文件接口导出并重开：
 
 ```python
 from nuclemu.catalog import discover
 from nuclemu.core import Session
-from nuclemu.exchange import capture_session, save_package, load_package, export_item, load_item
+from nuclemu.exchange import (capture_session, save_package, load_package,
+    native_snapshot_id, link_measurements, export_item, load_item)
 
 s = Session(discover()["beta"], seed=42)
 s.set_output("beta_detector", True)
@@ -57,23 +58,30 @@ group = ("counter", "counter_b")
 s.configure_group(group, duration_s=30, count_limit=None)
 s.start_group(group)
 s.advance(30)
-background = s.snapshot("counter")
-for device in group:
-    s.clear(device=device)
+background = s.snapshot_group(group)
+requests = s.begin_clear_group(group)
+s.finish_clear_group(group, {r.device: r.token for r in requests}, "discard")
 s.configure({"source_present": 1, "foil_spec_um": 100, "foil_count": 4})
 s.configure_group(group, duration_s=5, count_limit=None)
 s.start_group(group)
 s.advance(5)
-sample = s.snapshot("counter")
+sample = s.snapshot_group(group)
 doc = capture_session(s)
+identities = []
+for title, snapshots in (("本底", background), ("4片铝箔", sample)):
+    ids = [native_snapshot_id(doc, snapshot) for snapshot in snapshots]
+    identities.append(link_measurements(doc, ids, title, members=group))
 save_package("beta-example.nuclemu", doc)
 loaded = load_package("beta-example.nuclemu")
 assert loaded == doc
-for item in loaded["items"]:
+for identity in identities:
     for format in ("json", "csv"):
-        bundle = load_item(export_item(loaded, item["id"], format))
-print(background.counts, background.exposure_s, len(background.windows))
-print(sample.counts, sample.exposure_s, len(sample.windows))
+        bundle = load_item(export_item(loaded, identity, format))
+        member_ids = next(i["group"]["items"] for i in loaded["items"]
+                          if i["id"] == identity)
+        assert bundle["items"] == [i for i in loaded["items"] if i["id"] in member_ids]
+for snapshots in (background, sample):
+    print([(x.device, x.counts, x.exposure_s, len(x.windows)) for x in snapshots])
 ```
 
 本例使用内核受控时间推进，文件结果不代替浏览器按钮验收。

@@ -38,6 +38,7 @@ class RecordsFlowBrowserTests(unittest.TestCase):
         expect(self.page.locator('#confirm')).to_be_visible()
         expect(self.page.locator('#exit-message')).to_have_count(0)
         self.page.locator('#cancel').click()
+        expect(self.page.locator('#confirm')).not_to_be_visible()
         self.now=5
         expect(self.page.locator('.counter-window[data-device=counter] tbody tr')).to_have_count(5)
         self.page.locator('#stop').click()
