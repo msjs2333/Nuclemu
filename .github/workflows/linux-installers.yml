@@ -48,16 +48,19 @@ jobs:
             -v "$PWD/packaging/linux:/recipes:ro" -v "$PWD/build/linux-acceptance:/evidence" \
             nuclemu-acceptance bash /recipes/accept.sh /artifacts /samples /evidence
       - uses: actions/upload-artifact@v6
+        if: always()
         with:
           name: Nuclemu-linux-amd64
           path: |
             dist/release/*-1_amd64.deb*
             dist/release/*-1-linux-amd64.tar.gz*
           compression-level: 0
-          if-no-files-found: error
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: Linux-acceptance
-          path: build/linux-acceptance/
+          path: |
+            build/linux-acceptance/
+            build/linux-runtime/
           if-no-files-found: ignore

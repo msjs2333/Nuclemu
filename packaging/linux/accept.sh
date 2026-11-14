@@ -15,7 +15,7 @@ date -u +%FT%TZ > "$evidence/started"
 exec > >(tee "$evidence/acceptance.log") 2>&1
 uname -a
 cat /etc/os-release
-ldd --version | head -n 1
+ldd --version
 test "$(ls /sys/class/net)" = lo
 chown student:student "$evidence"
 student() { runuser -u student -- "$@"; }
@@ -59,13 +59,22 @@ for attempt in range(100):
 else:
     raise AssertionError('Menu-launched service did not become ready at saved port')
 PY
-window=$(xdotool search --sync --onlyvisible --name '^Nuclemu$' | head -n 1)
+window=''
+for attempt in $(seq 1 100); do
+    windows=$(xdotool search --onlyvisible --name '^Nuclemu$' 2>/dev/null || true)
+    if test -n "$windows"; then
+        read -r window <<< "$windows"
+        break
+    fi
+    sleep .1
+done
+test -n "$window"
 xdotool getwindowgeometry "$window" | tee "$evidence/menu-window.txt"
-scrot "$evidence/menu-launch.png"
+timeout 10 scrot "$evidence/menu-launch.png"
 # A second entry activates the same desktop, never a second listener/window.
 student /usr/bin/nuclemu serve --gui
 test "$(xdotool search --onlyvisible --name '^Nuclemu$' | wc -l)" = 1
-xdotool windowactivate --sync "$window"
+timeout 10 xdotool windowactivate --sync "$window"
 xdotool key --clearmodifiers alt+F4
 python3 - <<'PY'
 import socket,time
