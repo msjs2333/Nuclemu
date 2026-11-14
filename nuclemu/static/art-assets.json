@@ -1,0 +1,176 @@
+{
+  "schema_version": 1,
+  "license": "GPL-3.0",
+  "license_file": "LICENSE",
+  "documentation": "docs/art-assets.md",
+  "contributor_guide": "docs/art-contributing.md",
+  "status": "review-ready; no application binding included",
+  "exported_utc": "2026-11-12T17:08:17Z",
+  "coordinate_system": {
+    "origin": "top-left",
+    "x": "right",
+    "y": "down",
+    "bounds": "left, top, right-exclusive, bottom-exclusive",
+    "unit": "pixels on the full delivered image"
+  },
+  "assets": [
+    {
+      "id": "cover-alpha-energy-loss",
+      "revision": 1,
+      "path": "nuclemu/static/cover-alpha-energy-loss.webp",
+      "role": "course-cover",
+      "intended_topic": "alpha energy loss in aluminium",
+      "size_px": [
+        960,
+        600
+      ],
+      "format": "lossless WebP",
+      "mode": "RGB",
+      "bytes": 460066,
+      "sha256": "1ea6d43e8a5aa6822e1f8402c0ff126551d7639f823c435a1bd545c91c81ce1e",
+      "transparent": false,
+      "description": "A four-sphere alpha symbol enters a simplified aluminium structure. Qualitative illustration, not to scale.",
+      "creation_method": "Built-in ImageGen generation and revision; Pillow export",
+      "visual_inputs": [],
+      "sources": [
+        "https://www.arpansa.gov.au/understanding-radiation/what-is-radiation/ionising-radiation/alpha-particles",
+        "https://arxiv.org/abs/2002.01562",
+        "https://physics.nist.gov/PhysRefData/Star/Text/appendix.html"
+      ],
+      "limitations": [
+        "Not a crystallographic reconstruction or crystal-plane diagram",
+        "Particle, nucleon and atom sizes are not to scale",
+        "Trail and diffuse background encode no measured track, energy, range or electron density"
+      ],
+      "review_state": "Independent asset review completed; UI integration pending"
+    },
+    {
+      "id": "rig-counter-dual",
+      "revision": 1,
+      "path": "nuclemu/static/rig-counter-dual.webp",
+      "role": "equipment-cutout",
+      "intended_equipment": "one teaching counter with A and B windows",
+      "size_px": [
+        426,
+        480
+      ],
+      "format": "lossless WebP",
+      "mode": "RGBA",
+      "bytes": 111598,
+      "sha256": "1b40f7ff7540923829505b04b473c1c6929090f9a3eb5c80aaed903956474579",
+      "transparent": true,
+      "alpha_range": [
+        0,
+        255
+      ],
+      "body_bbox_px_alpha_gt_180": [
+        11,
+        46,
+        399,
+        426
+      ],
+      "ground_y_px": 426,
+      "display_inset_polygons_px": {
+        "A": [
+          [
+            58,
+            158
+          ],
+          [
+            155,
+            159
+          ],
+          [
+            155,
+            232
+          ],
+          [
+            58,
+            231
+          ]
+        ],
+        "B": [
+          [
+            181,
+            159
+          ],
+          [
+            276,
+            160
+          ],
+          [
+            276,
+            233
+          ],
+          [
+            181,
+            232
+          ]
+        ]
+      },
+      "display_regions_status": "Conservative visually measured interior regions; text overlays have not been integrated or tested",
+      "connection_anchors": null,
+      "connection_anchors_status": "No physical connectors drawn; any schematic attachment anchors must be chosen in UI integration",
+      "description": "A single light-grey teaching counter with blank A and B display windows.",
+      "creation_method": "Built-in ImageGen edit and revision of the project counter; Pillow frame/size export preserving generated alpha",
+      "visual_inputs": [
+        {
+          "path": "nuclemu/static/rig-counter.webp",
+          "role": "project equipment geometry and visual style reference"
+        }
+      ],
+      "sources": [],
+      "limitations": [
+        "Fictional teaching housing, not a specified commercial instrument",
+        "No physical dimensions or electrical topology specified",
+        "Unmarked knobs do not establish implemented controls",
+        "Blank display windows contain no measurements"
+      ],
+      "review_state": "Independent asset review completed; UI integration pending"
+    },
+    {
+      "id": "cover-beta-absorption",
+      "revision": 1,
+      "path": "nuclemu/static/cover-beta-absorption.webp",
+      "role": "course-cover",
+      "intended_topic": "beta-minus transmission through aluminium absorbers",
+      "size_px": [
+        960,
+        600
+      ],
+      "format": "lossless WebP",
+      "mode": "RGB",
+      "bytes": 444698,
+      "sha256": "f0af671316849722e977cdb08507754ddbe3295857dc296b4d18782881494794",
+      "transparent": false,
+      "exported_utc": "2026-11-14T07:48:27Z",
+      "description": "Single-electron symbols pass through aluminium absorber layers; the forward-going stream becomes sparser. Qualitative cross-scale illustration, not to scale.",
+      "creation_method": "Built-in ImageGen generation using the alpha course cover for visual style; Pillow size export",
+      "visual_inputs": [
+        {
+          "path": "nuclemu/static/cover-alpha-energy-loss.webp",
+          "role": "material, lighting and palette reference only"
+        }
+      ],
+      "sources": [
+        "https://www.nrc.gov/education-regulatory-research/the-student-corner/unit-1-radiation",
+        "https://physics.nist.gov/PhysRefData/Star/Text/ESTAR.html"
+      ],
+      "limitations": [
+        "Foil spacing, thickness and electron sizes are schematic",
+        "Drawn particle counts do not encode transmission probability or measured count rate",
+        "Streaks and curved paths are illustrative, not simulated events or scattering angles",
+        "The cover does not specify an attenuation law, stopping range or electron energy",
+        "Visible gaps and curves do not specify motion or scattering locations in air",
+        "Visible gaps and curves do not specify motion or scattering locations in air"
+      ],
+      "recommended_display": {
+        "aspect_ratio": "16:10",
+        "object_fit": "contain",
+        "crop": "whole image"
+      },
+      "review_state": "Independent asset review completed; UI integration pending"
+    }
+  ],
+  "updated_utc": "2026-11-14T07:48:27Z"
+}

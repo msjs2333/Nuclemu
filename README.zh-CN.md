@@ -36,5 +36,6 @@ python -m nuclemu run beta --device counter --enable-output beta_detector --step
 | [交付规划](docs/plan.md) | 工作台的范围、交付顺序和完成条件 |
 | [框架与接口](docs/architecture.md) | 实验模块、仿真时间、仪器面板和测量数据 |
 | [12 个实验](docs/experiments.md) | 每项实验的物理问题、测量设计与验收要求 |
+| [美术贡献指南](docs/art-contributing.md) · [资产说明](docs/art-assets.md)（英文） | 科学插画、设备图的风格、来源与验收要求 |
 
 本项目采用 [GNU 通用公共许可证第 3 版](LICENSE)。

@@ -27,7 +27,7 @@ The workbench and CLI share the same simulation clock, instrument models and mea
 
 ## Documentation
 
-The guides and design documents are in Chinese.
+Most experiment guides and design documents are in Chinese. The artwork contributor guide and asset notes are in English.
 
 | Document | Contents |
 |---|---|
@@ -38,5 +38,6 @@ The guides and design documents are in Chinese.
 | [Delivery plan](docs/plan.md) | Scope, delivery sequence and acceptance criteria |
 | [Architecture and interfaces](docs/architecture.md) | Experiment modules, simulation time, instrument panels and measurement data |
 | [Experiment catalogue](docs/experiments.md) | Physics questions, measurement designs and requirements for all 12 experiments |
+| [Artwork contribution](docs/art-contributing.md) · [Asset notes](docs/art-assets.md) | Scientific illustration style, equipment cutouts, provenance and review |
 
 Nuclemu is licensed under the [GNU General Public License, version 3](LICENSE).
