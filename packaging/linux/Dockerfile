@@ -1,6 +1,6 @@
 FROM debian:bookworm-slim AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-venv python3-tk binutils dpkg-dev ca-certificates \
+    python3 libpython3.11 python3-venv python3-tk binutils dpkg-dev ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 RUN python3 -m venv /opt/freezer && /opt/freezer/bin/pip install \
     PyInstaller==6.20.0 pyinstaller-hooks-contrib==2026.10

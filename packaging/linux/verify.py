@@ -107,7 +107,9 @@ def main():
         stdout, stderr = process.communicate(timeout=10)
         assert process.returncode == 0, (process.returncode, stderr)
         with socket.socket() as listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             listener.bind(('127.0.0.1', port))
+            listener.listen()
         report = dict(passed=True, cli=cli, samples=measurements, assets=len(assets),
                       interrupt_exit=process.returncode, port_rebound=port)
         (args.output / 'report.json').write_text(json.dumps(report, indent=2))
