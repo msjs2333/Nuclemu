@@ -25,17 +25,24 @@ jobs:
       - name: Prepare Debian 12 build and test images
         run: |
           docker build --target builder -t nuclemu-builder -f packaging/linux/Dockerfile packaging/linux
+          docker build --target runtime -t nuclemu-runtime -f packaging/linux/Dockerfile packaging/linux
           docker build --target acceptance -t nuclemu-acceptance -f packaging/linux/Dockerfile packaging/linux
       - name: Build previous and current package revisions
         run: |
+          mkdir -p build/linux-runtime build/linux-acceptance
           for revision in 0 1; do
             docker run --rm --network none -v "$PWD:/src" \
               -e NUCLEMU_SOURCE_SHA="$(git rev-parse HEAD)" nuclemu-builder \
               python packaging/linux/build.py --revision "$revision"
           done
+      - name: Run without system Python, a display or a network
+        run: |
+          docker run --rm --network none \
+            -v "$PWD/dist/release:/artifacts:ro" -v "$PWD/packaging/linux:/recipes:ro" \
+            -v "$PWD/build/linux-runtime:/evidence" \
+            nuclemu-runtime bash /recipes/runtime-smoke.sh /artifacts /evidence
       - name: Install, upgrade and uninstall without a network
         run: |
-          mkdir -p build/linux-acceptance
           docker run --rm --network none \
             -v "$PWD/dist/release:/artifacts:ro" -v "$PWD/packaging/samples:/samples:ro" \
             -v "$PWD/packaging/linux:/recipes:ro" -v "$PWD/build/linux-acceptance:/evidence" \

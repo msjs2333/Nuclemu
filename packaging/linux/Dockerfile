@@ -7,12 +7,17 @@ RUN python3 -m venv /opt/freezer && /opt/freezer/bin/pip install \
 ENV PATH="/opt/freezer/bin:${PATH}"
 WORKDIR /src
 
-FROM debian:bookworm-slim AS acceptance
+FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libc6 libx11-6 libxext6 libxft2 libxrender1 libfontconfig1 libfreetype6 \
-    libexpat1 zlib1g xdg-utils fonts-noto-cjk xvfb xauth openbox xdotool \
-    scrot libgtk-3-bin firefox-esr python3 ca-certificates dbus-x11 dbus-daemon \
-    desktop-file-utils procps \
+    libexpat1 zlib1g \
     && rm -rf /var/lib/apt/lists/*
 RUN useradd --create-home --uid 1000 student
 WORKDIR /tmp
+
+FROM runtime AS acceptance
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xdg-utils fonts-noto-cjk xvfb xauth openbox xdotool \
+    scrot libgtk-3-bin firefox-esr python3 ca-certificates dbus-x11 dbus-daemon \
+    desktop-file-utils procps \
+    && rm -rf /var/lib/apt/lists/*
