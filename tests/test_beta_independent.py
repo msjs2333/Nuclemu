@@ -59,7 +59,7 @@ class IndependentBetaTests(unittest.TestCase):
         for key, value in (('response', 'Different physical response'), ('channels', 2), ('unit', 'keV')):
             bad = deepcopy(info)
             bad['outputs'][0][key] = value
-            self.assertIs(beta.restore_definition(bad), beta.EXPERIMENT)
+            self.assertIs(beta.restore_definition(bad), NotImplemented)
             s = Session(old, seed=187)
             doc = capture_session(s)
             doc['definition'] = bad

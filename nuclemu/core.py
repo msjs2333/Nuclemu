@@ -8,7 +8,7 @@ from decimal import Decimal
 from math import isfinite
 from random import Random
 import re
-from types import MappingProxyType
+from types import MappingProxyType, NotImplementedType
 
 
 Number = int | float
@@ -152,7 +152,7 @@ class Experiment:
     normalize_settings: Callable[[Settings], Settings] | None = None
     particle_flow: Callable[[Settings], Mapping] | None = None
     short_code: str | None = None
-    restore_definition: Callable[[Mapping], "Experiment"] | None = None
+    restore_definition: Callable[[Mapping], Experiment | NotImplementedType] | None = None
 
     def __post_init__(self) -> None:
         if not self.id or not self.title or not callable(self.model):

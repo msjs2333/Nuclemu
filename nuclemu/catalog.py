@@ -18,6 +18,8 @@ def resolve_saved_experiment(current: Experiment, saved_info: dict) -> Experimen
     if saved_info.get("id") != current.id:
         raise ValueError("Saved definition belongs to a different experiment")
     restored = current if current.restore_definition is None else current.restore_definition(saved_info)
+    if restored is NotImplemented:
+        restored = current
     if not isinstance(restored, Experiment) or restored.id != current.id:
         raise ValueError("The course must restore an Experiment with the same id")
     return restored

@@ -72,9 +72,9 @@ def sample_shared_counts(settings, start_s, end_s, rng):
 
 
 def restore_definition(saved):
-    """Recognize only this course's former one-output counter bindings."""
+    """Select built-in shared history; otherwise retain the registered course."""
     if saved.get('id') != 'beta':
-        return EXPERIMENT
+        return NotImplemented
     outputs = saved.get('outputs', ())
     devices = saved.get('devices', ())
     parameters = {p['key']: p for p in saved.get('parameters', ())}
@@ -88,10 +88,10 @@ def restore_definition(saved):
                    or d.get('channels') != 1 or d.get('input') != DETECTOR_OUTPUT for d in devices)
             or set(parameters) not in ({'source_present', 'foil_count'},
                                        {'source_present', 'foil_count', 'foil_spec_um'})):
-        return EXPERIMENT
+        return NotImplemented
     for p in EXPERIMENT.parameters:
         if p.key in parameters and (parameters[p.key].get('minimum'), parameters[p.key].get('maximum')) != (p.minimum, p.maximum):
-            return EXPERIMENT
+            return NotImplemented
     ids = tuple(d['id'] for d in devices)
     primary = 'counter' if 'counter' in ids else ids[0]
     parts = tuple(replace(p, parameters=tuple(key for key in p.parameters if key in parameters),

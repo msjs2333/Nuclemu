@@ -25,6 +25,11 @@ class SavedExperimentTests(unittest.TestCase):
         self.assertIs(resolve_saved_experiment(current, describe(old)), old)
         self.assertNotIn('restore_definition', describe(current))
 
+    def test_explicit_no_historical_match_keeps_the_registered_definition(self):
+        current = replace(self.course, title='Current teaching course',
+                          restore_definition=lambda info: NotImplemented)
+        self.assertIs(resolve_saved_experiment(current, describe(current)), current)
+
     def test_wrong_experiment_or_invalid_callback_result_is_rejected(self):
         with self.assertRaises(ValueError):
             resolve_saved_experiment(self.course, {'id': 'other'})
