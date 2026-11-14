@@ -22,5 +22,7 @@ analysis = Analysis(
 )
 archive = PYZ(analysis.pure)
 executable = EXE(archive, analysis.scripts, [], exclude_binaries=True,
+                 icon=str(root / "nuclemu" / "static" / "nuclemu.ico"),
+                 manifest=str(root / "packaging" / "windows" / "nuclemu.manifest"),
                  name="nuclemu", console=True, upx=False)
 COLLECT(executable, analysis.binaries, analysis.datas, name="Nuclemu", upx=False)

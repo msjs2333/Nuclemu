@@ -24,3 +24,9 @@ dist\Nuclemu\nuclemu.exe validate
 ```
 
 脚本用包内 CLI 保存 3 s 的 α 谱及两点刻度，再保存相同曝光的 β 双窗读数。它从新工作目录启动 HTTP 服务，读取两课目录和工作台资源，并把文件载入服务。α 逐道对照 1,024 个计数；β 分别对照 A 的三个完整窗、B 的一个部分窗和两边总计数。`AEL.nuclemu`、`BABS.nuclemu` 可继续用于浏览器、其他平台和将来安装版的交叉验证。端口释放、原生窗口和浏览器下载需分别验收。
+
+### 检查桌面缩放
+
+从目录包启动 `serve --gui`，在 Windows 显示设置中核对该屏的缩放比例。检查中文状态、完整地址、按钮边界和键盘焦点。若有两块不同缩放的显示器，将同一个窗口拖到另一屏，再拖回来。字号和间距应随所在屏幕重算，回到原屏后尺寸应恢复；地址、复制、打开和关闭操作在两屏上都应可用。
+
+Windows 可执行文件在启动清单中请求每显示器 DPI 感知。发布验收需实际运行冻结后的窗口，并记录系统返回的窗口 DPI。150% 对应 144 DPI，200% 对应 192 DPI。[Windows 的 DPI 声明](https://learn.microsoft.com/windows/win32/hidpi/setting-the-default-dpi-awareness-for-a-process)
