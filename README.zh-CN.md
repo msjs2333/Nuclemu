@@ -8,6 +8,8 @@ Nuclemu 是面向本科实验课的本地核物理仿真软件。当前开发版
 
 ## 开始使用
 
+0.0.1 桌面包正在验证中。候选包用法、已验证系统、升级与卸载见[安装与启动](docs/installation.zh-CN.md)。
+
 在仓库目录使用 Python 3.11 或更高版本，运行以下命令，在浏览器中打开本地工作台：
 
 ```sh
@@ -29,6 +31,7 @@ python -m nuclemu run beta --device counter --enable-output beta_detector --step
 
 | 文档 | 内容 |
 |---|---|
+| [安装与启动](docs/installation.zh-CN.md) | 桌面候选包、源码启动、关闭前保存、升级与卸载 |
 | [图形实验台](docs/gui.md) · [命令行](docs/cli.md) | 采集、刻度、导出以及命令行可选的扣本底操作 |
 | [学生手册](docs/student.md) · [α 能损](docs/alpha.md) · [β 吸收](docs/beta.md) | 实验步骤、空白记录表与实测数据处理 |
 | [教师用书](docs/teacher/README.md) · [α 能损](docs/teacher/alpha.md) · [β 吸收](docs/teacher/beta.md) | 备课、能量刻度与计数不确定度的课堂讨论 |
