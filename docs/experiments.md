@@ -2,6 +2,27 @@
 
 以下是计划实现的实验。每项给出学生能从读数推断的物理关系、取得读数的方法，以及判定仿真是否支持该推断的要求。各项共用实验室时钟与仪器接口。能量刻度、选区和拟合随相应测量使用。[框架设计](architecture.md)
 
+## 实验缩写与文件名
+
+每门内置实验有一个稳定的英文缩写，供文件命名和课程打包共用。前两门已接入工作台的课程是 α 能损和 β 吸收。其余缩写预留给下列课程。
+
+| 缩写 | 实验 | 英文含义 |
+|---|---|---|
+| RCS | 放射性计数统计 | Radioactive Counting Statistics |
+| AEL | α 能量损失 | Alpha Energy Loss |
+| BABS | β 吸收 | Beta Absorption |
+| XSA | X 射线能谱与衰减 | X-ray Spectroscopy and Attenuation |
+| AHL | 活化与半衰期 | Activation and Half-Life |
+| PALS | 正电子湮没寿命谱 | Positron Annihilation Lifetime Spectroscopy |
+| MOSS | 穆斯堡尔透射谱 | Mössbauer Spectroscopy |
+| MUON | 宇宙线 μ 子寿命与角分布 | Cosmic-ray Muons |
+| COMP | 康普顿散射 | Compton Scattering |
+| RUTH | 卢瑟福散射 | Rutherford Scattering |
+| REL | 相对论电子的动量与动能 | Relativistic Electrons |
+| GSC | 闪烁探测器的 γ 射线测量 | Gamma Scintillation Counting |
+
+默认下载名以实验缩写和本机保存时刻开头，日期、时分秒、微秒依次排列。例如 `AEL_20261112-143205-123456.nuclemu` 是一份 α 整场实验，`BABS_20261112-143205-123456_records.zip` 是一次 β 批量导出。单项数据在时间后附记录说明，保留 CSV 或 JSON 扩展名。载入时根据文件内容识别实验和数据，学生可自行改名。命令行显式指定的输出路径优先。
+
 ## 1. 放射性计数统计
 
 **核心逻辑**　在稳定源强、固定几何且死时间可忽略时，等长时间窗内的独立计数可用泊松分布描述。

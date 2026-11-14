@@ -1,3 +1,5 @@
 include README.zh-CN.md docs/*.md docs/vision/*.md
+include docs/teacher/*.md docs/technical/*.md
+include examples/*.py examples/courses/*.py
 include frontend/package.json frontend/package-lock.json frontend/tsconfig.json frontend/vite.config.js frontend/index.html
 recursive-include frontend/src *.ts *.vue

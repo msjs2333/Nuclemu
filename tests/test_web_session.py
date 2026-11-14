@@ -13,6 +13,7 @@ from nuclemu.catalog import discover
 from nuclemu.core import Device, Experiment, Parameter, Session
 from nuclemu.results import collect
 from nuclemu.web_session import Application
+from tests.legacy_web_fixture import legacy_course
 
 
 class Clock:
@@ -31,10 +32,26 @@ class WebSessionTests(unittest.TestCase):
         self.definitions = discover()
         self.app = Application(self.definitions, self.folder.name, self.clock)
 
+    def use_legacy(self, name):
+        definition = legacy_course(name)
+        self.definitions = {definition.id: definition}
+        self.app = Application(self.definitions, self.folder.name, self.clock)
+        return definition.id
+
     def open(self, name="beta", **kwargs):
-        return self.app.open(dict(experiment=name, seed=187, **kwargs))
+        state = self.app.open(dict(experiment=name, seed=187, **kwargs))
+        for output in self.app.lab.work.session.experiment.outputs:
+            self.action("output", output=output.id, enabled=True)
+        return state
 
     def action(self, action, **kwargs):
+        work = self.app.lab.work
+        if work.session.experiment.outputs and action in ("start", "analysis", "select"):
+            kwargs.setdefault("device", work.device.id)
+        if action == "start" and work.session.experiment.outputs:
+            instrument = work.session.instrument(work.device.id)
+            if instrument.stop_reason is not None:
+                work.clear(device=work.device.id)
         if action in ("continue", "discard") or (action == "save" and kwargs.get("exit") is True):
             if not self.app.lab.frozen:
                 self.action("freeze")
@@ -51,7 +68,7 @@ class WebSessionTests(unittest.TestCase):
         return self.app.state(session=self.app.lab.id)
 
     def test_failed_save_at_14_5_of_60_can_resume_original_rng_and_endpoint(self):
-        self.open("alpha")
+        self.open(self.use_legacy("alpha"))
         self.action("start", duration=60)
         self.clock.now = 14.5
         self.action("freeze")
@@ -76,15 +93,15 @@ class WebSessionTests(unittest.TestCase):
         self.action("continue")
         self.clock.now += 45.5
         final = self.app.state()
-        reference = Session(self.definitions["alpha"], seed=187)
+        reference = Session(self.definitions["legacy_alpha"], seed=187)
         reference.start(60)
         reference.advance(60)
         self.assertEqual(final["product"], collect(reference.experiment, reference.records, 187))
         self.assertFalse(final["running"])
         self.assertEqual(final["time_s"], 60)
 
-    def test_successful_save_exit_includes_partial_exposure_and_removes_draft(self):
-        self.open("alpha")
+    def test_legacy_successful_save_exit_removes_draft(self):
+        self.open(self.use_legacy("alpha"))
         self.action("start", duration=60)
         self.clock.now = 14.5
         self.action("freeze")
@@ -97,12 +114,47 @@ class WebSessionTests(unittest.TestCase):
         app = Application(self.definitions, self.folder.name, self.clock)
         restored = app.open({"archive": catalog["archives"][0]["id"]})
         self.assertEqual(restored["product"], expected["product"])
+        self.assertEqual(restored["product"]["segments"][-1]["end_s"], 14.5)
         self.assertEqual(restored["time_s"], 14.5)
         self.assertTrue(restored["readonly"])
         self.assertFalse(restored["dirty"])
 
-    def test_normal_save_uses_only_closed_windows_and_counts_do_not_regress(self):
+    def test_course_save_requires_download_and_never_writes_or_removes_store(self):
         self.open("alpha")
+        self.action("start", duration=60)
+        self.clock.now = 14.5
+        self.action("freeze")
+        self.assertEqual(self.app.lab.document(finish=True)["product"]["segments"][-1]["end_s"], 14)
+        with patch.object(self.app.store, "write", side_effect=AssertionError("Unexpected archive write")), \
+             patch.object(self.app.store, "remove", side_effect=AssertionError("Unexpected draft removal")):
+            with self.assertRaisesRegex(ValueError, "下载整场"):
+                self.action("save", exit=True)
+            self.assertEqual(self.app.catalog()["drafts"], [])
+            self.assertEqual(self.app.catalog()["archives"], [])
+            self.assertIsNone(self.action("discard"))
+        self.assertEqual(self.app.catalog()["drafts"], [])
+        self.assertEqual(self.app.catalog()["archives"], [])
+
+    def test_legacy_save_exit_includes_partial_exposure(self):
+        definition = Experiment("legacy", "Legacy", "", (),
+            (Device("counter", "counter", "Counter"),),
+            lambda settings, start, end, rng: {"counter": (int((end - start) * 10),)})
+        self.definitions = {"legacy": definition}
+        self.app = Application(self.definitions, self.folder.name, self.clock)
+        self.open("legacy")
+        self.action("start", duration=60)
+        self.clock.now = 14.5
+        self.action("freeze")
+        expected = deepcopy(self.app.lab.document(finish=True))
+        self.assertEqual(expected["product"]["segments"][-1]["end_s"], 14.5)
+        self.action("save", exit=True)
+        restored = Application(self.definitions, self.folder.name, self.clock).open(
+            {"archive": self.app.catalog()["archives"][0]["id"]})
+        self.assertEqual(restored["product"], expected["product"])
+        self.assertEqual(restored["measurement_end_s"], 14.5)
+
+    def test_normal_save_uses_only_closed_windows_and_counts_do_not_regress(self):
+        self.open(self.use_legacy("alpha"))
         self.action("start", duration=2)
         self.clock.now = 0.75
         self.app.state()
@@ -128,7 +180,7 @@ class WebSessionTests(unittest.TestCase):
         saved_counts = closed["segments"][0]["readings"]["mca"]
         final_counts = finished["product"]["segments"][0]["readings"]["mca"]
         self.assertTrue(all(after >= before for before, after in zip(saved_counts, final_counts)))
-        reference = Session(self.definitions["alpha"], seed=187)
+        reference = Session(self.definitions["legacy_alpha"], seed=187)
         reference.start(2)
         reference.advance(2)
         self.assertEqual(finished["product"], collect(reference.experiment, reference.records, 187))
@@ -137,7 +189,7 @@ class WebSessionTests(unittest.TestCase):
         self.assertEqual(self.app.lab.state()["unsaved"]["measurements"][0]["end_s"], 2)
 
     def test_restart_preserves_two_backgrounds_selected_reference_and_net_rate(self):
-        self.open()
+        self.open(self.use_legacy("beta"))
         self.acquire(2.5, source_present=0)
         self.acquire(4.25)
         self.acquire(3.5, source_present=1, foil_count=4)
@@ -169,7 +221,8 @@ class WebSessionTests(unittest.TestCase):
         old = self.action("select", device="left", index=0)
         self.assertEqual(old["settings"]["gain"], 2)
         self.assertEqual(old["spectrum_settings"]["gain"], 1)
-        self.assertEqual(old["readout"]["energy_MeV"], 1)
+        calculated = self.action('calculate_roi', device='left', roi=[0, 2], roi_context=old['roi_context'])
+        self.assertEqual(calculated['roi_result']['readout']["energy_MeV"], 1)
         self.action("device", device="right")
         self.action("analysis", device="right", roi=[2, 4], reference=1)
         self.action("select", device="right", index=1)
@@ -185,10 +238,12 @@ class WebSessionTests(unittest.TestCase):
         switched = app.request("/api/action", dict(session=app.lab.id, action="device", device="left"))
         self.assertEqual(switched["analysis"]["roi"], [0, 2])
         self.assertEqual(switched["selected"], 0)
-        self.assertEqual(switched["readout"]["energy_MeV"], 1)
+        calculated = app.request('/api/action', dict(session=app.lab.id, action='calculate_roi',
+            device='left', roi=[0, 2], roi_context=switched['roi_context']))
+        self.assertEqual(calculated['roi_result']['readout']["energy_MeV"], 1)
 
     def test_refresh_does_not_close_gate_and_restart_draft_reports_completed_endpoint(self):
-        self.open()
+        self.open(self.use_legacy("beta"))
         self.action("start", duration=60)
         self.clock.now = 14.5
         state = self.app.state()
@@ -206,7 +261,7 @@ class WebSessionTests(unittest.TestCase):
         self.assertEqual(recovered["unsaved"]["measurements"][0]["index"], 0)
 
     def test_failed_draft_write_reports_old_recovery_time_then_retries(self):
-        self.open()
+        self.open(self.use_legacy("beta"))
         self.acquire(1)
         self.action("start", duration=2)
         self.clock.now += 1
@@ -219,7 +274,7 @@ class WebSessionTests(unittest.TestCase):
         self.assertIsNone(state["draft_error"])
 
     def test_export_subset_keeps_unconfirmed_download_and_other_products_unsaved(self):
-        self.open("alpha")
+        self.open(self.use_legacy("alpha"))
         self.acquire(1)
         self.acquire(1)
         self.action("calibrate", points=[0, 0, 1000, 6])
@@ -254,12 +309,13 @@ class WebSessionTests(unittest.TestCase):
         self.assertFalse(self.app.lab.work.session.running)
 
     def test_exports_checkpoint_the_windows_closed_by_the_delivery_request(self):
+        legacy = self.use_legacy("beta")
         for route in ("/api/export", "/api/download"):
             with self.subTest(route=route):
                 folder = Path(self.folder.name) / route.rsplit("/", 1)[-1]
                 self.clock.now = 0
                 self.app = Application(self.definitions, folder, self.clock)
-                self.open()
+                self.open(legacy)
                 self.acquire(1)
                 self.action("start", duration=2)
                 self.clock.now = 2
@@ -272,7 +328,7 @@ class WebSessionTests(unittest.TestCase):
                 self.assertEqual(recovered["product"], self.app.lab.work.product())
 
     def test_pagehide_checkpoint_does_not_freeze_or_cancel_an_explicit_confirmation(self):
-        self.open()
+        self.open(self.use_legacy("beta"))
         self.action("start", duration=60)
         self.clock.now = 14.5
         leaving_page = self.action("suspend")
@@ -308,8 +364,8 @@ class WebSessionTests(unittest.TestCase):
         self.action("start", duration=2)
         self.clock.now += 1
         delta = self.app.state(product_cursor=cursor)
-        self.assertEqual(delta["product_delta"]["start"], 2)
-        self.assertEqual(len(delta["product_delta"]["segments"]), 2)
+        self.assertEqual(delta["product_delta"]["start"], 3)
+        self.assertEqual(len(delta["product_delta"]["segments"]), 1)
         for bad in (None, "bad", "other:0:0", f"{self.app.lab.id}:999:999"):
             self.assertIn("product", self.app.state(product_cursor=bad))
 
@@ -331,7 +387,7 @@ class WebSessionTests(unittest.TestCase):
         self.assertEqual(quiet["product_delta"], {"start": 3, "segments": []})
 
     def test_archive_transaction_rolls_back_all_changed_segments_and_draft_removal(self):
-        self.open()
+        self.open(self.use_legacy("beta"))
         self.acquire(1)
         self.acquire(1)
         self.action("save")
@@ -357,6 +413,9 @@ class WebSessionTests(unittest.TestCase):
         self.clock.now += 3
         self.app.state()
         state = self.action("analysis", background=0)
+        self.assertIsNone(state["readout"])
+        self.assertIn("同一段曝光", state["readout_error"])
+        state = self.action("select", index=1)
         self.assertIn("net_rate", state["readout"])
         self.assertEqual(len(state["product"]["segments"]), 2)
         self.assertEqual(state["product"]["segments"][0]["acquisition"],
@@ -367,13 +426,13 @@ class WebSessionTests(unittest.TestCase):
             self.action("analysis", background=1)
 
     def test_calibration_without_measurements_uses_archived_current_settings(self):
-        base = self.definitions["alpha"]
+        base = legacy_course("alpha")
         definition = replace(base, parameters=(*base.parameters, Parameter("gain", "Gain", "", 1, 1, 2)),
                              devices=(replace(base.devices[0], calibration_parameters=("gain",)),),
                              components=(), connections=())
-        self.definitions = {"alpha": definition}
+        self.definitions = {definition.id: definition}
         self.app = Application(self.definitions, self.folder.name, self.clock)
-        self.open("alpha")
+        self.open(definition.id)
         self.action("configure", values={"gain": 2})
         self.action("calibrate", points=[0, 0, 1000, 6])
         self.action("save", exit=True)

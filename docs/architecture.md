@@ -14,29 +14,41 @@
 
 ## 时间与数值模型
 
-**信号分接。** 将一个理想探测器的输出无损分接到两台计数器，使用完全相同的采集窗，且两路均无独立丢失。两台计数器读取同一批脉冲，每个窗的计数应逐次相等。验收时逐窗比较两列整数；分别按同一平均率抽样只能复现各路的统计分布。
+**理想信号分接的内核测试。** 此处规定已知接线的测试用例。β 教学双窗另采用同工况分别取样的虚拟重复观测，按[课程操作验收](workbench-acceptance.md)逐路核对，不属于此真实共享输入测试。 将一个理想探测器的输出无损分接到两台计数器，使用完全相同的采集窗，且两路均无独立丢失。两台计数器读取同一批脉冲，每个窗的计数应逐次相等。验收时逐窗比较两列整数；分别按同一平均率抽样只能复现各路的统计分布。
 
 每场实验有一个实验室坐标时刻 `t_lab`，由会话内核推进。变速改变墙钟等待时间；模型可在同一物理区间内按窗积分、按道抽样或处理有时间关联的事件。世界暂停时状态冻结，关采集门只停止记录，已活化样品仍会衰变。
 
 ### 图形和命令行的公共调用
 
-两个入口由 `discover(paths)` 取得实验定义，再创建 `Session(experiment, seed)`。命令行可以一次推进整段曝光，图形端可以分多次推进。设置值、开始与停止操作都落在实验室时钟上。下面是现行 Python 接口的示例，两次独立调用 `start` 得到两份可分别选择的谱：
+两个入口由 `discover(paths)` 取得实验定义，再创建 `Session(experiment, seed)`。命令行可以一次推进整段曝光，图形端可以分多次推进。设置值、开始与停止操作都落在实验室时钟上。下面用 α 谱仪核对同轮暂停续采与清空后的新轮次：
 
 ```python
 from nuclemu.catalog import discover
 from nuclemu.core import Session
-from nuclemu.results import MeasurementView
-
 session = Session(discover()["alpha"], seed=187)
-view = MeasurementView(session)
-for seconds in (2.25, 1.25):
-    session.start(duration_s=seconds)
-    session.advance(seconds)
-first, second = view.product()["segments"]
-assert (first["acquisition"], second["acquisition"]) == (1, 2)
+session.set("source_present", 1)
+session.set_output("alpha_detector", True)
+session.start(device="mca")
+first_cycle = session.instrument("mca").cycle
+session.advance(3)
+session.stop(device="mca")
+first = session.snapshot("mca")
+session.advance(7)  # 探测器仍开启；暂停期间不增加谱仪曝光
+session.start(device="mca")
+assert session.instrument("mca").cycle == first_cycle + 1
+session.advance(2)
+session.stop(device="mca")
+continued = session.snapshot("mca")
+assert first.acquisition == continued.acquisition == 1
+assert (first.exposure_s, continued.exposure_s) == (3, 5)
+session.clear(device="mca")
+session.start(device="mca")
+assert session.instrument("mca").acquisition == 2
+session.stop(device="mca")
+session.set_output("alpha_detector", False)
 ```
 
-示例中的 `acquisition` 是现行接口为每次 `start` 分配的采集序号。下一轮工作台按设备记录测量轮次。一段连续开门时间构成一个门周期；同一轮次可以包含多个门周期。暂停结束当前门周期，按「继续」重新开门并沿用轮次，轮次曝光累加各开门区间。换箔等有效工况变更在同一轮次内分段。清空后开始或重开文件后开始，才建立新的测量轮次。[采集与轮次验收](measurement-workflow.md)
+`acquisition` 是设备的测量轮次，`cycle` 区分连续开门周期。同一轮次可包含多个门周期；暂停后继续沿用轮次和已有读数，每次实际重新开门递增 `cycle`，已在采集时重复开始不会另开周期。轮次曝光只累加开门区间，换箔等工况变更在同轮内分段。首次采集、清空后开始或重开文件后从零开始，才建立新轮次；显式载入测量数据的前缀续采规则见[文件交换](exchange.md)。[采集与轮次验收](measurement-workflow.md)
 
 每个测量段保留起止时刻、工况、设备实例 ID 和整数读数。程序可用 `collect` 批量整理记录；持续更新的面板用 `MeasurementView.product()` 读取同样的结构。这个视图仅合并新封闭的测量窗，调用方按只读方式使用。选择仪器、改变横轴和导出都使用已有读数。谱的 `roi_centroid` 按所选道区（含两端）计算计数加权峰心，零计数区没有可报告的峰心。
 
@@ -55,7 +67,7 @@ assert (first["acquisition"], second["acquisition"]) == (1, 2)
 
 当前本地目录按单个 Python 文件加载实验定义。可从已安装的 Python 包导入共用模型，并以模块的 `__file__` 定位旁边的参考数据。目录本身不会加入 Python 的模块搜索路径；多文件课程库可安装为包，再由目录中的实验定义导入。
 
-Web 目录读取 `Experiment` 的 `question` 和 `guide` 展示测量问题与步骤。各部件通过 `Component.parameters` 绑定同名模型参数，通过 `Component.device` 绑定读出仪器的实例 ID。同一探测器和仪器面板可以指向同一个读出实例。按装置顺序声明部件，用 `Connection` 明确照射路径（`particle`）和信号连线（`signal`）。已声明的装置图需能定位每个参数和设备。省略装置图的模块自动生成参数区和各设备入口。
+Web 目录读取 `Experiment` 的 `question` 和 `guide` 展示测量问题与步骤。各部件通过 `Component.parameters` 绑定同名模型参数，通过 `Component.device` 绑定读出仪器的实例 ID。旧兼容定义允许探测器部件和仪器部件指向同一读出实例；当前课程推荐探测器用`Component.output`绑定信号输出，仪器用`Component.device`或`devices`绑定读出实例，操作入口归仪器。按装置顺序声明部件，用 `Connection` 明确照射路径（`particle`）和信号连线（`signal`）。已声明的装置图需能定位每个参数和设备。省略装置图的模块自动生成参数区和各设备入口。
 
 部件可用 `Component.illustration` 选择内置设备插图。源座、箔架、硅探头、β 探头、多道谱仪和计数器分别对应 `source`、`foil`、`silicon`、`beta-probe`、`mca` 和 `counter`。省略此项或使用未知图名时，界面以部件名称标记连接节点。仪器面板和测量始终由设备绑定决定。
 
@@ -86,6 +98,61 @@ EXPERIMENT = Experiment(
 
 模型返回的键仍是设备 ID。目录加载时会报告未声明的参数、设备或连线端点，并给出模块位置。编辑装置显示文字和浏览资料都不创建会话或推进时钟。
 
+### 具名探测输出与独立采集门
+
+需要独立控制探测器和多台仪器时，在 `Experiment.outputs` 中声明 `SignalOutput`，并用 `Device.input` 绑定输出 ID。此类模型返回的键是输出 ID，而非设备 ID。输出声明道数、计数单位 `count`、时基 `s` 和已包含的响应说明 `response`；模型给出区间 `[start_s, end_s)` 的非负整数计数。仪器与输入的道数须一致。一个输出连接多台理想读出仪器时，框架只抽样一次，再分发同一组计数，不额外抽样或再乘效率。
+
+若同一个物理探测开关控制多组模型输出，可用 `Component.outputs` 声明输出组，`output` 保留主 ID。`Session.set_output()` 接受组内任一 ID，一次结算后原子切换全组，并留一次设置历史。输出组只合并开关操作，不合并各输出的抽样；多个设备绑定同一个输出时仍按上述共享计数规则处理。
+
+可运行课程位于 `examples/courses/split_signal.py`，在仓库根目录执行 `python -m examples.split_signal`。其公共调用为：
+
+```python
+session = Session(discover(["examples/courses"])["split-signal"], seed=187)
+session.set_output("detector", True)
+session.start(10, device="a")
+session.start(10, device="b")
+session.advance(3)
+session.set_output("detector", False)
+session.advance(4)
+session.set_output("detector", True)
+session.advance(3)
+session.set_output("detector", False)
+assert session.time_s == 10
+assert session.instrument("a").exposure_s == 10
+```
+
+初始探测输出和仪器门均关闭。`set_output` 只控制探测输出，`start` / `stop` 的 `device` 只控制指定仪器；省略 `device` 时作用于全部仪器，不改变探测开关。`running` 表示至少一台仪器在采集，`clock_running` 表示至少有探测输出或仪器需要时间。所有需求停止后 `advance` 保持原时刻；若最后一个定时门在一次大步推进中途结束，则停在到期点。探测器单独运行也推进时间，关闭的仪器不累计曝光；仪器开门而输入关闭时仍累计曝光和合法的零计数。
+
+`instrument(id)` 返回不可变状态，含 `running`、该仪器的测量轮次 `acquisition`、当前开门周期 `cycle`、累计有效 `exposure_s` 和 `remaining_s`。状态曝光包含尚未封闭的末窗；`counts` 与 `readable_exposure_s` 则只表示已封闭、可以一起报告的累计读数与曝光。原有无参数的 `active_acquisition` 在所有活动门编号相同时返回该编号，否则返回 `None`；独立仪器的命令应使用 `instrument(id)`，并用 `cycle` 识别不同开门周期。
+
+独立门的输入结算使用 1 s 基准区间，操作时刻和仪器窗边界可进一步细分该区间；每台仪器的计数统计窗由自己的 `window_s` 决定，例如 β 的 A 为 1 s、B 为 5 s，不能把输入结算区间当作两窗的显示读数。刷新不会结算新的输入；设置、探测开关和实际门变更先结清操作时刻前的区间，再应用操作。在上述理想分接测试中，两台同时开门的仪器逐窗读数相等，A 的两个连续 5 s 门的总数等于同期 B 的一个 10 s 门。相同种子和完整操作时间线在不同刷新、变速和推进批次下得到相同读数。区间模型不提供脉冲到达时刻，也不支持事后任意切开已累计的窗。
+
+这项复现约定要求物理操作时间线也相同。另一台仪器在窗内开关门会增加区间边界；统计率模型因此可能在相同种子下产生不同的具体样本，而其区间分布仍由模型规定。例如同为 B 采集 10 s，增加 A 在 2.4 s 关门的操作，B 的固定种子计数可改变。同一场中实际共用输入的仪器仍逐区间严格相等，前后区间的计数严格相加。此接口没有固定的潜在事件流；需要跨不同门操作保持同一条事件实现的课程，须另行提供相应的信号模型。
+
+独立门记录的 `readings` 仅包含当时开门的仪器。结果视图分别合并每台仪器连续、同工况、同轮次的窗，输出的每段曝光只属于其列出的仪器，导出时按设备筛选；空缺仪器不表示零曝光测量。`MeasurementView.changed_start_since(record_count)` 返回从客户端记录游标起最早受影响的段索引，能同时覆盖多个仪器的尾段更新。未声明 `outputs` 的旧实验仍返回设备 ID，并保持原共享门、时间推进和随机流行为。已有旧文件格式与调用方式继续兼容。
+
+课程可提供 `Experiment.restore_definition(saved_info)`，由受信任的本地课程实现返回适用历史文件的完整 `Experiment`。返回 `NotImplemented` 表示未选择历史模型，继续使用当前注册定义（包括派生课程自己的模型和参数）；返回 `None` 或不同实验 ID 仍报错。`catalog.resolve_saved_experiment()` 统一选择，并核对返回定义的类型与实验 ID；文件接口继续严格核对设备及输出绑定。默认使用当前课程。文件只提供已存定义数据，不加载文件中指定的代码。整场文件可据此保留历史模型；单项记录载入当前仪器仅恢复固定数据前缀，后续仍使用当前会话模型。
+
+### 测量轮次、可读快照与局部清空
+
+独立仪器的 `start(duration_s=None, *, device=None, count_limit=None, window_s=None)` 在第一次采集时建立轮次，普通 `stop(device=...)` 是手动暂停；再次 `start(device=...)` 沿用该轮读数、已用曝光及剩余目标，分配新的 `cycle`。定时目标表示本轮累计曝光，定计数目标是正整数，统计窗 `window_s` 默认 1 s 并按本轮有效曝光划分。改变显示刷新或一次推进的长度不改变窗末判停。`stop_reason` 区分 `manual`、`time_limit`、`count_limit` 和 `clearing`。
+
+可用 `configure_acquisition(device, *, duration_s=..., count_limit=..., window_s=...)` 应用采集设置，设置本身不开门。省略的目标保持，`duration_s=None` 或 `count_limit=None` 取消相应限制，两者均为 `None` 表示普通采集。达到 1 s 目标后改为总目标 3 s，再点击继续，只多采 2 s，沿用同轮；达到计数目标后可提高目标或改普通模式再继续。原目标未改且已满足时保持暂停。改目标不改已有快照；运行中调整统计窗长时，本窗按原长度完成，下一窗采用新值，待生效值由 `next_window_s` 表示。要做独立重测才清空；CLI 的各独立 step 在下一次采集前清空上一轮。
+
+执行 `python -m examples.acquisition_rounds` 可核对以下流程：42、47、18 次的三个完整 1 s 窗，在目标 100 次时得到 107 次、3 s；每 0.1 s 一个确定性脉冲，手停 2.4 s 再续采 0.6 s，保持同一轮次并得到 30 次、3 s。暂停期间输入不属于这台仪器。操作引起的部分窗只累计读数，不提前触发定计数判停；例如统计窗为 2 s，即使手动暂停于 1.5 s 时已超过计数目标，仍能续采到完整 2 s 窗再判停。
+
+`snapshot(device, cache=True, writer=None)` 保存当时已经可读的累计状态，不调用模型、不停门。返回不可变 `Snapshot`，含快照 ID、设备、轮次、按键时刻 `time_s`、读数对应的 `exposure_s`、累计 `counts` 和保留工况的 `segments`；`cache=False` 仅查看，`Session.snapshots` 仅含显式保存的快照。可注入 `writer(snapshot)`，成功后才加入缓存；失败不加入快照，也不停门或丢弃读数。采到 3 s 和 5 s 保存两次，旧快照保持 3 s。若在 5.4 s 保存而最后已读窗截止 5 s，保存的是 5 s 的读数和曝光。`results.snapshot_product(experiment, snapshot, seed)` 将其转换为可导出的测量产品。快照不以当前门时钟代替实际已有数据的曝光。
+
+清空确认使用 `request = begin_clear(device)`，再调用 `finish_clear(device, request.token, choice, writer=None)`，其中 `choice` 为 `save`、`discard` 或 `cancel`。开始确认时只结清并暂缓目标仪器，返回固定读数和防止旧确认生效的 token，其他仪器和探测输出继续运行。`save` 可先调用 `writer(snapshot)` 写入外部缓存，成功后加入显式快照并清空当前仪器；`discard` 直接清空，均保留已有快照和历史记录。取消或写入异常恢复原轮次、读数和剩余曝光，异常仍报告给调用方。重复提交已结束的 token 报错。程序执行独立重测可直接用 `clear(device=...)`；省略设备表示清全部仪器。
+
+整台仪器的成员操作使用`Session.snapshot_group(devices, *, cache=True, writer=None)`、`load_measurements(devices, snapshots, *, overwrite=False)`、`begin_clear_group(devices)`和`finish_clear_group(devices, tokens, choice, *, writer=None)`。保存与清空的`writer`一次接收实际可读快照的tuple，成功后才提交全部成员；载入先核全组再替换。完整`devices`范围包含缺测侧，缺测侧不造快照，新整机载入按该范围清空缺测侧；历史单项则只按文件所记设备恢复，另一侧保持原值。无需另建仪器或档案层。[β整机可跑例](technical/beta.md#一行填写示例的复验)与[文件字段](exchange.md#保存什么)给出调用和首项关联。
+
+`Session.rounds` 提供轮次元数据，包括初始有效设置、实际曝光、状态和设置变更的位置；其中没有未保存的计数或道谱。设置未变不重复登记。保存于 3 s、继续采到 5 s 时，轮次曝光可以是 5 s，唯一保存的谱仍只有 3 s。文件层应分别使用这些元数据与显式快照，不根据轮次曝光补造读数。
+
+`results.round_document(info)` 将轮次元数据转为 JSON 安全结构，包含初始目标及 `target_changes`。`configuration_document(session)` 提供初始设置、全实验按序生效的设置与输出开关变化，以及末态；轮次间的变更也会记录。文件读取层可将已验证的元数据、快照和配置历史转换为 `acquisition` 中的公开不可变数据类，再调用 `Session.reopen(experiment, seed=0, *, settings, time_s=0, rounds=(), snapshots=(), configuration_history=(), acquisition_settings=None, random_stream=None)`。`acquisition_settings` 按设备提供 `duration_s`、`count_limit`、`window_s`，作为待机时的采集设置载入；`random_stream` 携带已保存的随机流方案、种子和代次，重开时递增代次并派生新流，供后续新测量复验。工厂验证曝光、通道、累计计数、设备及轮次关联，只接受当前课程的规范设置；历史设置保留在原记录中，不经实时命令转换。重开后所有门和探测输出关闭，当前曝光和计数为零；按开始才建立新轮，编号接在原设备最后轮次之后，快照编号也继续分配。重开不恢复随机源进度，不补造未保存的末段，也不表示从原随机过程精确续跑。
+
+所有入口用 `Session.configure(values)` 提交一次设置批次。框架先调用课程可选的 `Experiment.normalize_settings`，完整验证后结清一次旧工况并统一更新；单键 `set` 使用相同边界。课程回调只负责本课程旧实时命令的转换和歧义诊断，档案读取保留原始设置，不通过此 setter 迁移历史。失败批次不改变配置、已得统计、门状态或随机源。
+
 ### 具名选项、本底识别与课程分组
 
 数值参数可追加 `options=((0, "本底"), (1, "有源"))`。非空选项是完整的允许值集合，必须含默认值；选项值仍满足参数范围与整数约束，且数值不重复。界面显示标签，模型、CLI 和测量工况仍使用数值。例如 β 的 `source_present` 显示“本底 / 有源”；其他实验可使用自己的键和值。未声明选项时保留原数值输入行为。
@@ -113,11 +180,11 @@ EXPERIMENT = Experiment(
 
 ### 本地会话的内存用量
 
-会话保留每一秒已完成的采集窗及其不可变读数，停止或换工况时也会结清不足一秒的窗。导出后仍可按窗查看历史，因此导出不会释放这些记录。对 1024 道的 α 谱，600 秒固定工况的一次测量包含 600 个道谱元组；在 64 位 Python 的一次核对中，这些元组本身约占 4.9 MB，另有设置与测量记录开销。长曝光、多通道或同时打开多个实验时应按总窗数估计内存。界面按新增窗累计结果，刷新不会重复累计过去的读数。
+会话保留输入结算区间的测量记录与仪器统计窗明细；停止或换工况时也会结清当时已发生的部分曝光。导出后仍可按窗查看历史，因此导出不会释放这些记录。对 1024 道的 α 谱，按 1 s 输入结算、600 秒固定工况的一次测量包含 600 个道谱元组；在 64 位 Python 的一次核对中，这些元组本身约占 4.9 MB，另有设置与测量记录开销。长曝光、多通道或同时打开多个实验时应按总窗数估计内存。界面按新增窗累计结果，刷新不会重复累计过去的读数。
 
 ## 仪器面板与结果
 
-实验目录、暂停和变速控制有固定位置。装配多道谱仪的实验提供道谱面板，有适用刻度时允许切换横轴。装配计数器的实验提供计数表。来自不同实验的同型仪器复用面板；同场的两台同型仪器按实例区分。关闭面板只改变视图。切换实验时处理未保存结果，随后重新绑定面板，避免将新操作发送到先前的装置。
+实验目录和导航有固定位置，仿真菜单只设置倍率，开始与暂停位于仪器面板。装配多道谱仪的实验提供道谱面板，有适用刻度时允许切换横轴。β 一台计数器的 A、B 两窗左右并列，各列大数下设置单次曝光；整机共同开始、继续与暂停，保存、清空和载入均一次处理整台计数器。来自不同实验的同型仪器复用面板；同场的两台同型仪器按实例区分。关闭面板只改变视图。切换实验时处理未保存结果，随后重新绑定面板，避免将新操作发送到先前的装置。
 
 | 产品 | 建议导出 | 为解释数据应保留的内容 |
 |---|---|---|
@@ -126,6 +193,6 @@ EXPERIMENT = Experiment(
 | 刻度 | 参考点表或结构化刻度文件，如 JSON | 通道、量程、参考点、映射函数及系数。保留原道址，便于应用另一份合适的刻度。 |
 | 专用测量 | 按产品选择表或谱 | 例如 μ 子寿命的时间单位与接受窗，或穆斯堡尔透射谱的速度标定、扫描方向和各道曝光。 |
 
-**共享刻度工具。** 学生可从目录的工具入口或谱工作区打开同一个刻度工具，用参考点建立并保存刻度，再重新载入并应用到通道、增益和量程均匹配的另一张谱。验收时逐道核对物理横轴是否符合保存的刻度函数，并切回道址轴，确认原始道址和每道计数均保留。
+**谱分析中的刻度工具。** 从多道谱仪常驻右栏进入“谱分析”，先选峰并读取 ROI 峰心，再展开“两点能量刻度”，应用、载入或手动保存刻度。操作时谱图与采集状态仍可见。刻度只应用于设备、通道和适用响应设置匹配的谱。验收时逐道核对物理横轴是否符合保存的刻度函数，并切回道址轴，确认原始道址和每道计数均保留。
 
 使用者可一次选取多个测量产品并分别选择格式，例如将样品谱和本底谱存为 CSV，将同次能量刻度存为 JSON。是否保留中间事件由实验需要的操作决定；用于重新配对的两个独立时标，无法从已经累计好的边缘谱恢复。

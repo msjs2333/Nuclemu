@@ -42,10 +42,18 @@ class DownloadParityTests(unittest.TestCase):
                         session = json.loads(opened)["id"]
                         target = Path(directory, "cli.json")
                         command = [sys.executable, "-m", "nuclemu", "run", experiment, "--seed", str(seed),
+                                   "--device", device, "--enable-output", f"{experiment}_detector",
                                    "--output", str(target)]
-                        for values, duration in zip(settings, (2.25, 1.25)):
+                        post("action", {"session": session, "action": "output",
+                                        "output": f"{experiment}_detector", "enabled": True})
+                        for index, (values, duration) in enumerate(zip(settings, (2.25, 1.25))):
+                            if index:
+                                _, held = post("action", {"session": session, "action": "begin_clear", "device": device})
+                                token = json.loads(held)["clear_confirmation"]["token"]
+                                post("action", {"session": session, "action": "finish_clear", "device": device,
+                                                "token": token, "choice": "discard"})
                             post("action", {"session": session, "action": "configure", "values": values})
-                            post("action", {"session": session, "action": "start", "duration": duration})
+                            post("action", {"session": session, "action": "start", "device": device, "duration": duration})
                             now += duration
                             command.extend(["--step", ",".join([str(duration), *(f"{k}={v}" for k, v in values.items())])])
                         subprocess.run(command, check=True, capture_output=True)

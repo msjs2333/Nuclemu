@@ -1,0 +1,103 @@
+# β 射线吸收 · 技术参考
+
+[学生正文](../beta.md) · [教师用书](../teacher/beta.md) · [本册目录](README.md)
+
+## 模型、单位与适用域
+
+固定几何经验总率为 `R = 50 + source_present × [10000 exp(−39.5m) + 1600 exp(−2.2m)]`，单位s⁻¹，`m`单位g/cm²；指数系数单位cm²/g。`m=2.70 × foil_spec_um × foil_count × 10⁻⁴ g/cm²`，Al密度2.70 g/cm³。两项为课程选定的有效响应，不指派为特定核素、散射或光子成分。空源时保留50 s⁻¹本底，零箔有源总率11650 s⁻¹、净率11600 s⁻¹。`expected_rates(settings)`给出两组用于抽样的同一有效平均率。
+
+本课允许50/100 µm每片、0–24片，总厚度0–2.4 mm。课程曲线校核范围为0–0.4 g/cm²；100 µm规格15片起超过该范围，16片为0.432、24片为0.648 g/cm²，均属教学外推。50 µm规格24片为0.324 g/cm²，仍在范围内。允许设置不等于已核实模型准确度。
+
+响应已包含固定源窗、接受度和探测效率，不是源总活度，不再另乘效率或扣空气损失。模型不提供单粒子轨迹、散射角、停点或连续能谱输运，也不以单一半值厚度描述整段曲线。参数是Nuclemu课程经验设定，不声称来自独立真实探测器标定；公开物理背景和适用边界见[模型参考](../model-reference.md#beta)。
+
+新实验`source_present=0`，探测输出开启时仍有环境本底；关闭探测输出由公共层给零输入。物理源发射与电信号开关分开。装置动画只表器材状态，散开源束与空气背景点为视觉元素，与真实计数完全无关，不映射有效率、泊松抽样或单粒子轨迹；绘制不得调用采样或推进曝光。真实本底仍按本课计数模型处理，与画面背景点无关。
+
+## 仪器绑定与窗关系
+
+装置为一台计数器、A/B两窗。兼容ID仍为`counter`、`counter_b`，不是两台实物；分别绑定课程输出`beta_detector`、`beta_detector_b`。当前课程将 A、B 定义为相同装置条件下的两组虚拟重复观测，按同一有效平均响应分别作泊松抽样；给定工况下两组抽样相互独立，包含各自的本底涨落。它们不是同一电缆中同一批真实脉冲的无损分接，更不是把一个真实事件随机计数两次。两组可设不同窗长，共用探测输出启停及整机采集启停。公共框架仍支持真实共享输出的理想无损分接：同一输入只抽样一次再分发，这项公共语义不变。
+
+A设1 s、B设5 s，在共同起点开门5 s后，A有五条完整窗、B一条。2.5 s换箔时不停门，A第3窗和B第1窗包含多段工况。运行修改A窗长，当前窗仍按原长度收完，下一窗采用新长度，B不变。已知确定脉冲的专用测试用于核门边界，随机学生实验不以两路相等或不等作为通过条件。
+
+ORTEC 995资料支持双路独立门控，ST260手册支持每次读数与经过时间。本课学生面板A左B右，大计数下设置单次曝光，整机“开始测量／继续测量”和“暂停测量”同时控制双窗；各列设置单次曝光，保存、清空和载入均按整台计数器处理。底层独立门是公共接口能力，不能写成当前学生需要逐窗启停。显示及整机控制为教学约定，不冒称任一实物型号具备全部行为。[995资料](https://www.ortec-online.com/-/media/ametekortec/brochures/9/995-a4.pdf) · [ST260手册](https://www.spectrumtechniques.com/wp-content/uploads/ST260-Manual.pdf)
+
+Web整机操作绑定计数器组件的`devices`；HTTP动作`start_group`、`stop_group`、`instrument_group_config`分别调用`Session.start_group()`、`stop_group()`、`configure_group()`，后者是Session方法名而不是HTTP动作名。模式与目标同时设置两窗，保留各列单次曝光。单次曝光输入在各列大计数下方，学生界面不提供选窗入口，A/B各自的曝光与读数仍分别保留。整体载入后，整机继续从各自已恢复值接续，不把一侧曝光复制到另一侧；可读部分曝光按实际值保留并标记`complete=False`，不补成完整窗；0 s无读数的一侧不造测量项。
+
+## 原始数据与文件边界
+
+`Snapshot`保存`id`、`device`、`acquisition`、保存时物理时刻`time_s`、实际截止曝光`exposure_s`、累计`counts`、按工况分段`segments`和逐窗`windows`。`time_s`不等于曝光，累计段不能代替逐窗整数读数。载入来源另由`source`保留。跨文件项目用UUID，内核短整数编号不能充当全局身份。
+
+每个`InstrumentWindow`有`device`、`number`、`acquisition`、`start_exposure_s`、`end_exposure_s`、`counts`、`parts`、`complete`。起止为本轮累计曝光坐标；相减得到本窗曝光，不能直接当实验室物理起止时刻。`parts`保留构成窗的测量段及工况变化，`complete`区分完整预设统计窗与部分统计窗，不表示数据是否有效或可读。`session.instrument_windows(device)`读取当前窗明细，`snapshot.windows`固定保存时的值。窗中途保存、手停或定时先到限时末窗可为`complete=False`，实际曝光和计数仍有效；保存不强行补满统计窗或抽样。续采同窗到原完整窗末时更新该行，旧快照不变。
+
+载入部分窗时，先沿用该窗原定长度补完，再采用接收仪器已应用的`next_window_s`（没有待生效值时取其当前窗长）。例如来源窗长7 s、已采5 s，接收仪器当前6 s且已申请后续3 s：载入后当前窗为7 s、下一窗为3 s，续采到累计10 s应得到0–7 s和7–10 s两窗。没有逐窗明细的历史累计数据通过`window_prefix_exposure_s`、`window_prefix_counts`单独保留，界面显示其计数与曝光；只给新测得的窗编号，不拆造旧窗。
+
+“保存”留存原始数据；记录页“导入”只加缓存；仪器“载入测量数据”才恢复目标当前数据并可续采。`.nuclemu`保留已留存快照、轮次和设置历史，未保存轮次只留元数据。逐窗序列必须经缓存、JSON/CSV和整场重开逐行核对，不能用仅一行累计值冒充可恢复的五窗数据。[文件交换](../exchange.md) · [公共采集语义](../measurement-workflow.md)
+
+已识别的历史整场文件按文件声明恢复原模型：旧单指数本底2 s⁻¹、无箔净率100 s⁻¹、半值面密度0.112 g/cm²；原共享输入或原独立两组的抽样关系均保留。重开及续采不静默切换到当前双成分响应，不重写旧读数。单项旧记录载入当前课程时，只把已存计数与曝光作为固定前缀，新增曝光按当前两组分别取样的模式采集；旧前缀不重新抽样，也不能据此宣称整份累计数据都是独立重复观测。历史单窗载入按文件设备恢复该窗，保留另一窗；新版整机文件按完整成员范围恢复，缺测侧清为空态，不造测量项。
+
+测量项可选的`response_context`保留保存时的输入与响应版本；来源混合或已丢失时可缺省。判断续采提示时读取所选记录，不以接收容器的课程定义代替其来源。同一记录直接从文件选择、先导入缓存再选择或再次导出后选择，提示应一致。端口相同但响应版本不同仍须说明；来源不详时明确说明新增曝光采用当前课程，不能猜定旧响应。当前输入与响应均相同的记录无需变化提示。
+
+旧档缺逐窗明细时只保留已知累计前缀`window_prefix`的曝光与计数，不能拆造过去的窗。新窗接着前缀曝光累计。跨场载入时，旧`parts`的物理坐标与`origin`来源不改写为本场时刻；本场可以从0 s、已有3 s曝光起继续测量。整机载入只恢复测量数据，不自动换源或换箔；两窗分别保留其已存曝光、读数及来源。
+
+## 本底分析的适用条件
+
+学生工作台仅测量和导出；本底处理在本地完成。CLI或公共分析函数接受显式参考时，用记录身份、源状态、设备及曝光核适用性。`results.net_count_rate(Ns, ts, Nb, tb)`只接收四个标量，不能替调用层校验来源或时间重叠。
+
+独立样品与本底可用泊松代入近似。本课 A、B 给定工况下分别抽样；同一组同轮重叠累计快照、载入旧记录后共享的前缀仍不独立，不能因分属A/B或文件不同就消除既有数据重叠。公共框架实际共享输入的重叠窗也不满足独立假设。低计数负净率正常保留；近似标准不确定度不是精确置信区间。更换本底只改引用和派生量，不改原始计数或随机流。
+
+## 复验入口
+
+### 一行填写示例的复验
+
+下面时间线取得30 s本底与5 s样品，显式装源以免依赖默认值。整数计数以当前课程模型实际输出为准，不沿用旧抽样方式的固定基线。两次均整机保存并命名，沿用已有测量项和首项关联，使用公共文件接口导出并重开：
+
+```python
+from nuclemu.catalog import discover
+from nuclemu.core import Session
+from nuclemu.exchange import (capture_session, save_package, load_package,
+    native_snapshot_id, link_measurements, export_item, load_item)
+
+s = Session(discover()["beta"], seed=42)
+s.set_output("beta_detector", True)
+group = ("counter", "counter_b")
+s.configure_group(group, duration_s=30, count_limit=None)
+s.start_group(group)
+s.advance(30)
+background = s.snapshot_group(group)
+requests = s.begin_clear_group(group)
+s.finish_clear_group(group, {r.device: r.token for r in requests}, "discard")
+s.configure({"source_present": 1, "foil_spec_um": 100, "foil_count": 4})
+s.configure_group(group, duration_s=5, count_limit=None)
+s.start_group(group)
+s.advance(5)
+sample = s.snapshot_group(group)
+doc = capture_session(s)
+identities = []
+for title, snapshots in (("本底", background), ("4片铝箔", sample)):
+    ids = [native_snapshot_id(doc, snapshot) for snapshot in snapshots]
+    identities.append(link_measurements(doc, ids, title, members=group))
+save_package("beta-example.nuclemu", doc)
+loaded = load_package("beta-example.nuclemu")
+assert loaded == doc
+for identity in identities:
+    for format in ("json", "csv"):
+        bundle = load_item(export_item(loaded, identity, format))
+        member_ids = next(i["group"]["items"] for i in loaded["items"]
+                          if i["id"] == identity)
+        assert bundle["items"] == [i for i in loaded["items"] if i["id"] in member_ids]
+for snapshots in (background, sample):
+    print([(x.device, x.counts, x.exposure_s, len(x.windows)) for x in snapshots])
+```
+
+本例使用内核受控时间推进，文件结果不代替浏览器按钮验收。
+
+### 专项与边界
+
+```text
+python -m examples.beta_windows
+python -m examples.beta_background
+python -m unittest discover -s tests -p "test_beta*.py" -v
+```
+
+[β器材与采集](../beta-acquisition.md)维护最新可运行调用、字段与文件例。复验记录实验、种子、参数、各操作物理时刻、目标窗、实际曝光与逐窗计数。比较GUI/CLI须使用同一时间线；只相同种子不足以保证不同操作流程逐次相同。
+
+文件验收至少走一次三窗保存、分别导出JSON/CSV、整体载回、续采一窗得到四行；任一侧非空只确认一次，取消或无效文件保持两窗原值。另走1 s/5 s、跨工况和未保存轮次重开。课程专项不替代最终页面及文件链路走读。

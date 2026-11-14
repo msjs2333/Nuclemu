@@ -3,9 +3,11 @@
 import json
 from pathlib import Path
 import unittest
+from uuid import UUID
 
 import test_catalog_records_browser as fixtures
 from nuclemu.catalog import discover
+from nuclemu.exchange import load_package
 from nuclemu.web_session import Application
 
 if fixtures.sync_playwright:
@@ -46,13 +48,25 @@ class WebReviewBrowserTests(unittest.TestCase):
         page.locator("#leave").click()
         expect(page.locator("#confirm")).to_be_visible()
 
+    def open_saved(self, page, kind='archive', *, expected_ok=True):
+        rows = [r for r in self.server.app.store.list() if r['kind'] == kind]
+        self.assertTrue(rows)
+        response = page.request.post(self.url + '/api/open', data={kind: rows[0]['id']})
+        self.assertEqual(response.ok, expected_ok, response.text())
+        if response.ok:
+            opened = response.json()
+            with page.expect_response(lambda r: r.url == self.url + '/api/state') as loaded:
+                page.goto(self.url + '/lab/' + opened['experiment'] + '/#instrument')
+            self.assertTrue(loaded.value.ok, loaded.value.text())
+            self.assertEqual(loaded.value.json()['id'], opened['id'])
+            expect(page.locator('#workspace')).to_be_visible()
+        return response
+
+    def analysis_tab(self, page=None):
+        (page or self.page).get_by_role('tab', name='谱分析', exact=True).click()
+
     def start(self, seconds):
-        self.page.locator("[data-page='instrument']").click()
-        self.page.locator("#menu-acquisition").click()
-        self.page.locator("#duration").fill(str(seconds))
-        self.page.keyboard.press("Escape")
-        self.page.locator("#start").click()
-        expect(self.page.locator("#gate-status")).to_have_text("采集中")
+        fixtures.start_collection(self, seconds)
 
     @staticmethod
     def hold_poll(page, snapshot):
@@ -88,15 +102,21 @@ class WebReviewBrowserTests(unittest.TestCase):
         expect(other.locator("#error")).to_be_visible()
         expect(other.locator("#catalog")).to_be_visible()
         self.assertEqual(self.state()["id"], before["id"])
+        self.page.reload()
+        expect(self.page.locator("#stop")).to_be_enabled()
+        self.assertEqual(self.state()["id"], before["id"])
+        self.assertEqual(self.server.app.catalog()["drafts"], [])
+        self.assertEqual(self.server.app.catalog()["archives"], [])
 
-    def test_refresh_keeps_live_gate_without_draft_notice_and_explicit_draft_shows_time(self):
-        self.enter("alpha")
+    def test_refresh_keeps_live_gate_and_explicit_legacy_draft_preserves_time(self):
+        fixtures.install_legacy(self, 'alpha')
+        self.enter("legacy_alpha")
         self.start(10)
         self.now = 1.5
-        expect(self.page.locator("#time")).to_have_text("1.5 s")
+        self.assertEqual(self.state()["time_s"], 1.5)
         before = self.state()
         self.page.reload()
-        expect(self.page.locator("#gate-status")).to_have_text("采集中")
+        expect(self.page.locator("#stop")).to_be_enabled()
         expect(self.page.locator("#recovered")).to_have_count(0)
         after = self.state()
         self.assertEqual(after["id"], before["id"])
@@ -108,18 +128,25 @@ class WebReviewBrowserTests(unittest.TestCase):
         with self.server.app_lock:
             self.server.app = Application(self.server.app.definitions, self.folder.name, lambda: self.now)
         self.page.goto(self.url)
-        self.page.get_by_role("button", name="打开草稿", exact=True).click()
-        expect(self.page.locator("#recovered")).to_contain_text("1 s")
-        expect(self.page.locator("#device")).to_be_focused()
+        restored = self.open_saved(self.page, 'draft').json()
+        # The catalogue no longer lists local drafts. The compatibility API still
+        # reports the saved cutoff; a direct page reopen displays its readonly notice.
+        self.assertEqual(restored["recovered_s"], 1)
+        self.assertEqual(self.state()["recovered_s"], 1)
+        self.assertEqual(self.state()["time_s"], 1)
+        expect(self.page.locator("#recovered")).to_have_text("正在查看已保存的实验。")
+        expect(self.page.locator("#device")).to_have_count(0)
+        expect(self.page.locator("#start")).to_be_disabled()
         self.assertTrue(self.state()["readonly"])
         self.screenshot("review-explicit-draft")
         self.page.reload()
         expect(self.page.locator("#recovered")).to_have_text("正在查看已保存的实验。")
 
     def test_stale_save_and_discard_cannot_touch_resumed_gate_or_new_draft(self):
+        fixtures.install_legacy(self, 'alpha')
         peer = self.peer()
-        self.enter("alpha")
-        peer.locator("[data-experiment='alpha']").click()
+        self.enter("legacy_alpha")
+        peer.locator("[data-experiment='legacy_alpha']").click()
         expect(peer.locator("#workspace")).to_be_visible()
         self.start(10)
         self.now = .25
@@ -147,7 +174,8 @@ class WebReviewBrowserTests(unittest.TestCase):
             expect(peer.locator("#confirm")).not_to_be_visible()
 
     def test_save_failure_keeps_confirmation_for_retry(self):
-        self.enter("alpha")
+        fixtures.install_legacy(self, 'alpha')
+        self.enter("legacy_alpha")
         self.collect(1.25)
         self.start(10)
         self.now += .25
@@ -168,7 +196,7 @@ class WebReviewBrowserTests(unittest.TestCase):
         finally:
             self.server.app.store.write = write
         self.page.locator("#save-exit").click()
-        expect(self.page.locator("[data-experiment='alpha']")).to_be_focused()
+        expect(self.page.locator("[data-experiment='legacy_alpha']")).to_be_focused()
         self.assertIsNone(self.state())
 
     def test_visible_old_confirmation_does_not_adopt_a_new_round_from_polling(self):
@@ -203,16 +231,16 @@ class WebReviewBrowserTests(unittest.TestCase):
         self.assertFalse(self.state()["frozen"])
 
     def test_archive_request_cannot_join_live_experiment_of_same_name(self):
-        self.enter("alpha")
+        fixtures.install_legacy(self, 'alpha')
+        self.enter("legacy_alpha")
         self.collect(1)
         self.exit_dialog(self.page)
         self.page.locator("#save-exit").click()
         expect(self.page.locator("#catalog")).to_be_visible()
         peer = self.peer()
-        self.enter("alpha")
+        self.enter("legacy_alpha")
         live = self.state()
-        peer.get_by_role("button", name="查看实验", exact=True).click()
-        expect(peer.locator("#error")).to_be_visible()
+        self.open_saved(peer, expected_ok=False)
         self.assertEqual(self.state()["id"], live["id"])
         self.assertFalse(self.state()["readonly"])
         self.exit_dialog(self.page)
@@ -220,16 +248,17 @@ class WebReviewBrowserTests(unittest.TestCase):
         expect(self.page.locator("#catalog")).to_be_visible()
         # A fresh experiment request must not attach to an already-open archive.
         fresh = self.peer()
-        self.page.get_by_role("button", name="查看实验", exact=True).click()
+        self.open_saved(self.page)
         expect(self.page.locator("#start")).to_be_disabled()
         archived = self.state()
-        fresh.locator("[data-experiment='alpha']").click()
+        fresh.locator("[data-experiment='legacy_alpha']").click()
         expect(fresh.locator("#error")).to_be_visible()
         self.assertEqual(self.state()["id"], archived["id"])
         self.assertTrue(self.state()["readonly"])
         # Explicitly opening this same archive is an idempotent read-only attach.
-        peer.get_by_role("button", name="查看实验", exact=True).click()
-        expect(peer.locator("#device")).to_be_focused()
+        self.open_saved(peer)
+        expect(peer.locator("#device")).to_have_count(0)
+        expect(peer.locator("#start")).to_be_disabled()
         self.assertEqual(self.state()["id"], archived["id"])
 
     def spectra(self):
@@ -249,43 +278,56 @@ class WebReviewBrowserTests(unittest.TestCase):
         expected = json.loads(json.dumps(self.server.app.lab.analysis))
         self.page.locator("#save-exit").click()
         expect(self.page.locator("#catalog")).to_be_visible()
-        self.page.get_by_role("button", name="查看实验", exact=True).click()
-        expect(self.page.locator("#device")).to_be_focused()
+        self.open_saved(self.page)
+        expect(self.page.locator("#device")).to_be_visible()
         self.assertTrue(self.state()["readonly"])
         self.assertEqual(self.server.app.lab.analysis, expected)
 
     def test_explicit_apparatus_device_click_reasserts_displayed_instrument(self):
         peer = self.spectra()
         product = self.state()['product']
-        for selector in ("[data-part='device-left']", '#component > button'):
-            with self.subTest(selector=selector):
-                self.page.locator("[data-page='setup']").click()
-                release = self.hold_poll(self.page, self.state())
-                peer.locator('#device').select_option('right')
-                expect(peer.locator('#device')).to_have_value('right')
-                with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
-                                               r.request.post_data_json.get('action') == 'device') as selected:
-                    self.page.locator(selector).click()
-                self.assertTrue(selected.value.ok)
-                self.assertEqual(selected.value.request.post_data_json['device'], 'left')
-                expect(self.page.locator('#device')).to_be_focused()
-                expect(self.page.locator('#device')).to_have_value('left')
-                release()
-                expect(peer.locator('#device')).to_have_value('left')
-                current = self.state()
-                self.assertEqual(current['device'], 'left')
-                self.assertEqual(current['readout']['centroid'], 1)
-                self.assertEqual(current['product'], product)
+        for keyboard in (False, True):
+            self.page.locator("[data-page='setup']").click()
+            release = self.hold_poll(self.page, self.state())
+            peer.locator('#device').select_option('right')
+            expect(peer.locator('#device')).to_have_value('right')
+            part = self.page.locator("[data-part='device-left']")
+            if keyboard:
+                part.focus()
+                part.press('Enter')
+            else:
+                part.click()
+            expect(self.page.locator("#component h2")).to_have_text("左谱仪")
+            expect(self.page.locator("[data-page='setup']")).to_have_attribute('aria-current', 'page')
+            self.assertEqual(self.state()['device'], 'right')
+            with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
+                                           r.request.post_data_json.get('action') == 'device') as selected:
+                self.page.locator('#open-instrument').click()
+            self.assertTrue(selected.value.ok)
+            self.assertEqual(selected.value.request.post_data_json['device'], 'left')
+            expect(self.page.locator('#device')).to_be_focused()
+            expect(self.page.locator('#device')).to_have_value('left')
+            release()
+            expect(peer.locator('#device')).to_have_value('left')
+            current = self.state()
+            self.assertEqual(current['device'], 'left')
+            self.analysis_tab()
+            self.page.locator('#roi button').click()
+            expect(self.page.locator('#roi-result')).to_contain_text('重心')
+            self.assertEqual(self.state()['roi_result']['readout']['centroid'], 1)
+            self.assertEqual(current['product'], product)
         self.page.locator("[data-page='setup']").click()
         self.page.route('**/api/action', lambda route: route.fulfill(
             status=400, json={'error': 'device selection failed'}))
-        self.page.locator('#component > button').click()
+        self.page.locator('#open-instrument').click()
         expect(self.page.locator('#error')).to_contain_text('device selection failed')
         expect(self.page.locator("[data-page='setup']")).to_have_attribute('aria-current', 'page')
         expect(self.page.locator('#setup')).to_be_visible()
         self.assertEqual(self.state()['product'], product)
 
-    def test_counter_background_keeps_displayed_device_and_survives_archive(self):
+    def test_legacy_counter_background_api_keeps_device_and_survives_archive(self):
+        # Background selection is retained only by the old public protocol;
+        # the current counter UI deliberately offers raw measurements alone.
         peer = self.peer()
         self.enter("records-test")
         self.collect(1)
@@ -296,34 +338,162 @@ class WebReviewBrowserTests(unittest.TestCase):
         peer.locator("#device").select_option("right")
         expect(peer.locator("#device")).to_have_value("right")
         before = json.loads(json.dumps(self.server.app.lab.analysis))
-        with self.page.expect_request(lambda r: r.url.endswith('/api/action') and
-                                      r.post_data_json.get('action') == 'analysis') as pending:
-            self.page.locator("#background").select_option("0")
-        self.assertEqual(pending.value.post_data_json['device'], 'left')
-        expect(self.page.locator("#error")).to_contain_text("设备已改变")
+        expect(self.page.locator('#background')).to_have_count(0)
+        response = self.page.request.post(self.url + '/api/action', data={'action': 'analysis', 'session': self.state()['id'], 'device': 'left', 'background': 0})
+        self.assertEqual(response.status, 400)
+        self.assertIn('设备已改变', response.json()['error'])
         self.assertEqual(self.server.app.lab.analysis, before)
         release()
-        expect(self.page.locator("#device")).to_have_value("right")
-        self.page.locator("#background").select_option("1")
-        expect(self.page.locator("#background")).to_have_value("1")
-        self.page.locator("#device").select_option("left")
-        expect(self.page.locator("#background")).to_have_value("")
-        self.page.locator("#background").select_option("0")
-        expect(self.page.locator("#background")).to_have_value("0")
+        expect(self.page.locator('#device')).to_have_value('right')
+        for device, background in [('right', 1), ('left', 0)]:
+            self.page.locator('#device').select_option(device)
+            expect(self.page.locator('#device')).to_have_value(device)
+            response = self.page.request.post(self.url + '/api/action', data={'action': 'analysis', 'session': self.state()['id'], 'device': device, 'background': background})
+            self.assertTrue(response.ok, response.text())
         self.save_and_reopen_analysis()
-        expect(self.page.locator("#background")).to_have_value("0")
+        self.assertEqual(self.server.app.lab.analysis["left"]["background"], 0)
         self.page.locator("#device").select_option("right")
-        expect(self.page.locator("#background")).to_have_value("1")
+        self.assertEqual(self.server.app.lab.analysis["right"]["background"], 1)
+
+    def test_counter_visible_snapshot_keeps_stale_device_target_and_window_settings(self):
+        from test_web_counter_identity_browser import ordered_counter_course
+        course = ordered_counter_course()
+        self.server.app.definitions[course.id] = course
+        self.page.reload()
+        peer = self.peer()
+        self.enter(course.id)
+        self.collect(2)
+        fixtures.measurement_operation(self.page, 'save')
+        expect(self.page.locator("#snapshot-notice")).not_to_be_visible()
+        peer.locator(f"[data-experiment='{course.id}']").click()
+        peer.locator("[data-page='instrument']").click()
+        before = self.state()
+        release = self.hold_poll(self.page, before)
+        peer.locator("[data-instrument=solo-instrument]").click()
+        expect(peer.locator("#device")).to_have_value("solo")
+        with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
+                r.request.post_data_json.get('action') == 'begin_snapshot_group') as pending:
+            self.page.locator('#save-current').click()
+        self.assertEqual(pending.value.status, 400)
+        self.assertEqual(pending.value.request.post_data_json['device'], before['device'])
+        self.assertEqual(pending.value.request.post_data_json['component'], 'counter')
+        expect(self.page.locator('#error')).to_contain_text('仪器已改变')
+        after = self.state()
+        self.assertEqual(after['instruments'], before['instruments'])
+        self.assertEqual(after['snapshots'], before['snapshots'])
+        self.assertEqual(after['product'], before['product'])
+        release()
+        expect(self.page.locator("#device")).to_have_value("solo")
+        self.page.locator("[data-instrument=counter]").click()
+        expect(self.page.locator("#device")).to_have_count(0)
+        for device, window in (("counter_b", "5"), ("counter", "3")):
+            field = self.page.locator("#window-size-" + device)
+            field.fill(window)
+            with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
+                    r.request.post_data_json.get('action') == 'window_config') as configured:
+                field.press("Tab")
+            self.assertTrue(configured.value.ok, configured.value.text())
+            self.assertEqual(configured.value.request.post_data_json['device'], device)
+        self.page.locator("[data-page='records']").click()
+        with self.page.expect_download() as saved:
+            self.page.locator("#download-experiment").click()
+        path = Path(self.folder.name) / "counter-settings.nuclemu"
+        saved.value.save_as(path)
+        document = load_package(path)
+        self.assertEqual(document['instruments']['counter']['window_s'], 3)
+        self.assertEqual(document['instruments']['counter_b']['window_s'], 5)
+        self.exit_dialog(self.page)
+        self.page.locator("#discard").click()
+        expect(self.page.locator("#catalog")).to_be_visible()
+        self.page.locator("#open-package").set_input_files(path)
+        expect(self.page.locator("#workspace")).to_be_visible()
+        reopened = self.state()
+        self.assertEqual(reopened['instruments']['counter']['window_s'], 3)
+        self.assertEqual(reopened['instruments']['counter_b']['window_s'], 5)
+        self.assertEqual(len(reopened['records']), 1)
+        self.assertEqual({member['device'] for member in reopened['records'][0]['measurements']},
+                         {'counter', 'counter_b'})
+
+    def test_saved_spectrum_uuid_selection_survives_real_package_reopen(self):
+        self.enter("alpha")
+        self.page.locator("#operation-tab").click()
+        self.page.locator("#component select[name='source_present']").select_option("1")
+        with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
+                r.request.post_data_json.get('action') == 'configure') as configured:
+            self.page.locator("#component form button").click()
+        self.assertTrue(configured.value.ok, configured.value.text())
+        self.assertEqual(self.state()['settings']['source_present'], 1)
+        self.collect(1)
+        fixtures.measurement_operation(self.page, 'save')
+        expect(self.page.locator("#snapshot-notice")).not_to_be_visible()
+        self.collect(2)
+        fixtures.measurement_operation(self.page, 'save')
+        expect(self.page.locator("#snapshot-notice")).not_to_be_visible()
+        saved = self.state()['saved_measurements']
+        self.assertEqual(len(saved), 2)
+        first, second = (item['id'] for item in saved)
+        self.assertNotEqual(first, second)
+        self.assertEqual(str(UUID(first)), first)
+        self.analysis_tab()
+        self.page.locator("#sample").select_option(second)
+        self.page.locator("#reference").select_option(first)
+        self.page.locator("#rate").check()
+        expect(self.page.locator("#sample")).to_have_value(second)
+        expect(self.page.locator("#reference")).to_have_value(first)
+        observations = self.state()
+        self.assertEqual(observations['selected_observation']['exposure_s'], 2)
+        self.assertEqual(observations['reference_observation']['exposure_s'], 1)
+        self.assertGreater(sum(observations['selected_observation']['counts']), 0)
+        self.assertGreater(sum(observations['reference_observation']['counts']), 0)
+        self.assertNotEqual(observations['selected_observation']['counts'],
+                            observations['reference_observation']['counts'])
+        self.page.locator("[data-page='materials']").click()
+        self.page.locator("[data-page='instrument']").click()
+        expect(self.page.locator("#sample")).to_have_value(second)
+        expect(self.page.locator("#rate")).to_be_checked()
+        before = self.state()
+        self.page.locator("[data-page='records']").click()
+        with self.page.expect_download() as pending:
+            self.page.locator("#download-experiment").click()
+        path = Path(self.folder.name) / "spectra-uuid.nuclemu"
+        pending.value.save_as(path)
+        document = load_package(path)
+        self.assertEqual(document['analysis']['mca']['selected'], second)
+        self.assertEqual(document['analysis']['mca']['reference'], first)
+        self.exit_dialog(self.page)
+        self.page.locator("#discard").click()
+        expect(self.page.locator("#catalog")).to_be_visible()
+        self.page.locator("#open-package").set_input_files(path)
+        expect(self.page.locator("#workspace")).to_be_visible()
+        self.analysis_tab()
+        expect(self.page.locator("#sample")).to_have_value(second)
+        expect(self.page.locator("#reference")).to_have_value(first)
+        expect(self.page.locator("#rate")).to_be_checked()
+        reopened = self.state()
+        self.assertEqual(reopened['selected_observation'], before['selected_observation'])
+        self.assertEqual(reopened['reference_observation'], before['reference_observation'])
+        self.screenshot("review-saved-spectrum-uuid")
 
     def test_spectrum_history_reference_and_display_keep_device_and_survive_archive(self):
         peer = self.spectra()
+        def select_and_wait(page, selector, value, action):
+            with page.expect_response(lambda r: r.url.endswith('/api/action') and
+                                      r.request.post_data_json.get('action') == action) as applied:
+                if value is None:
+                    page.locator(selector).check()
+                else:
+                    page.locator(selector).select_option(value)
+            self.assertTrue(applied.value.ok, applied.value.text())
+            if value is not None:
+                expect(page.locator(selector)).to_have_value(value)
+            return applied.value.json()
         self.collect(2)
-        self.page.locator("#menu-display").click()
+        self.analysis_tab()
         release = self.hold_poll(self.page, self.state())
-        peer.locator("#device").select_option("right")
-        expect(peer.locator("#device")).to_have_value("right")
+        switched = select_and_wait(peer, '#device', 'right', 'device')
+        self.assertEqual(switched['device'], 'right')
         before = json.loads(json.dumps(self.server.app.lab.analysis))
-        for selector, value in (("#sample", "0"), ("#reference", "0"), ("#rate", None)):
+        for selector, value in (("#sample", "segment:0"), ("#reference", "segment:0"), ("#rate", None)):
             with self.subTest(selector=selector):
                 with self.page.expect_response(lambda r: r.url.endswith('/api/action')) as pending:
                     if value is None:
@@ -336,33 +506,38 @@ class WebReviewBrowserTests(unittest.TestCase):
                 self.assertEqual(self.server.app.lab.analysis, before)
         release()
         expect(self.page.locator("#device")).to_have_value("right")
-        self.page.locator("#sample").select_option("1")
-        self.page.locator("#reference").select_option("0")
-        self.page.locator("#rate").check()
-        expect(self.page.locator("#sample")).to_have_value("1")
+        selected = select_and_wait(self.page, '#sample', 'segment:1', 'select')
+        self.assertEqual((selected['device'], selected['selected']), ('right', 1))
+        reference = select_and_wait(self.page, '#reference', 'segment:0', 'analysis')
+        self.assertEqual(reference['analysis']['reference'], 0)
+        rated = select_and_wait(self.page, '#rate', None, 'analysis')
+        self.assertTrue(rated['analysis']['rate_axis'])
+        expect(self.page.locator("#sample")).to_have_value("segment:1")
         self.page.keyboard.press("Escape")
-        self.page.locator("#device").select_option("left")
-        expect(self.page.locator("#device")).to_have_value("left")
-        self.page.locator("#menu-display").click()
-        self.page.locator("#sample").select_option("0")
-        self.page.locator("#reference").select_option("1")
-        expect(self.page.locator("#sample")).to_have_value("0")
+        switched = select_and_wait(self.page, '#device', 'left', 'device')
+        self.assertEqual(switched['device'], 'left')
+        self.analysis_tab()
+        selected = select_and_wait(self.page, '#sample', 'segment:0', 'select')
+        self.assertEqual((selected['device'], selected['selected']), ('left', 0))
+        reference = select_and_wait(self.page, '#reference', 'segment:1', 'analysis')
+        self.assertEqual(reference['analysis']['reference'], 1)
+        expect(self.page.locator("#sample")).to_have_value("segment:0")
         self.page.keyboard.press("Escape")
         self.save_and_reopen_analysis()
-        self.page.locator("#menu-display").click()
-        expect(self.page.locator("#sample")).to_have_value("0")
-        expect(self.page.locator("#reference")).to_have_value("1")
+        self.analysis_tab()
+        expect(self.page.locator("#sample")).to_have_value("segment:0")
+        expect(self.page.locator("#reference")).to_have_value("segment:1")
         expect(self.page.locator("#rate")).not_to_be_checked()
         self.page.keyboard.press("Escape")
-        self.page.locator("#device").select_option("right")
-        self.page.locator("#menu-display").click()
-        expect(self.page.locator("#sample")).to_have_value("1")
-        expect(self.page.locator("#reference")).to_have_value("0")
+        switched = select_and_wait(self.page, '#device', 'right', 'device')
+        self.assertEqual(switched['device'], 'right')
+        self.analysis_tab()
+        expect(self.page.locator("#sample")).to_have_value("segment:1")
+        expect(self.page.locator("#reference")).to_have_value("segment:0")
         expect(self.page.locator("#rate")).to_be_checked()
 
     def fill_calibration(self):
-        if self.page.locator("#menu-analysis").get_attribute("aria-expanded") != "true":
-            self.page.locator("#menu-analysis").click()
+        self.analysis_tab()
         if self.page.locator("details.calibration-tools").get_attribute("open") is None:
             self.page.locator("details.calibration-tools > summary").click()
         for name, value in (("c1", 0), ("e1", 0), ("c2", 2), ("e2", 1)):
@@ -370,7 +545,7 @@ class WebReviewBrowserTests(unittest.TestCase):
 
     def test_stale_manual_and_drag_roi_cannot_change_another_instrument(self):
         peer = self.spectra()
-        self.page.locator("#menu-analysis").click()
+        self.analysis_tab()
         self.page.locator("#first").fill("1")
         self.page.locator("#last").fill("2")
         release = self.hold_poll(self.page, self.state())
@@ -392,7 +567,7 @@ class WebReviewBrowserTests(unittest.TestCase):
         self.page.locator("#first").fill("1")
         self.page.locator("#last").fill("2")
         self.page.locator("#roi button").click()
-        self.page.wait_for_function("document.querySelector('#peak').textContent.includes('选区峰心')")
+        expect(self.page.locator('#roi-result')).to_contain_text('重心')
         self.assertEqual(self.server.app.lab.analysis["right"]["roi"], [1, 2])
         self.assertEqual(self.server.app.lab.analysis["left"]["roi"], [0, 3])
 
@@ -408,7 +583,7 @@ class WebReviewBrowserTests(unittest.TestCase):
                         device="left", channels=4, channel1=0, energy1=0, channel2=2, energy2=1,
                         conditions={"gain": 1})
         with self.page.expect_file_chooser() as pending:
-            self.page.locator("#cal-file").click()
+            self.page.locator("#load-calibration").click()
         pending.value.set_files({"name": "energy.json", "mimeType": "application/json",
                                  "buffer": json.dumps(document).encode()})
         self.page.wait_for_function("typeof window.finishFile === 'function'")
@@ -440,9 +615,10 @@ class WebReviewBrowserTests(unittest.TestCase):
         self.assertEqual(dict(self.server.app.lab.work.lab.calibrations["left"].conditions), {"gain": 1})
         self.pending_calibration_file()
         peer.locator("[data-page='setup']").click()
+        peer.locator("#operation-tab").click()
         peer.locator("#component input").fill("2")
         peer.locator("#component form button").click()
-        expect(peer.locator("#message")).to_contain_text("已更新")
+        expect(peer.locator("#component form button")).to_be_disabled()
         self.collect(1)
         before = self.server.app.lab.work.lab.calibrations.copy()
         self.page.evaluate("window.finishFile()")
@@ -471,12 +647,11 @@ class WebReviewBrowserTests(unittest.TestCase):
         document = dict(format="nuclemu.calibration/2", unit="MeV", experiment="spectra-review",
                         device="left", channels=4, channel1=0, energy1=0, channel2=2, energy2=1,
                         conditions={"gain": 1})
-        if self.page.locator("#menu-analysis").get_attribute("aria-expanded") != "true":
-            self.page.locator("#menu-analysis").click()
+        self.analysis_tab()
         if self.page.locator("details.calibration-tools").get_attribute("open") is None:
             self.page.locator("details.calibration-tools > summary").click()
         with self.page.expect_file_chooser() as pending:
-            self.page.locator("#cal-file").click()
+            self.page.locator("#load-calibration").click()
         pending.value.set_files({"name": "energy.json", "mimeType": "application/json",
                                  "buffer": json.dumps(document).encode()})
         self.page.wait_for_function("typeof window.finishFile === 'function'")
@@ -490,36 +665,36 @@ class WebReviewBrowserTests(unittest.TestCase):
     def test_history_change_rejects_old_form_and_explicit_history_uses_its_gain(self):
         peer = self.spectra()
         peer.locator("[data-page='setup']").click()
+        peer.locator("#operation-tab").click()
         peer.locator("#component input").fill("2")
         peer.locator("#component form button").click()
-        expect(peer.locator("#message")).to_contain_text("已更新")
+        expect(peer.locator("#component form button")).to_be_disabled()
         self.collect(1)
-        self.page.locator("#menu-display").click()
-        self.page.locator("#sample").select_option("0")
-        expect(self.page.locator("#sample")).to_have_value("0")
+        self.analysis_tab()
+        self.page.locator("#sample").select_option("segment:0")
+        expect(self.page.locator("#sample")).to_have_value("segment:0")
         self.page.keyboard.press("Escape")
         self.fill_calibration()
         release = self.hold_poll(self.page, self.state())
         peer.locator("[data-page='instrument']").click()
-        peer.locator("#menu-display").click()
-        peer.locator("#sample").select_option("1")
-        expect(peer.locator("#sample")).to_have_value("1")
+        self.analysis_tab(peer)
+        peer.locator("#sample").select_option("segment:1")
+        expect(peer.locator("#sample")).to_have_value("segment:1")
         self.page.locator("#calibrate button").click()
         expect(self.page.locator("#error")).to_contain_text("改变")
         self.assertEqual(self.server.app.lab.work.lab.calibrations, {})
         release()
         expect(self.page.locator("#device")).to_have_value("left")
         # Choose gain=1 history deliberately while the live apparatus remains gain=2.
-        if self.page.locator("#menu-display").get_attribute("aria-expanded") != "true":
-            self.page.locator("#menu-display").click()
-        self.page.locator("#sample").select_option("0")
-        expect(self.page.locator("#sample")).to_have_value("0")
+        self.analysis_tab()
+        self.page.locator("#sample").select_option("segment:0")
+        expect(self.page.locator("#sample")).to_have_value("segment:0")
         self.page.keyboard.press("Escape")
         self.fill_calibration()
         self.page.locator("#calibrate button").click()
         self.page.wait_for_function("document.querySelector('#calibrate [name=c2]').value === '2'")
         expect(self.page.locator("#error")).not_to_be_visible()
-        self.page.locator("#menu-display").click()
+        self.analysis_tab()
         expect(self.page.locator("#energy")).to_be_enabled()
         calibration = self.server.app.lab.work.lab.calibrations["left"]
         self.assertEqual(dict(calibration.conditions), {"gain": 1})

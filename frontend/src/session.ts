@@ -1,17 +1,20 @@
 import {onBeforeUnmount, onMounted, ref, shallowRef} from 'vue'
-import {api, ApiError, errorMessage} from './api'
+import {api, ApiError, errorMessage, filePayload} from './api'
 import type {Act, Catalog, Open, Page, State, Segment} from './types'
 
-type Snapshot = Omit<State, 'product'> & (
+type Snapshot = Omit<State, 'product' | 'counter_windows'> & (
   {product: State['product']; product_delta?: never} |
   {product?: never; product_delta: {start: number; segments: Segment[]}}
+) & (
+  {counter_windows: State['counter_windows']; counter_windows_delta?: never} |
+  {counter_windows?: never; counter_windows_delta: Record<string, {start: number; windows: State['counter_windows'][string]}>}
 )
 
 function stable<T>(previous: T, next: T): T {
   return JSON.stringify(previous) === JSON.stringify(next) ? previous : next
 }
 function pageName(hash: string): Page {
-  return hash === 'instrument' || hash === 'records' ? hash : 'setup'
+  return hash === 'instrument' || hash === 'records' || hash === 'materials' ? hash : 'setup'
 }
 export function useSession() {
   const state = shallowRef<State | null>(null)
@@ -21,6 +24,7 @@ export function useSession() {
   let confirmationId: number | null = null, dismissedConfirmationId: number | null = null
   let tail: Promise<unknown> = Promise.resolve(), pending = 0, revision = 0, polling = false
   let interval: number
+  let pollError = ''
 
   function accept(next: Snapshot) {
     const prev = state.value?.id === next.id ? state.value : null
@@ -31,6 +35,17 @@ export function useSession() {
       product = segments.length || start !== prev.product.segments.length
         ? {...prev.product, segments: prev.product.segments.slice(0, start).concat(segments)} : prev.product
     }
+    let counterWindows = next.counter_windows
+    if (!counterWindows) {
+      if (!prev || !next.counter_windows_delta) throw Error('计数窗记录已改变，请刷新实验。')
+      counterWindows = prev.counter_windows
+      for (const [device, change] of Object.entries(next.counter_windows_delta)) {
+        const previous = counterWindows[device] ?? []
+        if (change.start < 0 || change.start > previous.length) throw Error('计数窗记录已改变，请刷新实验。')
+        if (counterWindows === prev.counter_windows) counterWindows = {...counterWindows}
+        counterWindows[device] = previous.slice(0, change.start).concat(change.windows)
+      }
+    }
     if (prev) {
       next.definition = prev.definition
       next.settings = stable(prev.settings, next.settings)
@@ -39,8 +54,10 @@ export function useSession() {
       next.calibration_context = stable(prev.calibration_context, next.calibration_context)
       next.calibrated_devices = stable(prev.calibrated_devices, next.calibrated_devices)
       next.readout = stable(prev.readout, next.readout)
+      next.particle_flow = stable(prev.particle_flow, next.particle_flow)
     }
-    state.value = {...next, product}
+    const accepted = {...next, product, counter_windows: counterWindows}
+    state.value = accepted
     if (!next.frozen) {
       confirming.value = false
       confirmationId = dismissedConfirmationId = null
@@ -49,6 +66,7 @@ export function useSession() {
       confirmationId = next.confirmation_id
       confirming.value = true
     }
+    return accepted
   }
   function serial<T>(fn: () => Promise<T>) {
     pending++
@@ -64,8 +82,8 @@ export function useSession() {
   async function action(name: string, fields: Record<string, unknown> = {}, session = state.value?.id) {
     const s = state.value
     if (!s || s.id !== session) throw Error('实验已变更，请重新执行操作。')
-    const next = await api<Snapshot | null>('action', {session: s.id, product_cursor: s.product_cursor, action: name, ...fields})
-    if (next) accept(next)
+    const next = await api<Snapshot | null>('action', {session: s.id, product_cursor: s.product_cursor, window_cursor: s.window_cursor, action: name, ...fields})
+    return next ? accept(next) : null
   }
   const act: Act = (name, fields, session = state.value?.id) => {
     return serial(() => action(name, fields, session))
@@ -91,6 +109,25 @@ export function useSession() {
       enter(next, 'archive' in args || 'draft' in args ? 'instrument' : 'setup',
         'draft' in args ? next.recovered_s : null)
       history.pushState({id: next.id, page: page.value}, '', labUrl())
+    })
+  }
+  function openPackage(file: File) {
+    return serial(async () => {
+      if (state.value) throw Error('请先退出当前实验，再打开实验文件。')
+      const next = await api<Snapshot>('open_package', {file: await filePayload(file)})
+      enter(next, 'instrument')
+      history.pushState({id: next.id, page: 'instrument'}, '', labUrl())
+    })
+  }
+  function replacePackage(file: File, save: boolean) {
+    const session = state.value?.id, round = confirmationId
+    return serial(async () => {
+      if (!session || !confirming.value) throw Error('请先确认是否替换当前实验。')
+      const next = await api<Snapshot>('replace_package', {session, confirmation_id: round, save, file: await filePayload(file)})
+      confirming.value = false
+      confirmationId = dismissedConfirmationId = null
+      enter(next, 'instrument')
+      history.replaceState({id: next.id, page: 'instrument'}, '', labUrl())
     })
   }
   function askExit() {
@@ -173,12 +210,17 @@ export function useSession() {
     const tag = revision
     polling = true
     try {
-      const query = new URLSearchParams({session: current.id, product_cursor: current.product_cursor})
+      const query = new URLSearchParams({session: current.id, product_cursor: current.product_cursor, window_cursor: current.window_cursor})
       const result = await api<Snapshot>('state?' + query)
-      if (revision === tag && state.value?.id === current.id) accept(result)
+      if (revision === tag && state.value?.id === current.id) {
+        accept(result)
+        if (error.value === pollError) error.value = ''
+        pollError = ''
+      }
     } catch (e) {
       if (revision === tag) {
-        error.value = errorMessage(e)
+        pollError = errorMessage(e)
+        error.value = pollError
         if (e instanceof ApiError && e.status === 400) {
           // Another tab may have closed this session. Return to the catalogue
           // without applying its queued commands to a different session.
@@ -208,5 +250,5 @@ export function useSession() {
     window.removeEventListener('pageshow', resume)
     window.removeEventListener('popstate', navigate)
   })
-  return {state, catalog, page, confirming, recovered, message, error, act, report, open, askExit, cancelExit, finish, setPage}
+  return {state, catalog, page, confirming, recovered, message, error, act, report, open, openPackage, replacePackage, askExit, cancelExit, finish, setPage}
 }

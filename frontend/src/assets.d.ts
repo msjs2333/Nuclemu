@@ -1,3 +1,5 @@
+declare module '*?raw' { const source: string; export default source }
+
 declare module '*/draw.js' {
   import type {Edge, Series} from './types'
   export function drawConnections(canvas: HTMLCanvasElement, connections: Edge[]): void

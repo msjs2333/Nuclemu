@@ -7,12 +7,15 @@ const ports = new Map(Object.entries({
   'beta-probe': {inX: .06, outX: .97, beamY: .45, outY: .35},
   mca:          {inX: .025, outX: .95, beamY: .60, outY: .52},
   counter:      {inX: .05, outX: .94, beamY: .53, outY: .53},
+  // The dual-window housing has no drawn socket: these are schematic edge anchors.
+  'counter-dual': {inX: 12 / 426, outX: 399 / 426, beamY: .53, outY: .53},
 }))
 // Visible image bounds measured at opacity > 180/255, excluding soft shadows.
 const silhouettes: Record<string, number[]> = {
   source: [420,480,43,34,366,444], foil: [442,480,28,18,409,463],
   silicon: [496,430,22,55,469,388], 'beta-probe': [510,450,16,63,495,415],
   mca: [560,416,7,56,533,361], counter: [426,480,12,47,403,428],
+  'counter-dual': [426,480,11,46,399,426],
 }
 // Setup has a figure per selectable part; the catalog has one for the whole rig.
 // Coordinate once per root, with a single read phase followed by style writes.
@@ -44,7 +47,7 @@ function joinLayout(root: HTMLElement, figure: HTMLElement) {
 function layout(root: HTMLElement) {
   const images = Array.from(root.querySelectorAll<HTMLImageElement>('.rig-cell img'))
   const metrics = images.map(image => {
-    const box = silhouettes[image.dataset.illustration!]
+    const box = silhouettes[image.dataset.asset!] ?? silhouettes[image.dataset.illustration!]
     const cell = image.parentElement!
     const [width,height,left,top,right,foot] = box
     const cellWidth = cell.clientWidth, cellHeight = cell.clientHeight
@@ -54,7 +57,7 @@ function layout(root: HTMLElement) {
       physical: ['source','foil','silicon','beta-probe'].includes(image.dataset.illustration!)}
   })
   const physical = metrics.filter(m => m.physical)
-  const beamHeight = Math.min(...physical.map(m => m.beam*m.scale))
+  const beamHeight = physical.length ? Math.min(...physical.map(m => m.beam*m.scale)) : 0
   const symbols = Array.from(root.querySelectorAll<HTMLElement>('.rig-symbol')).map(symbol => ({
     symbol, height: symbol.parentElement!.clientHeight,
   }))
@@ -67,6 +70,11 @@ function layout(root: HTMLElement) {
       left: `${(m.cellWidth-(m.right+m.left)*scale)/2}px`,
       top: `${m.cellHeight*.90-m.foot*scale}px`,
     })
+    const material = m.image.parentElement!.querySelector<HTMLElement>('.foil-material')
+    if (material) Object.assign(material.style, {
+      left: `${(m.cellWidth-(m.right+m.left)*scale)/2 + m.width*scale*.53}px`,
+      top: `${m.cellHeight*.90-m.foot*scale + m.height*scale*.44}px`,
+    })
   }
   for (const {symbol, height} of symbols) {
     // An unknown part remains a named schematic node on the particle axis.
@@ -76,6 +84,7 @@ function layout(root: HTMLElement) {
   if (outer) outer.dispatchEvent(new Event('rig-layout'))
   const inner = root.querySelector<HTMLCanvasElement>('canvas.rig-lines')
   if (inner) inner.dispatchEvent(new Event('rig-layout'))
+  root.dispatchEvent(new Event('apparatus-layout'))
 }
 </script>
 
@@ -84,8 +93,11 @@ import {computed, onBeforeUnmount, onMounted, ref, watch} from 'vue'
 import {drawConnections} from '/draw.js'
 import type {Part, Edge} from './types'
 
-const props = defineProps<{parts: Part[]; edges?: Edge[]}>()
-const nodes = computed(() => props.parts.map(part => ({part, port: ports.get(part.illustration ?? '')})))
+const props = defineProps<{parts: Part[]; edges?: Edge[]; variants?: Record<string, string>}>()
+const nodes = computed(() => props.parts.map(part => {
+  const asset = props.variants?.[part.id] ?? part.illustration ?? ''
+  return {part, asset, port: ports.get(asset) ?? ports.get(part.illustration ?? '')}
+}))
 const figure = ref<HTMLElement>()
 const wiring = ref<HTMLCanvasElement>()
 let shared: ReturnType<typeof joinLayout> | undefined
@@ -97,6 +109,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => shared?.release())
 watch(() => props.parts.map(p => `${p.id}:${p.illustration}`).join('|'), paint, {flush: 'post'})
+watch(() => props.variants, paint, {flush: 'post'})
 watch(() => props.edges, edges => {
   if (wiring.value && edges) drawConnections(wiring.value, edges)
 }, {flush: 'post'})
@@ -105,11 +118,16 @@ watch(() => props.edges, edges => {
 <template>
   <div ref="figure" class="rig-figure" aria-hidden="true" @load.capture="paint">
     <canvas v-if="edges?.length" ref="wiring" class="rig-lines"></canvas>
-    <div v-for="{part, port} in nodes" :key="part.id" class="rig-cell">
-      <img v-if="port" :data-node="part.id" :data-illustration="part.illustration" :data-in-x="port.inX" :data-out-x="port.outX"
+    <div v-for="{part, asset, port} in nodes" :key="part.id" class="rig-cell">
+      <img v-if="port" :data-node="part.id" :data-illustration="part.illustration" :data-asset="asset" :data-in-x="port.inX" :data-out-x="port.outX"
         :data-beam-y="port.beamY" :data-out-y="port.outY"
-        :src="'/rig-' + part.illustration + '.webp'" alt="" draggable="false">
+        :src="'/rig-' + asset + '.webp'" alt="" draggable="false">
       <div v-else class="rig-symbol" :data-node="part.id">{{ part.label }}</div>
+      <span v-if="port && part.illustration === 'foil' && asset !== 'foil-empty'" class="foil-material">Al</span>
     </div>
   </div>
 </template>
+
+<style scoped>
+.foil-material { position: absolute; transform: translate(-50%, -50%); color: #394354; font-size: 15px; font-weight: 600; pointer-events: none; }
+</style>

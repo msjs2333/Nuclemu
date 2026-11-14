@@ -8,41 +8,117 @@ from tempfile import NamedTemporaryFile, TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from nuclemu.core import Device, Experiment, Session
+from nuclemu.core import Device, Experiment, Parameter, Session, SignalOutput
 from nuclemu.workbench import Workbench
 from nuclemu.results import collect, net_count_rate
 
 
 class WorkbenchTests(unittest.TestCase):
+    def test_saved_counter_subtraction_uses_source_and_interval_not_round_number(self):
+        definition = Experiment("saved", "Saved", "", (), (Device("counter", "counter", "Counter"),),
+                                lambda *args: {"counter": (0,)})
+        c = Workbench(definitions={"saved": definition})
+        def segment(start, end, counts):
+            return dict(start_s=start, end_s=end, acquisition=1, settings={}, readings={"counter": [counts]})
+        class View:
+            def __init__(self, segments, origins):
+                self.segments, self.origins = segments, origins
+            def product(self):
+                return {"segments": self.segments}
+            def measurement_origin(self, index=None):
+                return "live-package" if index is None else self.origins[index]
+        c.lab.view = View([segment(0, 3, 30), segment(0, 5, 50)], ["package-A", "package-A"])
+        c.set_background(0)
+        with self.assertRaisesRegex(ValueError, "nonoverlapping"):
+            c.readout_for(1)
+        self.assertTrue(c.readout_for(0)["background_reference"])
+        c.lab.view = View([segment(0, 3, 30), segment(0, 3, 60)], ["package-A", "package-B"])
+        self.assertEqual(c.readout_for(1)["net_rate"], 10)
+        c.lab.view = View([segment(0, 3, 30), segment(3, 5, 20)], ["package-A", "package-A"])
+        self.assertEqual(c.readout_for(1)["net_rate"], 0)
+        self.assertIsNone(c.lab.selected)
+
+    def test_roi_counts_and_mixed_gain_cumulative_calibration(self):
+        definition = Experiment("gain", "Gain", "",
+            (Parameter("gain", "Gain", "", 1, 1, 2),),
+            (Device("mca", "spectrum", "MCA", 4, calibration_parameters=("gain",), input="out"),),
+            lambda settings, start, end, rng: {"out": (1, 2, 3, 4)},
+            outputs=(SignalOutput("out", "Detector", channels=4),))
+        c = Workbench(definitions={"gain": definition})
+        c.set_output("out", True)
+        c.start(device="mca")
+        c.advance(1)
+        history = c.snapshot(cache=False)
+        c.configure({"gain": 2})
+        c.advance(1)
+        c.select(1)
+        calibration = c.calibrate(0, 0, 3, 6)
+        single = c.readout(1, 2)
+        self.assertEqual(single["roi_counts"], 5)
+        self.assertAlmostEqual(single["energy_MeV"], 3.2)
+        c.select(None)
+        cumulative = c.readout(1, 2)
+        self.assertEqual((cumulative["counts"], cumulative["roi_counts"]), (20, 10))
+        self.assertAlmostEqual(cumulative["centroid"], 1.6)
+        self.assertIsNone(cumulative["energy_MeV"])
+        self.assertIsNone(c.active_calibration())
+        self.assertAlmostEqual(c.readout_for(1, 1, 2)["energy_MeV"], 3.2)
+        with self.assertRaisesRegex(ValueError, "matching instrument settings"):
+            c.calibrate(0, 0, 3, 6)
+        self.assertEqual(c.lab.calibrations["mca"], calibration)
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            c.apply_calibration(calibration)
+        single_channel = c.readout(0, 0)
+        self.assertEqual(single_channel["roi_counts"], 2)
+        with self.assertRaises(ValueError):
+            c.readout(0, 4)
+        before = (dict(c.session.settings), c.session.records.copy(), c.session.instrument("mca"),
+                  c.lab.selected, c.session._rng.getstate())
+        historical_calibration = c.calibrate_snapshot(history, 0, 0, 3, 3)
+        self.assertEqual(dict(historical_calibration.conditions), {"gain": 1})
+        self.assertAlmostEqual(c.readout_snapshot(history, 1, 2, calibration=historical_calibration)["energy_MeV"], 1.6)
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            c.apply_snapshot_calibration(history, calibration)
+        with self.assertRaisesRegex(ValueError, "matching instrument settings"):
+            c.calibrate_snapshot(c.snapshot(cache=False), 0, 0, 3, 6)
+        c.apply_snapshot_calibration(history, historical_calibration)
+        self.assertEqual(c.lab.calibrations["mca"], historical_calibration)
+        self.assertEqual((dict(c.session.settings), c.session.records, c.session.instrument("mca"),
+                          c.lab.selected, c.session._rng.getstate()), before)
+
     def test_beta_reference_reading_background_export_and_repeated_display(self):
         c = Workbench(seed=42)
         c.switch("beta")
+        c.set_output("beta_detector", True)
         c.configure({"source_present": "0"})
-        c.start(1.25)
+        c.start(1.25, device="counter")
         c.advance(1.25)
+        c.snapshot(device="counter")
+        c.clear(device="counter")
         c.configure({"source_present": "1", "foil_count": "4"})
-        c.start(2.5)
+        c.start(2.5, device="counter")
         for _ in range(25):
             c.advance(.1)
             c.readout()
         c.set_background(0)
-        self.assertEqual([s["readings"]["counter"] for s in c.product()["segments"]], [[1], [122]])
+        self.assertEqual([s["readings"]["counter"] for s in c.product()["segments"]], [[61], [3774]])
         reading = c.readout()
         self.assertEqual(reading["exposure_s"], 2.5)
-        self.assertEqual((reading["net_rate"], reading["uncertainty"]), net_count_rate(122, 2.5, 1, 1.25))
+        self.assertEqual((reading["net_rate"], reading["uncertainty"]), net_count_rate(3774, 2.5, 61, 1.25))
         records = list(c.session.records)
         with TemporaryDirectory() as directory:
             path = Path(directory) / "beta.json"
             c.export(path, all_segments=True)
             self.assertFalse(c.unsaved())
-            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), c.product())
+            expected = dict(c.product(), devices={"counter": c.product()["devices"]["counter"]})
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), expected)
             c.select(0)
             self.assertTrue(c.readout()["background_reference"])
             c.export(path.with_suffix(".csv"))
             with path.with_suffix(".csv").open(encoding="utf-8", newline="") as stream:
                 rows = list(csv.DictReader(stream))
             self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["counts"], "1")
+            self.assertEqual(rows[0]["counts"], "61")
         for _ in range(10):
             c.product()
             c.readout()
@@ -51,15 +127,20 @@ class WorkbenchTests(unittest.TestCase):
     def test_alpha_reference_roi_and_bound_calibration_round_trip(self):
         c = Workbench(seed=187)
         c.switch("alpha")
-        c.start()
+        c.set_output("alpha_detector", True)
+        c.configure({"source_present": 1})
+        c.start(device="mca")
         c.advance(2.25)
         c.stop()
-        c.configure({"foil_um": "5"})
-        c.start(1.25)
+        c.snapshot(device="mca")
+        c.clear(device="mca")
+        c.configure({"foil_spec_um": "1", "foil_count": "5"})
+        c.start(1.25, device="mca")
         c.advance(1.25)
         spectra = [s["readings"]["mca"] for s in c.product()["segments"]]
-        self.assertEqual(list(map(sum, spectra)), [172, 92])
+        self.assertEqual(list(map(sum, spectra)), [172, 86])
         self.assertEqual(c.readout(0, 1)["centroid"], None)
+        self.assertEqual(c.readout(0, 1)["roi_counts"], 0)
         with self.assertRaises(ValueError):
             c.readout(-1, 5)
         c.select(0)
@@ -75,7 +156,7 @@ class WorkbenchTests(unittest.TestCase):
             with (Path(directory) / "alpha.csv").open(encoding="utf-8", newline="") as stream:
                 rows = list(csv.DictReader(stream))
             self.assertEqual(len(rows), 2048)
-            self.assertEqual(sum(int(r["counts"]) for r in rows), 264)
+            self.assertEqual(sum(int(r["counts"]) for r in rows), 258)
             self.assertEqual(rows[1000]["energy_MeV"], "6.0")
             c.switch("beta")
             with self.assertRaises(ValueError):
@@ -83,7 +164,8 @@ class WorkbenchTests(unittest.TestCase):
 
     def test_pause_speed_stop_and_switch_preserve_unsaved_partial_exposure(self):
         c = Workbench(seed=187)
-        c.start()
+        c.set_output("alpha_detector", True)
+        c.start(device="mca")
         c.set_speed(2)
         c.advance(.125)
         c.paused = True
@@ -95,9 +177,10 @@ class WorkbenchTests(unittest.TestCase):
         self.assertEqual(c.readout()["exposure_s"], .25)
         self.assertTrue(c.unsaved())
         c.paused = False
-        c.start(.25)
+        c.start(.5, device="mca")
         c.advance(.125)
-        self.assertEqual(len(c.product()["segments"]), 2)
+        self.assertEqual(c.readout()["exposure_s"], .5)
+        self.assertEqual(c.session.instrument("mca").acquisition, 1)
         for value in (0, -1, "nan", "inf"):
             with self.assertRaises(ValueError):
                 c.set_speed(value)
@@ -105,7 +188,9 @@ class WorkbenchTests(unittest.TestCase):
     def test_invalid_parameter_form_is_atomic_and_does_not_close_window(self):
         c = Workbench()
         c.switch("beta")
-        c.start()
+        c.configure({"source_present": 1})
+        c.set_output("beta_detector", True)
+        c.start(device="counter")
         c.advance(.25)
         with self.assertRaises(ValueError):
             c.configure({"source_present": 0, "foil_count": 1.5})
@@ -145,20 +230,25 @@ class WorkbenchTests(unittest.TestCase):
             c = Workbench(seed=seed)
             c.switch(experiment)
             reference = Session(c.session.experiment, seed)
+            device = "mca" if experiment == "alpha" else "counter"
+            output = c.session.experiment.devices[0].input
+            c.set_output(output, True)
+            reference.set_output(output, True)
             if experiment == "beta":
                 c.configure({"source_present": 0})
                 reference.set("source_present", 0)
-            c.start(first)
-            reference.start(first)
+            c.start(first, device=device)
+            reference.start(first, device=device)
             reference.advance(first)
             for _ in range(int(first / .05)):
                 c.advance(.05)
                 c.product()
             c.configure(setting)
-            for key, value in setting.items():
-                reference.set(key, value)
-            c.start(second)
-            reference.start(second)
+            reference.configure(setting)
+            c.clear(device=device)
+            reference.clear(device=device)
+            c.start(second, device=device)
+            reference.start(second, device=device)
             reference.advance(second)
             for _ in range(int(second / .05)):
                 c.advance(.05)
@@ -173,8 +263,10 @@ class SaveTrackingTests(unittest.TestCase):
         self.path = Path(self.directory.name) / "reading.json"
         self.c = Workbench(seed=42)
         self.c.switch("beta")
+        self.c.set_output("beta_detector", True)
         for _ in range(2):
-            self.c.start(1)
+            self.c.clear(device="counter")
+            self.c.start(1, device="counter")
             self.c.advance(1)
 
     def test_overwriting_single_segment_invalidates_only_replaced_coverage(self):
@@ -310,6 +402,7 @@ class SaveTrackingTests(unittest.TestCase):
         c.export(self.path, all_segments=True)
         self.assertFalse(c.unsaved())
         c.switch("alpha")
+        c.set_output("alpha_detector", True)
         c.start(1)
         c.advance(1)
         c.export(self.path)
@@ -332,7 +425,9 @@ class SaveTrackingTests(unittest.TestCase):
 
     def test_old_partial_copy_does_not_cover_new_exposure_and_no_external_polling(self):
         c = self.c
-        c.start()
+        c.clear(device="counter")
+        c.configure_acquisition(device="counter", duration_s=None)
+        c.start(device="counter")
         c.advance(1)
         c.export(self.path, all_segments=True)
         c.advance(1)
@@ -377,6 +472,7 @@ class SaveTrackingTests(unittest.TestCase):
     def test_measurement_and_calibration_replace_each_others_file_coverage(self):
         c = self.c
         c.switch("alpha")
+        c.set_output("alpha_detector", True)
         c.start(1)
         c.advance(1)
         c.calibrate(0, 0, 1000, 6)

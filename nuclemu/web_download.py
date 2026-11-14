@@ -1,13 +1,15 @@
 """Package the selected measurement products from a single physical instant."""
 
 from io import BytesIO
-import re
 from zipfile import ZipFile
+
+from .download_names import calibration_label, download_prefix, measurement_label
 
 
 def make_download(lab, products):
     if not isinstance(products, list) or not products:
         raise ValueError("请选择要导出的测量产品。")
+    prefix = download_prefix(lab.info)
 
     def file_for(item):
         content = lab.export(item)
@@ -18,8 +20,9 @@ def make_download(lab, products):
             label = f"segment-{indices[0] + 1}"
         else:
             label = "segments"
-        stem = re.sub(r"[^\w.-]+", "_", f"{lab.info['id']}-{item['device']}-{label}").strip(".")
-        return f"{stem}.{item['format']}", content
+        label = (calibration_label(lab.info, item['device']) if item.get("kind") == "calibration"
+                 else f"{measurement_label(lab.info, item['device'])}-{label}")
+        return f"{prefix}_{label}.{item['format']}", content
 
     if len(products) == 1:
         name, data = file_for(products[0])
@@ -30,5 +33,5 @@ def make_download(lab, products):
     with ZipFile(output, "w") as archive:
         for position, item in enumerate(products, 1):
             name, data = file_for(item)
-            archive.writestr(f"{position}-{name}", data)
-    return "nuclemu-products.zip", "application/zip", output.getvalue()
+            archive.writestr(f"{prefix}_{position:03d}_{name[len(prefix)+1:]}", data)
+    return f"{prefix}_records.zip", "application/zip", output.getvalue()

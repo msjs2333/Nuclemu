@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "license": "GPL-3.0",
+  "license_file": "LICENSE",
+  "assets": [
+    {
+      "id": "rig-counter-dual",
+      "revision": 1,
+      "path": "nuclemu/static/rig-counter-dual.webp",
+      "role": "equipment-cutout",
+      "intended_equipment": "one teaching counter with A and B windows",
+      "size_px": [
+        426,
+        480
+      ],
+      "format": "lossless WebP",
+      "mode": "RGBA",
+      "bytes": 111598,
+      "sha256": "1b40f7ff7540923829505b04b473c1c6929090f9a3eb5c80aaed903956474579",
+      "transparent": true,
+      "alpha_range": [
+        0,
+        255
+      ],
+      "body_bbox_px_alpha_gt_180": [
+        11,
+        46,
+        399,
+        426
+      ],
+      "ground_y_px": 426,
+      "display_inset_polygons_px": {
+        "A": [
+          [
+            58,
+            158
+          ],
+          [
+            155,
+            159
+          ],
+          [
+            155,
+            232
+          ],
+          [
+            58,
+            231
+          ]
+        ],
+        "B": [
+          [
+            181,
+            159
+          ],
+          [
+            276,
+            160
+          ],
+          [
+            276,
+            233
+          ],
+          [
+            181,
+            232
+          ]
+        ]
+      },
+      "display_regions_status": "Conservative visually measured interior regions; text overlays have not been integrated or tested",
+      "connection_anchors": {
+        "kind": "schematic housing-edge attachment, not physical sockets",
+        "input_normalized": [
+          0.028169014084507043,
+          0.53
+        ],
+        "output_normalized": [
+          0.9366197183098591,
+          0.53
+        ]
+      },
+      "connection_anchors_status": "Selected for apparatus schematic; housing-edge and display alignment checked during integration",
+      "description": "A single light-grey teaching counter with blank A and B display windows.",
+      "creation_method": "Built-in ImageGen edit and revision of the project counter; Pillow frame/size export preserving generated alpha",
+      "visual_inputs": [
+        {
+          "path": "nuclemu/static/rig-counter.webp",
+          "role": "project equipment geometry and visual style reference"
+        }
+      ],
+      "sources": [],
+      "limitations": [
+        "Fictional teaching housing, not a specified commercial instrument",
+        "No physical dimensions or electrical topology specified",
+        "Unmarked knobs do not establish implemented controls",
+        "Blank display windows contain no measurements"
+      ],
+      "review_state": "Artwork approved; apparatus integration is a separate change",
+      "source_commit": "18590189e4b920617131b297dbdb78772b9a5662",
+      "provenance": "Built-in ImageGen edit of the tracked Nuclemu counter illustration; GNU GPL version 3, repository LICENSE applies."
+    }
+  ]
+}

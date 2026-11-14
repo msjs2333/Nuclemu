@@ -4,6 +4,7 @@ from copy import deepcopy
 from tempfile import TemporaryDirectory
 import unittest
 
+from nuclemu.catalog import discover
 from nuclemu.core import Device, Experiment, Parameter, Session
 from nuclemu.physics import poisson
 from nuclemu.web_session import Application
@@ -28,6 +29,33 @@ class StopOwnershipTests(unittest.TestCase):
 
     def call(self, action, **data):
         return self.app.request("/api/action", dict(session=self.app.lab.id, action=action, **data))
+
+    def test_course_stop_binds_device_acquisition_and_gate_cycle(self):
+        self.app = Application(discover(), self.folder.name, clock=lambda: self.now)
+        self.app.open({"experiment": "beta", "seed": 187})
+        self.call("output", output="beta_detector", enabled=True)
+        first = self.call("start", device="counter", duration=2)
+        acquisition = first["active_acquisition"]
+        cycle = first["instrument"]["cycle"]
+        self.now = .25
+        self.call("stop", device="counter", acquisition=acquisition, cycle=cycle)
+        resumed = self.call("start", device="counter", duration=2)
+        self.assertEqual(resumed["active_acquisition"], acquisition)
+        self.assertNotEqual(resumed["instrument"]["cycle"], cycle)
+        self.now = .5
+        with self.assertRaisesRegex(ValueError, "采集门"):
+            self.call("stop", device="counter", acquisition=acquisition, cycle=cycle)
+        self.assertEqual(self.app.lab.time_s(), .25)
+        with self.assertRaises(ValueError):
+            self.call("stop", device="counter_b", acquisition=acquisition,
+                      cycle=resumed["instrument"]["cycle"])
+        with self.assertRaises(ValueError):
+            self.call("stop", acquisition=acquisition, cycle=resumed["instrument"]["cycle"])
+        stopped = self.call("stop", device="counter", acquisition=acquisition,
+                            cycle=resumed["instrument"]["cycle"])
+        self.assertFalse(stopped["running"])
+        self.assertEqual(stopped["measurement_end_s"], .5)
+        self.assertEqual(sum(row.exposure_s for row in self.app.lab.work.session.records), .5)
 
     def test_old_stop_does_not_settle_or_stop_the_next_gate_and_valid_stop_closes_its_tail(self):
         first = self.call("start", duration=10)["active_acquisition"]
