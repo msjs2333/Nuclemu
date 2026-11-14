@@ -1,4 +1,4 @@
-"""The existing wiring disclosure renders the shared course overview source."""
+"""Apparatus help is an independent layer using the shared course overview."""
 
 from pathlib import Path
 import unittest
@@ -16,14 +16,17 @@ class ApparatusOverviewBrowserTests(unittest.TestCase):
     enter = fixtures.CatalogRecordsBrowserTests.enter
     screenshot = fixtures.CatalogRecordsBrowserTests.screenshot
 
-    def test_both_builtin_overviews_match_source_in_existing_disclosure(self):
+    def test_builtin_overviews_open_independently_and_return_to_selection(self):
         source = Path('docs/apparatus-overview.md').read_text(encoding='utf-8')
         for course, title in [('alpha', 'α 能量损失'), ('beta', 'β 吸收')]:
             with self.subTest(course=course):
                 self.enter(course)
+                self.page.locator('[data-part=detector]').click()
+                expect(self.page.locator('[data-part=detector]')).to_have_attribute('aria-pressed', 'true')
                 box = self.page.locator('#connections')
                 expect(box.locator('.markdown-body')).not_to_be_visible()
-                box.locator('summary').click()
+                self.page.locator('#show-connections').click()
+                expect(box).to_be_visible()
                 section = source.split('## ' + title, 1)[1].split('\n## ', 1)[0].strip()
                 expect(box.locator('.markdown-body p')).to_have_text(section.split('\n\n'))
                 expect(box.locator('ul')).to_have_count(0)
@@ -31,6 +34,11 @@ class ApparatusOverviewBrowserTests(unittest.TestCase):
                 bounds = box.bounding_box()
                 self.assertLessEqual(bounds['y'] + bounds['height'], 768)
                 self.screenshot('apparatus-overview-' + course)
+                self.page.keyboard.press('Escape')
+                expect(box).not_to_be_visible()
+                expect(self.page.locator('#show-connections')).to_be_focused()
+                expect(self.page.locator('[data-part=detector]')).to_have_attribute('aria-pressed', 'true')
+                expect(self.page.locator('#introduction-tab')).to_have_attribute('aria-selected', 'true')
                 self.page.locator('#menu-file').click()
                 self.page.locator('#leave').click()
                 self.page.locator('#discard').click()
@@ -42,6 +50,6 @@ class ApparatusOverviewBrowserTests(unittest.TestCase):
         self.page.reload()
         self.enter(course.id)
         box = self.page.locator('#connections')
-        box.locator('summary').click()
+        self.page.locator('#show-connections').click()
         expect(box.locator('.markdown-body')).to_have_count(0)
         expect(box.locator('li')).to_have_count(2)

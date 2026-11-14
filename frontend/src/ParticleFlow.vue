@@ -37,7 +37,7 @@ function paint(now: number) {
     const phase = props.enabled ? now / 2300 : .38
     const top = Math.max(14, Math.min(source.y, detector.y) - 92)
     const bottom = Math.min(height - 58, Math.max(source.y, detector.y) + 92)
-    g.save(); g.beginPath(); g.rect(source.x - 28, top, distance + 30, bottom - top); g.clip()
+    g.save(); g.beginPath(); g.rect(source.x - 28, top, distance + 42, bottom - top); g.clip()
     // Low-contrast environmental motion remains when the source is absent.
     g.fillStyle = '#748b99'; g.strokeStyle = '#748b99'
     for (let i = 0; i < 13; i++) {
@@ -59,6 +59,17 @@ function paint(now: number) {
           g.globalAlpha = .72; g.beginPath(); g.arc(x, y, 2, 0, Math.PI * 2); g.fill()
         }
       }
+      // Qualitative particles moving away on both sides of the detector face.
+      // Their placement and density do not represent a scattering distribution.
+      for (const side of [-1, 1]) {
+        for (let ray = 0; ray < 3; ray++) {
+          const position = (phase * .7 + ray * .29) % 1
+          const x = detector.x - 6 - position * (36 + ray * 12)
+          const y = detector.y + side * (14 + position * (42 + ray * 10))
+          g.fillStyle = '#bd642e'; g.globalAlpha = .6
+          g.beginPath(); g.arc(x, y, 1.8, 0, Math.PI * 2); g.fill()
+        }
+      }
     }
     g.restore(); g.globalAlpha = 1
   }
@@ -75,12 +86,14 @@ onMounted(() => {
   visibility = new IntersectionObserver(entries => { visible = entries[0].isIntersecting; geometry() })
   visibility.observe(canvas.value!)
   canvas.value!.parentElement!.addEventListener('load', geometry, true)
+  canvas.value!.parentElement!.addEventListener('apparatus-layout', geometry)
   document.addEventListener('visibilitychange', restart)
   geometry()
 })
 onBeforeUnmount(() => {
   cancelAnimationFrame(frame); resize.disconnect(); visibility.disconnect()
   canvas.value?.parentElement?.removeEventListener('load', geometry, true)
+  canvas.value?.parentElement?.removeEventListener('apparatus-layout', geometry)
   document.removeEventListener('visibilitychange', restart)
 })
 </script>
