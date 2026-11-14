@@ -1,0 +1,56 @@
+name: macOS installers
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/macos-installers.yml'
+      - 'packaging/macos/**'
+      - 'nuclemu/**'
+      - 'pyproject.toml'
+      - 'LICENSE'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Build and verify ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: macos-15-intel
+          - arch: arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Build disk image
+        run: bash packaging/macos/build.sh "${{ matrix.arch }}"
+      - name: Exercise the installed application
+        run: |
+          /Library/Frameworks/Python.framework/Versions/3.14/bin/python3.14 \
+            packaging/macos/smoke.py \
+            --dmg dist/macos/${{ matrix.arch }}/Nuclemu-0.0.1-macos-${{ matrix.arch }}.dmg \
+            --output build/macos-smoke-${{ matrix.arch }}
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Nuclemu-macos-${{ matrix.arch }}
+          path: |
+            dist/macos/${{ matrix.arch }}/Nuclemu-0.0.1-macos-${{ matrix.arch }}.dmg
+            dist/macos/${{ matrix.arch }}/SHA256SUMS
+            dist/macos/${{ matrix.arch }}/build-info.json
+          if-no-files-found: error
+          compression-level: 0
+      - uses: actions/upload-artifact@v6
+        with:
+          name: macOS-acceptance-${{ matrix.arch }}
+          path: |
+            build/macos-smoke-${{ matrix.arch }}/report.json
+            build/macos-smoke-${{ matrix.arch }}/revision-2/*.nuclemu
+          if-no-files-found: error
