@@ -28,3 +28,7 @@ docker run --rm -v "$PWD:/src" -e NUCLEMU_SOURCE_SHA="$(git rev-parse HEAD)" nuc
 ```
 
 产物位于 `dist/release/`，每个文件附 SHA256。`BUILD-INFO.json` 记录源码、版本和运行时基线；`licenses/` 按实际携带的共享库查询 Debian 所属包，仅保留相应版权通知及其引用的许可全文，另列入 Python 和 PyInstaller 许可。`--revision 0` 可制作较早候选供隔离升级验收，正式默认候选为 `0.0.1-1`。构建过程需下载工具与系统包；完成后的目标机运行不联网。实际验收范围见随本次交付的记录，尚未实测的平台不列为已支持。
+
+验收脚本只在可丢弃容器内以 root 调用；脚本会实际安装、升级、卸载包，应用进程使用隔离的普通用户。`accept.sh /artifacts /samples /evidence` 需要前一候选 `-0`、当前 `-1` 的 `.deb` 以及当前便携包，核对旧 α/β 文件和偏好保留、菜单入口及便携目录移动。`runtime-smoke.sh /artifacts /evidence` 在只有声明系统库的 `runtime` 镜像核对无系统 Python、Node、显示设备和外网的运行。`browser-smoke.sh /artifacts /samples /evidence` 在 `acceptance` 镜像配置临时用户的默认 Firefox，由桌面入口自动打开工作台并重开两课文件，保存截图及报告。三个脚本都以 `--network none` 运行，宿主目录仅挂载指定的包、样本和证据位置。
+
+0.0.1 的安装、`0.0.1-0` 到 `0.0.1-1` 升级、卸载、偏好及旧实验保留、便携目录移动和无显示服务已在 Debian 12 amd64 容器中通过。菜单入口和默认浏览器交接使用 Xvfb、Openbox 与 Firefox 153.7.0esr 复验。浏览器容器因用户命名空间受限，以测试环境变量关闭内容沙箱；这项记录不代表实体桌面、安全策略、Wayland 或其他发行版已获实机验证。
