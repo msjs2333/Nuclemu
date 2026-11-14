@@ -1,21 +1,29 @@
 <script setup lang="ts">
-import {nextTick, ref} from 'vue'
+import {computed, nextTick, ref} from 'vue'
 import {api, filePayload} from './api'
-import type {Act} from './types'
-const props = defineProps<{session: string; act: Act}>()
+import {fmt} from './display'
+import type {Act, Course} from './types'
+import {deviceName, instrumentBinding} from './instrumentBindings'
+const props = defineProps<{session: string; course: Course; act: Act}>()
 const emit = defineEmits<{task: [fn: () => Promise<void>]; notice: [message: string]}>()
 const input = ref<HTMLInputElement>(), dialog = ref<HTMLDialogElement>()
-type Preview = {token: string; device: string; items: {id: string; title: string; exposure_s: number}[]; overwrite_required: boolean; notice?: string}
+type Preview = {token: string; device: string; items: {id: string; title: string; exposure_s?: number; devices?: string[]; exposures?: Record<string, number>; historical_single?: boolean; overwrite_required?: boolean}[]; overwrite_required: boolean; notice?: string}
+function exposureLabel(item: Preview['items'][number]) {
+  if (!item.devices) return item.exposure_s == null ? '' : fmt(item.exposure_s) + ' s'
+  return item.devices.map(id => deviceName(props.course, id) + '：' + (item.exposures?.[id] == null ? '—' : fmt(item.exposures[id]) + ' s')).join('；')
+}
 const preview = ref<Preview | null>(null), selected = ref(''), busy = ref(false)
-let device = '', session = ''
+const chosen = computed(() => preview.value?.items.find(row => row.id === selected.value))
+const overwriteRequired = computed(() => chosen.value?.overwrite_required ?? preview.value?.overwrite_required ?? false)
+let component = '', session = ''
 async function inspect(file?: File) {
-  const result = await api<Preview>('inspect_measurement', {session, device, ...(file ? {file: await filePayload(file)} : {})})
+  const result = await api<Preview>('inspect_measurement', {session, component, ...(file ? {file: await filePayload(file)} : {})})
   if (props.session !== session) throw Error('实验已改变，请重新选择测量数据。')
   preview.value = result; selected.value = result.items[0]?.id ?? ''
   await nextTick(); dialog.value?.showModal()
 }
 function open(target: string, source: 'cache' | 'file') {
-  device = target; session = props.session
+  component = instrumentBinding(props.course, target).component?.id ?? ''; session = props.session
   if (source === 'file') input.value?.click()
   else emit('task', () => inspect())
 }
@@ -27,10 +35,11 @@ function fileChanged(event: Event) {
 function load() {
   if (!preview.value || busy.value) return
   const target = preview.value, identity = selected.value, original = session
+  const overwrite = overwriteRequired.value
   busy.value = true
   emit('task', async () => {
     try {
-      await props.act('load_measurement', {token: target.token, item_id: identity, overwrite: target.overwrite_required}, original)
+      await props.act('load_measurement', {token: target.token, item_id: identity, overwrite}, original)
       dialog.value?.close()
       emit('notice', target.notice || '测量数据已载入，可继续采集。')
     } finally { busy.value = false }
@@ -42,10 +51,11 @@ defineExpose({open})
   <input ref="input" id="measurement-file" type="file" accept=".nuclemu,.json,.csv" hidden @change="fileChanged">
   <dialog ref="dialog" id="measurement-load" aria-labelledby="measurement-load-title">
     <h2 id="measurement-load-title">载入测量数据</h2>
-    <label>测量记录 <select id="measurement-choice" v-model="selected"><option v-for="item in preview?.items" :key="item.id" :value="item.id">{{ item.title }} · {{ item.exposure_s }} s</option></select></label>
-    <p v-if="preview?.overwrite_required" id="measurement-overwrite">载入将覆盖当前测量数据</p>
-    <p>只替换所选仪器或窗，原记录和另一窗保持不变。</p>
+    <label>测量记录 <select id="measurement-choice" v-model="selected"><option v-for="item in preview?.items" :key="item.id" :value="item.id">{{ item.title }} · {{ exposureLabel(item) }}</option></select></label>
+    <p v-if="overwriteRequired" id="measurement-overwrite">载入将覆盖当前测量数据</p>
+    <p v-if="chosen?.historical_single">这是历史单窗读数，仅载入文件所记录的一窗，另一窗保持原样。</p>
+    <p v-else>载入作用于整台仪器，已保存的记录保持不变。</p>
     <p v-if="preview?.notice" id="measurement-mode">{{ preview.notice }}</p>
-    <div class="dialog-actions"><button id="measurement-cancel" :disabled="busy" autofocus @click="dialog?.close()">取消</button><button id="measurement-confirm" class="primary" :disabled="busy || !selected" @click="load">{{ preview?.overwrite_required ? '确认覆盖并载入' : '载入' }}</button></div>
+    <div class="dialog-actions"><button id="measurement-cancel" :disabled="busy" autofocus @click="dialog?.close()">取消</button><button id="measurement-confirm" class="primary" :disabled="busy || !selected" @click="load">{{ overwriteRequired ? '确认覆盖并载入' : '载入' }}</button></div>
   </dialog>
 </template>

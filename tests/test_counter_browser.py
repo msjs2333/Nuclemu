@@ -150,7 +150,7 @@ class CounterBrowserTests(unittest.TestCase):
         self.configure('source_present', 1)
         self.assertEqual(self.state()['gates'], {'counter': True, 'counter_b': True})
         self.now = 1.5
-        expect(self.page.locator('#gate-status')).to_have_attribute('data-running', 'false')
+        expect(self.page.locator('#stop')).to_be_disabled()
         expect(self.page.locator('.counter-window')).to_have_count(2)
         for panel in self.page.locator('.counter-window').all():
             expect(panel.locator('tbody tr')).to_have_count(1)

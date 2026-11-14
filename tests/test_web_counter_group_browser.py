@@ -1,4 +1,4 @@
-"""Whole-counter controls preserve window readings and explicit local file targets."""
+"""Whole-counter controls preserve window readings and save the two windows together."""
 import unittest
 import test_catalog_records_browser as fixtures
 if fixtures.sync_playwright:
@@ -27,19 +27,19 @@ class CounterGroupBrowserTests(unittest.TestCase):
         self.action('configure',lambda:self.page.get_by_role('button',name='应用参数').click())
         fixtures.enable_output(self)
         self.page.locator('#mode').select_option('count')
-        self.page.locator('#count-limit').fill('100')
+        self.page.locator('#count-limit').fill('11600')
         self.action('start_group',lambda:self.page.locator('#start').click())
         self.now=1
         expect(self.page.locator('.counter-window[data-device=counter] .window-state')).to_have_text('到限暂停')
         expect(self.page.locator('.counter-window[data-device=counter_b] .window-state')).to_have_text('采集中')
-        expect(self.page.locator('#gate-status')).to_have_attribute('data-running','true')
+        expect(self.page.locator('#stop')).to_be_enabled()
         expect(self.page.locator('#start')).to_be_disabled()
         expect(self.page.locator('#stop')).to_be_enabled()
         expect(self.page.locator('#mode')).to_be_disabled()
         expect(self.page.locator('#count-limit')).to_be_disabled()
         self.screenshot('step3-opposite-mixed-limit')
         self.action('stop_group',lambda:self.page.locator('#stop').click())
-        expect(self.page.locator('#gate-status')).to_have_attribute('data-running','false')
+        expect(self.page.locator('#stop')).to_be_disabled()
         expect(self.page.locator('#mode')).to_be_enabled()
 
     def test_mixed_limit_then_explicit_target_change_and_common_resume(self):
@@ -49,14 +49,14 @@ class CounterGroupBrowserTests(unittest.TestCase):
         fixtures.enable_output(self)
         expect(self.page.locator('#device')).to_have_count(0)
         self.page.locator('#mode').select_option('count')
-        self.page.locator('#count-limit').fill('100')
+        self.page.locator('#count-limit').fill('11650')
         self.action('start_group',lambda:self.page.locator('#start').click())
         position=self.page.locator('#stop').bounding_box()
         self.now=1
         a=self.page.locator('.counter-window[data-device=counter]')
         b=self.page.locator('.counter-window[data-device=counter_b]')
-        expect(a.locator('.window-reading strong')).to_have_text('97')
-        expect(b.locator('.window-reading strong')).to_have_text('105')
+        expect(a.locator('.window-reading strong')).to_have_text('11,603')
+        expect(b.locator('.window-reading strong')).to_have_text('11,679')
         expect(a.locator('.window-state')).to_have_text('采集中')
         expect(b.locator('.window-state')).to_have_text('到限暂停')
         expect(self.page.locator('#start')).to_be_disabled()
@@ -65,7 +65,7 @@ class CounterGroupBrowserTests(unittest.TestCase):
         self.screenshot('step3-mixed-limit')
         self.action('stop_group',lambda:self.page.locator('#stop').click())
         expect(self.page.locator('#start')).to_be_disabled()
-        self.page.locator('#count-limit').fill('200')
+        self.page.locator('#count-limit').fill('24000')
         self.action('instrument_group_config',lambda:self.page.locator('#apply-acquisition').click())
         expect(self.page.locator('#start')).to_be_enabled()
         self.action('start_group',lambda:self.page.locator('#start').click())
@@ -73,9 +73,9 @@ class CounterGroupBrowserTests(unittest.TestCase):
         expect(a.locator('tbody tr')).to_have_count(2)
         expect(b.locator('tbody tr')).to_have_count(2)
         state=self.page.request.get(self.url+'/api/state').json()
-        self.assertEqual([state['instruments'][d]['counts'] for d in ('counter','counter_b')],[[191],[196]])
+        self.assertEqual([state['instruments'][d]['counts'] for d in ('counter','counter_b')],[[23169],[23209]])
 
-    def test_zero_windows_and_operation_local_b_save_clear_load(self):
+    def test_zero_windows_and_whole_counter_save_clear_load(self):
         self.open_beta()
         self.page.locator('[data-page=instrument]').click()
         a=self.page.locator('.counter-window[data-device=counter]')
@@ -93,25 +93,20 @@ class CounterGroupBrowserTests(unittest.TestCase):
         expect(b.locator('.window-reading strong')).to_have_text('0')
         expect(self.page.locator('#counter details')).to_have_count(0)
         self.action('stop_group',lambda:self.page.locator('#stop').click())
-        self.page.locator('#save-current').click()
-        self.page.locator('#operation-device').select_option('counter_b')
-        self.screenshot('step3-explicit-b-operation')
-        saved=self.action('snapshot',lambda:self.page.locator('#operation-confirm').click())
-        self.assertEqual(saved['snapshots'][-1]['device'],'counter_b')
-        self.assertEqual(saved['device'],'counter')
-        self.page.locator('#clear').click()
-        self.page.locator('#operation-device').select_option('counter_b')
-        self.action('begin_clear',lambda:self.page.locator('#operation-confirm').click())
-        self.action('finish_clear',lambda:self.page.locator('#clear-discard').click())
-        expect(b.locator('.window-reading strong')).to_have_text('—')
+        fixtures.measurement_operation(self.page, 'save')
+        expect(self.page.locator('#measurement-save')).not_to_be_visible()
+        expect(self.page.locator('#operation-device')).to_have_count(0)
+        fixtures.measurement_operation(self.page, 'clear')
+        self.page.locator('#clear-discard').click()
+        for panel in (a, b):
+            expect(panel.locator('.window-reading strong')).to_have_text('—')
+        fixtures.measurement_operation(self.page, 'cache')
+        self.page.locator('#measurement-confirm').click()
         expect(a.locator('tbody tr')).to_have_count(5)
-        self.page.get_by_role('button',name='从本场实验记录选择').click()
-        self.page.locator('#operation-device').select_option('counter_b')
-        self.page.locator('#operation-confirm').click()
-        expect(self.page.locator('#measurement-load')).to_be_visible()
-        self.action('load_measurement',lambda:self.page.locator('#measurement-confirm').click())
-        expect(b.locator('.window-reading strong')).to_have_text('0')
-        self.screenshot('step3-window-file-target')
+        expect(b.locator('tbody tr')).to_have_count(1)
+        for panel in (a, b):
+            expect(panel.locator('.window-reading strong')).to_have_text('0')
+        self.screenshot('whole-counter-restored')
 
     def test_historical_single_window_package_keeps_instrument_and_file_controls(self):
         from dataclasses import replace

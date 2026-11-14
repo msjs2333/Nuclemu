@@ -15,6 +15,7 @@ export interface Part {
 }
 export interface Edge { source: string; target: string; kind: string; label: string }
 export interface Course {
+  short_code?: string | null
   id: string; title: string; question: string; description: string; guide: string[]
   course?: string
   parameters: Parameter[]; devices: Device[]; components: Part[]; connections: Edge[]
@@ -37,6 +38,9 @@ export interface SavedObservation {
   id: string; device: string; title: string; counts: number[]; exposure_s: number; segments: Segment[]; calibration_id: string | null
 }
 export interface State {
+  records: {id: string; kind: string; title: string; device: string; exposure_s: number | null; group?: {items: string[]; members: string[]}; measurements?: {id: string; device: string; exposure_s: number}[]}[]
+  roi_context: {device: string; record_id: string | null; segment_index: number | null; acquisition: number | null} | null
+  roi_result: {id: string; device: string; roi: [number, number]; counts: number[]; exposure_s: number; time_s: number; calibration: unknown; readout: NonNullable<State['readout']>} | null
   id: string; experiment: string; definition: Course; settings: Record<string, number>
   time_s: number; remaining_s: number | null; paused: boolean; running: boolean; frozen: boolean; speed: number
   dirty: boolean; readonly: boolean; recovered_s: number | null; device: string; selected: number | null
@@ -53,9 +57,9 @@ export interface State {
   output_enabled: Record<string, boolean>
   gates: Record<string, boolean>
   instrument_groups: Record<string, {can_start: boolean; can_stop: boolean}>
-  snapshots: {id: number; device: string; acquisition: number; time_s: number; exposure_s: number; counts: number; settings: Record<string, number>[]; background_eligible: boolean}[]
+  snapshots: {id: number; item_id?: string; calibration_id?: string | null; device: string; acquisition: number; time_s: number; exposure_s: number; counts: number; settings: Record<string, number>[]; background_eligible: boolean}[]
   imported_items: {id: string; device: string; title: string; acquisition: number; exposure_s: number; source: {package: string; item: string}}[]
-  clear_confirmation: {device: string; token: number; exposure_s: number} | null
+  clear_confirmation: {device?: string; token: number | string; exposure_s?: number; component?: string; devices?: string[]; exposures?: Record<string, number>} | null
   readout_error: string | null
   portable_loaded: boolean
   portable_mode_notice: string

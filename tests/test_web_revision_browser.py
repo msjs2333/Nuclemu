@@ -33,7 +33,7 @@ class DesktopRevisionTests(unittest.TestCase):
         self.page.locator('#output-beta_detector').check()
         self.page.locator('[data-page=instrument]').click()
 
-    def test_refresh_restores_clear_confirmation_and_other_window_continues(self):
+    def test_refresh_restores_whole_counter_clear_confirmation(self):
         self.beta()
         self.page.locator('#mode').select_option('timed')
         self.page.locator('#duration').fill('10')
@@ -53,12 +53,12 @@ class DesktopRevisionTests(unittest.TestCase):
         state = self.state()
         self.assertEqual(state['instruments']['counter']['exposure_s'], 3)
         self.assertEqual(state['instruments']['counter']['remaining_s'], 7)
-        self.assertEqual(state['instruments']['counter_b']['exposure_s'], 5.5)
+        self.assertEqual(state['instruments']['counter_b']['exposure_s'], 3)
         self.screenshot('beta-refresh-clear-restored')
         self.now = 6
         fixtures.expect_counter_exposure(self.page, 3.5)
 
-    def test_dual_windows_cache_and_files_load_only_target_then_append(self):
+    def test_dual_windows_cache_and_files_restore_both_windows_then_append(self):
         self.beta()
         self.page.locator('#window-size-counter').fill('1')
         self.page.locator('#window-size-counter_b').fill('5')
@@ -66,7 +66,7 @@ class DesktopRevisionTests(unittest.TestCase):
         self.start()
         self.now = 3
         fixtures.expect_counter_exposure(self.page, 3)
-        with self.page.expect_response(lambda r: r.url.endswith('/api/action') and r.request.post_data_json.get('action') == 'snapshot') as saved:
+        with self.page.expect_response(lambda r: r.url.endswith('/api/action') and r.request.post_data_json.get('action') == 'snapshot_group') as saved:
             fixtures.measurement_operation(self.page, 'save')
         self.assertTrue(saved.value.ok, saved.value.text())
         self.now = 5
@@ -74,7 +74,6 @@ class DesktopRevisionTests(unittest.TestCase):
         windows = self.state()['counter_windows']
         self.assertEqual((len(windows['counter']), len(windows['counter_b'])), (5, 1))
         self.screenshot('beta-five-windows-one-window')
-        before = self.state()['instruments']['counter_b']
         fixtures.measurement_operation(self.page, 'cache')
         expect(self.page.locator('#measurement-overwrite')).to_have_text('载入将覆盖当前测量数据')
         self.page.locator('#measurement-cancel').click()
@@ -82,7 +81,7 @@ class DesktopRevisionTests(unittest.TestCase):
         fixtures.measurement_operation(self.page, 'cache')
         self.page.locator('#measurement-confirm').click()
         fixtures.expect_counter_exposure(self.page, 3)
-        self.assertEqual(self.state()['instruments']['counter_b'], before)
+        self.assertEqual(self.state()['instruments']['counter_b']['exposure_s'], 3)
         self.start()
         self.now = 6
         fixtures.expect_counter_exposure(self.page, 4)
@@ -106,4 +105,14 @@ class DesktopRevisionTests(unittest.TestCase):
             self.page.locator('#measurement-confirm').click()
             fixtures.expect_counter_exposure(self.page, 3)
             self.assertEqual(len(self.state()['counter_windows']['counter']), 3)
-            self.assertEqual(self.state()['instruments']['counter_b']['exposure_s'], 6)
+            self.assertEqual(self.state()['instruments']['counter_b']['exposure_s'], 3)
+            self.assertFalse(self.state()['counter_windows']['counter_b'][0]['complete'])
+            self.start()
+            self.now += 2
+            fixtures.expect_counter_exposure(self.page, 5)
+            restored = self.state()
+            self.assertEqual(restored['instruments']['counter_b']['exposure_s'], 5)
+            self.assertTrue(restored['counter_windows']['counter_b'][0]['complete'])
+            self.assertEqual((len(restored['counter_windows']['counter']),
+                              len(restored['counter_windows']['counter_b'])), (5, 1))
+            self.screenshot('beta-' + fmt + '-loaded-and-continued')

@@ -68,19 +68,19 @@ class SpectrumWorkspaceBrowserTests(unittest.TestCase):
         self.page.locator('#first').fill(str(first))
         self.page.locator('#last').fill(str(last))
         with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
-                                       r.request.post_data_json.get('action') == 'analysis') as selected:
+                                       r.request.post_data_json.get('action') == 'calculate_roi') as selected:
             self.page.locator('#roi button').click()
         self.assertTrue(selected.value.ok, selected.value.text())
         expect(self.page.locator('#roi-result')).to_contain_text(f'ROI {first}–{last} 道')
-        readout = self.state()['readout']
+        readout = self.state()['roi_result']['readout']
         expect(self.page.locator('#roi-result')).to_contain_text(f"选区计数 {readout['roi_counts']:,} 次")
         return readout
 
     def save_current(self):
         self.page.get_by_role('tab', name='采集', exact=True).click()
         with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
-                                       r.request.post_data_json.get('action') == 'snapshot') as saved:
-            self.page.locator('#save-current').click()
+                                       r.request.post_data_json.get('action') == 'snapshot_group') as saved:
+            fixtures.measurement_operation(self.page, 'save')
         self.assertTrue(saved.value.ok, saved.value.text())
         return saved.value.json()['snapshots'][-1]['id']
 
@@ -92,7 +92,8 @@ class SpectrumWorkspaceBrowserTests(unittest.TestCase):
         self.page.locator('[data-page=records]').click()
         for checkbox in self.page.locator('#products input:checked').all():
             checkbox.uncheck()
-        row = self.page.locator(f'[data-key="s/{snapshot_id}"]')
+        identity = next(row['item_id'] for row in self.state()['snapshots'] if row['id'] == snapshot_id)
+        row = self.page.locator(f'[data-key="r/{identity}"]')
         row.locator('select').select_option('json')
         row.locator('input').check()
         with self.page.expect_download() as pending:
@@ -118,12 +119,13 @@ class SpectrumWorkspaceBrowserTests(unittest.TestCase):
         self.assertGreater(total, 3000)
         self.assertEqual(self.channels(), state['instrument']['counts'])
         self.assertEqual(sum(self.channels()), total)
-        expect(self.page.locator('#spectrum-total')).to_contain_text('可读曝光 60 s')
+        expect(self.page.locator('#spectrum-total, #peak')).to_have_count(0)
+        expect(self.page.locator('#exposure')).to_have_text('60 s')
         low = self.roi(845, 875)
         high = self.roi(952, 982)
         for peak in (low, high):
             self.assertGreater(peak['roi_counts'], 500)
-        expect(self.page.locator('#roi-result')).to_contain_text('峰心 ')
+        expect(self.page.locator('#roi-result')).to_contain_text('重心 ')
         self.page.locator('details.calibration-tools > summary').click()
         expect(self.page.locator('#save-calibration')).to_be_disabled()
         expect(self.page.locator('#load-calibration')).to_be_visible()
@@ -185,7 +187,7 @@ class SpectrumWorkspaceBrowserTests(unittest.TestCase):
         zero = self.roi(845, 875)
         self.assertEqual(zero['roi_counts'], 0)
         self.assertIsNone(zero['centroid'])
-        expect(self.page.locator('#roi-result')).to_contain_text('峰心 无计数')
+        expect(self.page.locator('#roi-result')).to_contain_text('重心 无计数')
         self.set_part('source', {'source_present': 1})
         self.start_collection(2)
         self.now = 2
@@ -216,6 +218,47 @@ class SpectrumWorkspaceBrowserTests(unittest.TestCase):
         self.analysis()
         self.page.locator('#sample').select_option('')
         self.assertEqual(sum(self.channels()), state['readout']['counts'])
+
+    def test_live_roi_result_changes_only_on_calculation_and_survives_refresh(self):
+        self.alpha(1)
+        self.page.locator('#start').click()
+        expect(self.page.locator('#stop')).to_be_enabled()
+        self.now = 3
+        expect(self.page.locator('#exposure')).to_have_text('3 s')
+        self.assertIsNone(self.state()['roi_result'])
+        self.roi(900, 929)
+        frozen = self.state()['roi_result']
+        self.assertEqual(frozen['exposure_s'], 3)
+        self.assertEqual(len(frozen['counts']), 1024)
+        self.assertEqual(sum(frozen['counts'][900:930]), frozen['readout']['roi_counts'])
+        self.assertGreater(frozen['readout']['roi_counts'], 0)
+        self.now = 4
+        expect(self.page.locator('#exposure')).to_have_text('4 s')
+        self.assertEqual(self.state()['roi_result'], frozen)
+        expect(self.page.locator('#roi-result')).to_contain_text('截止曝光 3 s')
+        self.page.locator('.calibration-tools summary').click()
+        for name, value in [('c1', 0), ('e1', 0), ('c2', 1000), ('e2', 6)]:
+            self.page.locator(f'#calibrate [name={name}]').fill(str(value))
+        with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
+                                       r.request.post_data_json.get('action') == 'calibrate') as calibrated:
+            self.page.locator('#calibrate button').click()
+        self.assertTrue(calibrated.value.ok, calibrated.value.text())
+        self.assertEqual(self.state()['roi_result'], frozen)
+        recalculated = self.roi(900, 929)
+        updated = self.state()['roi_result']
+        self.assertEqual(updated['exposure_s'], 4)
+        self.assertNotEqual(updated['id'], frozen['id'])
+        self.assertAlmostEqual(recalculated['energy_MeV'], recalculated['centroid'] * .006)
+        expect(self.page.locator('#plot')).to_have_attribute(
+            'aria-label', '道谱，显示 0 至 1023 道。可在谱分析中输入选区道号。')
+        self.screenshot('alpha-roi-independent-four-second-recalculation')
+        self.page.reload()
+        expect(self.page.locator('#plot')).to_be_visible()
+        self.assertEqual(self.state()['roi_result'], updated)
+        empty = self.roi(0, 1)
+        self.assertEqual(empty['roi_counts'], 0)
+        self.assertIsNone(empty['centroid'])
+        self.assertIsNone(empty['energy_MeV'])
 
 
 if __name__ == '__main__':

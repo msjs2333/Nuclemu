@@ -64,7 +64,7 @@ class BrowserPluginTests(unittest.TestCase):
                         page.keyboard.press("Escape")
                         expect(page.locator("#menu-simulation")).to_be_focused()
                         page.locator("#start").click()
-                        expect(page.locator("#gate-status")).to_have_text("采集中")
+                        expect(page.locator("#stop")).to_be_enabled()
                         now = 1
                         expect(page.locator("#counts tr td").nth(1)).to_have_text("9")
                         page.locator("#device").select_option("left")

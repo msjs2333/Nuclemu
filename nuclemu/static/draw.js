@@ -110,21 +110,18 @@ function paintConnections(canvas, connections) {
 export const margin={left:62,right:27,top:30,bottom:43};
 
 export function spectrumExtent(series,channels) {
-  let first=channels, last=-1, maximum=0;
+  let maximum=0;
   for(const {counts,divisor,channelPosition} of series) {
     if(!(divisor>0)) continue;
     for(let channel=0;channel<counts.length;channel++){
       const count=counts[channel];
       if(count<=0) continue;
       const position=channelPosition?channelPosition(channel):channel;
-      first=Math.min(first,position);
-      last=Math.max(last,position);
+      if(position<0 || position>channels-1)continue;
       maximum=Math.max(maximum,count/divisor);
     }
   }
-  if(last<first) return {range:[0,channels-1],maximum:0};
-  const padding=Math.max(3,Math.ceil((last-first+1)*0.08));
-  return {range:[Math.max(0,Math.floor(first-padding)),Math.min(channels-1,Math.ceil(last+padding))],maximum};
+  return {range:[0,channels-1],maximum};
 }
 
 export function pointerChannels(canvas, [first, last]) {
@@ -195,7 +192,6 @@ export function drawSpectrum(canvas,series,n,roi,energy,label,range,maximum) {
   const [lo,hi]=roi;
   if((lo>0 || hi<n-1) && hi>=first && lo<=last) {
     const start=x(Math.max(first,lo)), end=x(Math.min(last,hi));
-    g.fillStyle="rgba(56,89,217,.065)";g.fillRect(start,top,Math.max(1,end-start),bottom-top);
     if(lo>=first) line(g,[[start,top],[start,bottom]],"#aab9eb",1);
     if(hi<=last) line(g,[[end,top],[end,bottom]],"#aab9eb",1);
   }
@@ -211,12 +207,18 @@ export function drawSpectrum(canvas,series,n,roi,energy,label,range,maximum) {
     const column=x(tick.channel);
     line(g,[[column,top],[column,bottom]],"#e8ebf2",1);
   }
-  line(g,[[left,top],[left,bottom],[right,bottom]],"#909aac",1);
+  line(g,[[left,top],[left,bottom],[right,bottom],[right,top],[left,top]],"#909aac",1);
   series.forEach((item,index)=>{
     if(!(item.divisor>0))return;
     g.beginPath();g.strokeStyle=index?"#c65b35":accent;
     g.lineWidth=index?1.4:1.7;g.setLineDash(index?[5,3]:[]);
     g.save();g.beginPath();g.rect(left,top,right-left,bottom-top);g.clip();g.beginPath();
+    if(index===0 && (lo>0 || hi<n-1) && hi>=first && lo<=last) {
+      const start=Math.max(first,lo),end=Math.min(last,hi);
+      g.moveTo(x(start),bottom);
+      for(let channel=start;channel<=end && channel<item.counts.length;channel++)g.lineTo(x(channel),y(item.counts[channel]/item.divisor));
+      g.lineTo(x(end),bottom);g.closePath();g.fillStyle='rgba(56,89,217,.18)';g.fill();g.beginPath();
+    }
     let started=false;
     for(let channel=0;channel<item.counts.length;channel++) {
       const position=item.channelPosition?item.channelPosition(channel):channel;

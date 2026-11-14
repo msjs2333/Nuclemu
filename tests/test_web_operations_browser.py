@@ -129,7 +129,8 @@ class WebOperationsBrowserTests(unittest.TestCase):
         fixtures.measurement_operation(self.page, 'save')
         expect(self.page.locator('#snapshot-notice')).to_contain_text('已保存')
         expect(self.page.locator('#background, #net-results')).to_have_count(0)
-        sample = self.server.app.lab.work.session.snapshots[1]
+        sample = next(snapshot for snapshot in self.server.app.lab.work.session.snapshots
+                      if snapshot.device == background.device and snapshot.id != background.id)
         self.assertEqual((background.exposure_s, sample.exposure_s), (3, 5))
         self.assertEqual(self.server.app.lab.work.session.snapshots[0], background)
         self.screenshot_sizes('beta-counter')

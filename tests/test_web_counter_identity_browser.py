@@ -74,8 +74,7 @@ class CounterIdentityBrowserTests(unittest.TestCase):
         expect(panels.nth(0).locator('.window-reading strong')).to_have_text('10')
         expect(panels.nth(1).locator('.window-reading strong')).to_have_text('50')
         self.screenshot('counter-reversed-panels')
-        for device in ('counter', 'counter_b'):
-            self.action('snapshot', lambda: fixtures.measurement_operation(self.page, 'save', device))
+        self.action('snapshot_group', lambda: fixtures.measurement_operation(self.page, 'save'))
         self.page.locator('[data-instrument=solo-instrument]').click()
         expect(panels).to_have_count(1)
         expect(panels.locator('h2')).to_have_text('独立计数器')
@@ -92,39 +91,32 @@ class CounterIdentityBrowserTests(unittest.TestCase):
         self.assertTrue(state['gates']['counter_b'])
         self.assertFalse(state['gates']['solo'])
         self.screenshot('counter-independent-panel')
-        self.action('snapshot', lambda: self.page.locator('#save-current').click())
+        self.action('snapshot_group', lambda: fixtures.measurement_operation(self.page, 'save'))
         self.page.locator('[data-page=records]').click()
-        expect(self.page.locator('#products .product')).to_have_count(3)
-        expected = {'counter': ('双窗计数器 · 窗 A', 'counts-A', 5),
-                    'counter_b': ('双窗计数器 · 窗 B', 'counts-B', 5),
-                    'solo': ('独立计数器', 'counts-solo', 1)}
+        expect(self.page.locator('#products .product')).to_have_count(2)
+        expected = {'counter': {'counter': 5, 'counter_b': 5}, 'solo': {'solo': 1}}
         evidence = {}
-        for device, (label, suffix, exposure) in expected.items():
+        for device, exposures in expected.items():
             row = self.page.locator(f'#products [data-device="{device}"]')
-            expect(row.locator('.product-device')).to_have_text(label)
-            row.locator('input').check()
+            row.get_by_role('checkbox').check()
             with self.page.expect_download() as download:
                 self.page.locator('#export').click()
-            self.assertTrue(download.value.suggested_filename.endswith('_' + suffix + '.csv'))
-            path = Path(self.folder.name, download.value.suggested_filename)
+            filename = download.value.suggested_filename
+            self.assertTrue(filename.endswith('.csv'))
+            path = Path(self.folder.name, filename)
             download.value.save_as(path)
-            if os.environ.get('NUCLEMU_REVIEW_OUTPUT'):
-                directory = Path(os.environ['NUCLEMU_REVIEW_OUTPUT'])
-                directory.mkdir(parents=True, exist_ok=True)
-                (directory / path.name).write_bytes(path.read_bytes())
-            document = load_item(path.read_bytes())['items'][0]['document']
-            self.assertEqual(document['snapshot']['device'], device)
-            self.assertEqual(document['snapshot']['exposure_s'], exposure)
-            evidence[device] = dict(label=label, filename=download.value.suggested_filename,
-                                    snapshot=document['snapshot'])
-            row.locator('input').uncheck()
+            snapshots = [item['document']['snapshot'] for item in load_item(path.read_bytes())['items']
+                         if item['kind'] == 'measurement']
+            self.assertEqual({snap['device']: snap['exposure_s'] for snap in snapshots}, exposures)
+            evidence[device] = dict(filename=filename, snapshots=snapshots)
+            row.get_by_role('checkbox').uncheck()
         with self.page.expect_download() as package:
             self.page.locator('#download-experiment').click()
         path = Path(self.folder.name, package.value.suggested_filename)
         package.value.save_as(path)
         document = load_package(path)
         self.assertEqual({item['document']['snapshot']['device'] for item in document['items']
-                          if item['kind'] == 'measurement'}, set(expected))
+                          if item['kind'] == 'measurement'}, {'counter', 'counter_b', 'solo'})
         output = os.environ.get('NUCLEMU_REVIEW_OUTPUT')
         if output:
             directory = Path(output)
@@ -140,12 +132,14 @@ class CounterIdentityBrowserTests(unittest.TestCase):
             try:
                 page.goto(f'http://127.0.0.1:{server.server_port}')
                 page.locator('#open-package').set_input_files(path)
-                expect(page.locator('#device')).to_have_value('solo')
                 expect(page.locator('.counter-window')).to_have_count(1)
-                page.locator('#device').select_option('counter')
+                expect(page.locator('.counter-window h2')).to_have_text('独立计数器')
+                page.locator('[data-instrument=counter]').click()
                 expect(page.locator('.counter-window h2')).to_have_text(['窗 A', '窗 B'])
                 page.locator('[data-page=records]').click()
-                expect(page.locator('#products .product-device')).to_have_text(list(label for label, _, _ in expected.values()))
+                expect(page.locator('#products .product')).to_have_count(2)
+                for device in expected:
+                    expect(page.locator(f'#products [data-device="{device}"]')).to_be_visible()
             finally:
                 page.close()
                 server.shutdown()

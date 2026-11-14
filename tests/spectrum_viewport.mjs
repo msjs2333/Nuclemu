@@ -8,11 +8,11 @@ function spectrum(length, entries, divisor = 1) {
   return {counts, divisor};
 }
 
-test('fit includes a lone count and a visible reference, independent of their amplitudes', () => {
+test('fixed channel extent includes every sample and reference without horizontal zoom', () => {
   const sample = spectrum(1024, [[900, 500], [940, 1]]);
   const reference = spectrum(1024, [[200, 1]], 4);
-  assert.deepEqual(spectrumExtent([sample], 1024), {range: [896, 944], maximum: 500});
-  assert.deepEqual(spectrumExtent([sample, reference], 1024), {range: [140, 1000], maximum: 500});
+  assert.deepEqual(spectrumExtent([sample], 1024), {range: [0, 1023], maximum: 500});
+  assert.deepEqual(spectrumExtent([sample, reference], 1024), {range: [0, 1023], maximum: 500});
   assert.deepEqual(spectrumExtent([sample, {...reference, divisor: 0}], 1024),
     spectrumExtent([sample], 1024));
 });
@@ -20,8 +20,8 @@ test('fit includes a lone count and a visible reference, independent of their am
 test('empty exposure, dead sample, edge peaks and a one-channel device', () => {
   assert.deepEqual(spectrumExtent([], 7), {range: [0, 6], maximum: 0});
   assert.deepEqual(spectrumExtent([spectrum(7, [])], 7), {range: [0, 6], maximum: 0});
-  assert.deepEqual(spectrumExtent([spectrum(7, [[0, 2]])], 7), {range: [0, 3], maximum: 2});
-  assert.deepEqual(spectrumExtent([spectrum(7, [[6, 2]], 4)], 7), {range: [3, 6], maximum: .5});
+  assert.deepEqual(spectrumExtent([spectrum(7, [[0, 2]])], 7), {range: [0, 6], maximum: 2});
+  assert.deepEqual(spectrumExtent([spectrum(7, [[6, 2]], 4)], 7), {range: [0, 6], maximum: .5});
   assert.deepEqual(spectrumExtent([spectrum(1, [[0, 1]])], 1), {range: [0, 0], maximum: 1});
 });
 
@@ -38,10 +38,13 @@ test('pointer coordinates in a fitted view return original channel addresses, in
 
 test('a fitted calibrated view uses absolute channels for ticks, and clips an offscreen ROI', () => {
   globalThis.window = {devicePixelRatio: 1};
-  const labels = [], fills = [];
+  const labels = [], fills = [], path = [];
   const context = new Proxy({
     fillText: (label, x, y) => labels.push([label, x, y]),
-    fillRect: (...args) => fills.push(args)
+    moveTo: (...args) => path.push(args),
+    lineTo: (...args) => path.push(args),
+    beginPath: () => {path.length=0},
+    fill: () => fills.push([...path])
   }, {get: (object, key) => object[key] ?? (() => {})});
   const canvas = {clientWidth: 589, clientHeight: 300, getContext: () => context};
   const draw = roi => drawSpectrum(canvas, [spectrum(1024, [[900, 1]])], 1024, roi,
@@ -55,8 +58,9 @@ test('a fitted calibrated view uses absolute channels for ticks, and clips an of
     assert.ok(Math.abs(Number(label) - channel * .006) < 1e-8);
   }
   draw([800, 900]);
-  assert.equal(fills[0][0], margin.left);
-  assert.ok(Math.abs(fills[0][2] - 500 * 60 / 130) < 1e-8);
+  assert.equal(fills.length, 1);
+  assert.deepEqual(fills[0][0], [margin.left, 300-margin.bottom]);
+  assert.ok(fills[0].some(([x,y]) => Math.abs(x-(margin.left+500*60/130)) < 1e-8 && y === margin.top));
 });
 
 test('390px phone displays multiple spaced MeV marks for the foil and reference overlay', () => {

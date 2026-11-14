@@ -30,7 +30,7 @@ class IndependentWebBrowserTests(unittest.TestCase):
         self.now = 1.25
         expect(self.page.locator('#exposure')).to_have_text('1.25 s')
         expect(self.page.locator('.counter-window[data-device=a] tbody tr').first.locator('td').nth(1)).to_have_text('1')
-        self.page.locator('#save-current').click()
+        fixtures.measurement_operation(self.page, 'save')
         expect(self.page.locator('#snapshot-notice')).to_contain_text('已保存')
         self.page.locator('#device').select_option('b')
         expect(self.page.locator('#start')).to_be_enabled()
@@ -61,7 +61,7 @@ class IndependentWebBrowserTests(unittest.TestCase):
         expect(a_rows).to_have_count(3)
         expect(a_rows.last.locator('td').nth(1)).to_have_text('0.5')
         expect(a_rows.last.locator('td').first.locator('.unfinished-window')).to_have_text('未满窗')
-        self.page.locator('#save-current').click()
+        fixtures.measurement_operation(self.page, 'save')
         expect(self.page.locator('#snapshot-notice')).to_contain_text('已保存')
         session = self.server.app.lab.work.session
         self.assertTrue(session.instrument('a').running)

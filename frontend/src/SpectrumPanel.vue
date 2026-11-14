@@ -9,6 +9,7 @@ type Observation = {id: string; device: string; title: string; counts: number[];
 const props = defineProps<{
   course: Course; device: Device; session: string; segments: Segment[]; index: number | null; analysis: State['analysis']
   calibration: Calibration | null; calibrationContext: CalibrationContext; readout: State['readout']; act: Act
+  roiResult: State['roi_result']; roiContext: State['roi_context']
   referenceCalibration: Calibration | null
   currentAcquisition?: number | null; instrument?: State['instrument']
   savedMeasurements?: SavedMeasurement[]; selectedItemId?: string | null; referenceItemId?: string | null
@@ -39,11 +40,6 @@ function selectSpectrum(event: Event, reference = false) {
   } else instrumentAction('select', value.startsWith('segment:') ? {index: Number(value.slice(8))} : value ? {item_id: value} : {index: null})
 }
 const reference = computed(() => props.analysis.reference === null ? null : props.segments[props.analysis.reference])
-const currentParts = computed(() => props.selectedObservation?.segments ?? (props.index != null && current.value ? [current.value] : available.value.filter(row => row.segment.acquisition === props.currentAcquisition).map(row => row.segment)))
-const referenceParts = computed(() => props.referenceObservation?.segments ?? (reference.value ? [reference.value] : []))
-function conditions(parts: Segment[]) {
-  return parts.map(part => describe(props.course, part.settings)).filter((text, i, list) => text && (i === 0 || text !== list[i - 1])).join(' → ')
-}
 const energyScale = computed(() => {
   const c = props.calibration
   if (!c || !props.analysis.energy_axis) return null
@@ -53,11 +49,11 @@ const incompatible = computed(() => !!(energyScale.value && (reference.value || 
 const series = computed(() => {
   const lines: Series[] = []
   function add(segment: Segment | null | undefined, label: string, channelPosition?: (channel: number) => number) {
-    if (segment && props.device.id in segment.readings) lines.push({label: [label, describe(props.course, segment.settings), fmt(exposure(segment)) + ' s'].filter(Boolean).join(' · '),
+    if (segment && props.device.id in segment.readings) lines.push({label,
       counts: segment.readings[props.device.id], divisor: props.analysis.rate_axis ? exposure(segment) : 1, channelPosition})
   }
   if (currentCounts.value && currentExposure.value > 0) {
-    lines.push({label: [props.selectedObservation?.title ?? (props.index === null ? '本轮累计谱' : '分段谱'), conditions(currentParts.value), fmt(currentExposure.value) + ' s'].filter(Boolean).join(' · '),
+    lines.push({label: props.selectedObservation?.title ?? (props.index === null ? '本轮累计谱' : '分段谱'),
       counts: currentCounts.value, divisor: props.analysis.rate_axis ? currentExposure.value : 1})
   }
   if (!incompatible.value) {
@@ -68,7 +64,7 @@ const series = computed(() => {
     } : undefined
     if (props.referenceObservation) {
       const item = props.referenceObservation
-      lines.push({label: ['参考谱：' + item.title, conditions(item.segments), fmt(item.exposure_s) + ' s'].filter(Boolean).join(' · '), counts: item.counts,
+      lines.push({label: '参考谱：' + item.title, counts: item.counts,
         divisor: props.analysis.rate_axis ? item.exposure_s : 1, channelPosition: position})
     } else add(reference.value, '参考谱', position)
   }
@@ -79,14 +75,9 @@ const extent = computed(() => spectrumExtent(series.value, props.device.channels
 const heldRange = ref<[number, number] | null>(null)
 const visibleRange = computed<[number, number]>(() => heldRange.value ??
   extent.value.range)
-const centroidText = computed(() => {
-  if (!extent.value.maximum) return series.value.length ? '可见谱暂无计数，显示全道范围。' : '等待采集，显示全道范围。'
-  const centroid = props.readout?.centroid
-  if (centroid == null) return '选区无计数'
-  const [first, last] = props.analysis.roi
-  const label = first === 0 && last === props.device.channels - 1 ? '全谱重心' : '选区峰心'
-  return label + ' ' + fmt(centroid) + ' 道'
-})
+function calculateRoi() {
+  instrumentAction('calculate_roi', {roi: [first.value, last.value], roi_context: props.roiContext})
+}
 let observer: ResizeObserver
 function paint() {
   if (plot.value?.clientWidth) drawSpectrum(plot.value, series.value, props.device.channels, props.analysis.roi,
@@ -189,7 +180,7 @@ function load(e: Event) {
 
 <template>
   <div id="spectrum">
-    <Teleport defer to="#spectrum-analysis-tools"><div class="menu-fields">
+    <Teleport defer to="#spectrum-analysis-tools"><div class="menu-fields spectrum-selection">
       <label>当前谱 <select id="sample" :value="selectedValue" @change="selectSpectrum($event)">
         <option value="">本轮累计谱</option>
         <optgroup v-if="saved.length" label="已保存道谱"><option v-for="item in saved" :key="item.id" :value="item.id">{{ item.title }} · {{ fmt(item.exposure_s) }} s</option></optgroup>
@@ -200,37 +191,27 @@ function load(e: Event) {
         <optgroup v-if="saved.length" label="已保存道谱"><option v-for="item in saved" :key="item.id" :value="item.id">{{ item.title }} · {{ fmt(item.exposure_s) }} s</option></optgroup>
         <optgroup v-if="available.length" label="分段查看"><option v-for="{segment, index: i} in available" :key="i" :value="'segment:' + i">{{ segmentName(segment, i) }}</option></optgroup>
       </select></label>
-      <details v-if="currentParts.length" class="spectrum-conditions"><summary>当前谱分段工况</summary>
-        <ol><li v-for="(part, i) in currentParts" :key="i">{{ fmt(exposure(part)) }} s · {{ describe(course, part.settings) }}</li></ol>
-      </details>
-      <details v-if="referenceParts.length" class="spectrum-conditions"><summary>参考谱分段工况</summary>
-        <ol><li v-for="(part, i) in referenceParts" :key="i">{{ fmt(exposure(part)) }} s · {{ describe(course, part.settings) }}</li></ol>
-      </details>
       <label><input type="checkbox" id="energy" :disabled="!calibration" :checked="!!energyScale" @change="change('energy_axis', checked($event))"> MeV 横轴</label>
       <label><input type="checkbox" id="rate" :checked="analysis.rate_axis" @change="change('rate_axis', checked($event))"> 按曝光归一</label>
     </div></Teleport>
     <canvas id="plot" ref="plot" :aria-label="`道谱，显示 ${visibleRange[0]} 至 ${visibleRange[1]} 道。可在谱分析中输入选区道号。`" height="420"
       @pointerdown="startDrag" @lostpointercapture="cancelDrag" @pointerup="endDrag"></canvas>
-    <div class="spectrum-readout"><div id="legend" class="legend"><span v-for="line in series" :key="line.label">{{ line.label }}</span></div>
-      <output id="peak">{{ centroidText }}
-        {{ readout?.energy_MeV == null ? '' : ' · ' + Number(readout.energy_MeV.toFixed(5)) + ' MeV' }}</output>
-    </div>
-    <output v-if="currentCounts" id="spectrum-total">总计数 {{ readout?.counts == null ? '—' : fmt(readout.counts) }} 次 · 可读曝光 {{ fmt(currentExposure) }} s</output>
+    <div id="legend" class="legend"><span v-for="line in series" :key="line.label">{{ line.label }}</span></div>
     <p v-if="incompatible" class="notice">参考谱没有适用的能量刻度。切回道号轴可叠加两张谱。</p>
     <Teleport defer to="#spectrum-analysis-tools">
-    <form id="roi" class="menu-fields" @submit.prevent="change('roi', [first, last])"><strong>选区 ROI</strong>
+    <form id="roi" class="menu-fields" @submit.prevent="calculateRoi"><strong>选区 ROI</strong>
       <label>起道 <input id="first" v-model.number="first" type="number" min="0" :max="device.channels - 1" required step="1"></label>
       <label>止道 <input id="last" v-model.number="last" type="number" min="0" :max="device.channels - 1" required step="1"></label>
-      <button>计算峰心</button>
+      <button>计算 ROI 重心</button>
     </form>
     <output id="roi-result" aria-live="polite">
-      <strong>ROI {{ analysis.roi[0] }}–{{ analysis.roi[1] }} 道</strong>
-      <template v-if="readout">
-        <span>选区计数 {{ readout.roi_counts == null ? '—' : fmt(readout.roi_counts) }} 次</span>
-        <span>峰心 {{ readout.centroid == null ? '无计数' : fmt(readout.centroid) + ' 道' }}</span>
-        <span>能量 {{ readout.energy_MeV == null ? '—' : Number(readout.energy_MeV.toFixed(5)) + ' MeV' }}</span>
+      <template v-if="roiResult">
+        <strong>ROI {{ roiResult.roi[0] }}–{{ roiResult.roi[1] }} 道 · 截止曝光 {{ fmt(roiResult.exposure_s) }} s</strong>
+        <span>选区计数 {{ fmt(roiResult.readout.roi_counts ?? 0) }} 次</span>
+        <span>重心 {{ roiResult.readout.centroid == null ? '无计数' : fmt(roiResult.readout.centroid) + ' 道' }}</span>
+        <span>能量 {{ roiResult.readout.energy_MeV == null ? '—' : Number(roiResult.readout.energy_MeV.toFixed(5)) + ' MeV' }}</span>
       </template>
-      <span v-else>等待可读曝光。</span>
+      <span v-else>选择道界后点击计算 ROI 重心。</span>
     </output>
     <details class="calibration-tools"><summary>两点能量刻度</summary>
       <form id="calibrate" class="menu-fields" @submit.prevent="applyCalibration">
@@ -249,14 +230,20 @@ function load(e: Event) {
 </template>
 
 <style scoped>
-#plot { display:block; width:100%; height:420px; background:#fff; border:0; border-top:2px solid #71818e; border-left:2px solid #71818e; border-bottom:2px solid #71818e; border-radius:0; }
+#spectrum { height:100%; min-height:0; display:flex; flex-direction:column; }
+#spectrum #plot { display:block; width:100%; height:0; flex:1; min-height:240px; background:#fff; border:2px solid #71818e; border-radius:0; }
+.legend { flex-shrink:0; padding:8px 0; }
 .menu-fields { display:grid; gap:10px; }
 .menu-fields label { display:grid; gap:4px; }
-.spectrum-conditions { font-size:13px; }
-.spectrum-conditions ol { padding-left:20px; }
-.spectrum-conditions li { margin:6px 0; }
-#spectrum-total { display: block; font-size: 13px; }
+.spectrum-selection { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.spectrum-selection select { min-width:0; width:100%; }
+.spectrum-selection details { grid-column:1/-1; }
+.spectrum-selection label:has(input[type=checkbox]) { display:flex; align-items:center; gap:6px; }
+#roi { grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px 10px; margin-top:12px; }
+#roi strong, #roi button { grid-column:1/-1; }
+#roi input { width:100%; min-width:0; }
 .calibration-file-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 #calibration-notice { display: block; margin-top: 8px; font-size: 13px; }
-#roi-result { display: grid; gap: 4px; margin: 8px 0 14px; font-size: 13px; overflow-wrap: anywhere; }
+#roi-result { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px; margin:8px 0 14px; font-size:13px; overflow-wrap:anywhere; }
+#roi-result strong { grid-column:1/-1; }
 </style>

@@ -42,7 +42,7 @@ class WindowDeltaBrowserTests(unittest.TestCase):
         self.assertEqual(paused['counter_windows_delta'], {})
         full = self.page.request.get(self.url + '/api/state').json()
         self.assertLess(len(polled.value.body()), len(json.dumps(full).encode()) / 5)
-        saved = self.action('snapshot', lambda: fixtures.measurement_operation(self.page, 'save'))
+        saved = self.action('snapshot_group', lambda: fixtures.measurement_operation(self.page, 'save'))
 
         peer = self.browser.new_page(viewport={'width': 1366, 'height': 768})
         self.addCleanup(peer.close)
@@ -51,8 +51,8 @@ class WindowDeltaBrowserTests(unittest.TestCase):
         expect(peer_rows).to_have_count(600)
         peer.route('**/api/state?*', lambda route: route.abort())
         expect(peer.locator('#error')).to_be_visible()
-        self.action('begin_clear', lambda: fixtures.measurement_operation(self.page, 'clear'))
-        self.action('finish_clear', lambda: self.page.locator('#clear-discard').click())
+        self.action('begin_clear_group', lambda: fixtures.measurement_operation(self.page, 'clear'))
+        self.action('finish_clear_group', lambda: self.page.locator('#clear-discard').click())
         expect(rows).to_have_count(1)
         expect(rows).to_contain_text('暂无逐窗读数')
         fixtures.measurement_operation(self.page, 'cache')
@@ -64,7 +64,7 @@ class WindowDeltaBrowserTests(unittest.TestCase):
         delta = recovered.value.json()
         self.assertEqual(delta['counter_windows_delta']['counter']['start'], 0)
         self.assertEqual(len(delta['counter_windows_delta']['counter']['windows']), 600)
-        self.assertNotIn('counter_b', delta['counter_windows_delta'])
+        self.assertEqual(len(delta['counter_windows_delta']['counter_b']['windows']), 600)
         expect(peer_rows).to_have_count(600)
         expect(peer.locator('#error')).not_to_be_visible()
         self.action('start_group', lambda: self.page.locator('#start').click())
@@ -79,10 +79,13 @@ class WindowDeltaBrowserTests(unittest.TestCase):
             self.page.locator('#export').click()
         path = Path(self.folder.name, downloading.value.suggested_filename)
         downloading.value.save_as(path)
-        document = load_item(path.read_bytes())['items'][0]['document']
-        self.assertEqual(len(document['windows']), 600)
-        self.assertEqual(document['snapshot']['exposure_s'], 600)
-        self.assertEqual([sum(w['counts'][0] for w in document['windows'])], full['instruments']['counter']['counts'])
+        documents = {item['document']['snapshot']['device']: item['document']
+                     for item in load_item(path.read_bytes())['items'] if item['kind'] == 'measurement'}
+        self.assertEqual(set(documents), {'counter', 'counter_b'})
+        for device, document in documents.items():
+            self.assertEqual(len(document['windows']), 600)
+            self.assertEqual(document['snapshot']['exposure_s'], 600)
+            self.assertEqual([sum(w['counts'][0] for w in document['windows'])], full['instruments'][device]['counts'])
         output = os.environ.get('NUCLEMU_REVIEW_OUTPUT')
         if output:
             directory = Path(output)
@@ -91,6 +94,7 @@ class WindowDeltaBrowserTests(unittest.TestCase):
             (directory / 'browser-window-delta.json').write_text(json.dumps({
                 'full_bytes': len(json.dumps(full).encode()), 'paused_bytes': len(polled.value.body()),
                 'recovered_windows': len(delta['counter_windows_delta']['counter']['windows']),
-                'saved_windows': len(document['windows']), 'saved_counts': [sum(w['counts'][0] for w in document['windows'])],
+                'saved_measurements': {device: dict(windows=len(document['windows']),
+                    counts=[sum(w['counts'][0] for w in document['windows'])]) for device, document in documents.items()},
                 'saved_response_cursor': saved['window_cursor'],
             }, ensure_ascii=False, indent=2), encoding='utf-8')

@@ -65,7 +65,7 @@ class StudentReaderBrowserTests(unittest.TestCase):
         self.page.locator('[data-page=instrument]').click()
         fixtures.enable_output(self)
         self.page.locator('#start').click()
-        expect(self.page.locator('#gate-status')).to_have_attribute('data-running', 'true')
+        expect(self.page.locator('#stop')).to_be_enabled()
         original = self.state()
         self.open_reader()
         self.now = 1
@@ -79,7 +79,7 @@ class StudentReaderBrowserTests(unittest.TestCase):
         self.page.locator('#student-page-back').click()
         expect(self.page.locator('#student-page')).not_to_be_visible()
         expect(self.page.locator('[data-page=instrument]')).to_have_attribute('aria-current', 'page')
-        expect(self.page.locator('#gate-status')).to_have_attribute('data-running', 'true')
+        expect(self.page.locator('#stop')).to_be_enabled()
         self.now = 2
         fixtures.expect_counter_exposure(self.page, 2)
         fixtures.expect_counter_exposure(self.page, 2, 'counter_b')
