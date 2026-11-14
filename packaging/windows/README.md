@@ -1,4 +1,10 @@
-# Windows x64 离线目录样包
+# Windows x64 离线安装与目录包
+
+安装程序为 `Nuclemu-0.0.1-windows-x64-setup.exe`，安装时无需联网。默认仅为当前用户安装，也可选择为所有用户安装（需要管理员权限）。开始菜单的 **Nuclemu** 打开桌面启动器；命令行程序为安装目录中的 `nuclemu.exe`，不修改系统 PATH。
+
+更新前先保存实验并关闭 Nuclemu 的桌面和终端服务。再次运行安装程序会沿用已有安装范围与目录。卸载可从 Windows“已安装的应用”进入；卸载程序不会主动删除用户目录中的 `.nuclemu` 设置、工作台数据或用户另存的实验文件。只有上次安装登记的旧程序文件会在升级时清理；建议将实验文件另存到文档或移动存储设备。
+
+以下说明也适用于完整解压后直接运行的目录包。
 
 解压整个目录，双击 **`Nuclemu-Desktop.exe`**。待窗口显示“已就绪”，点“在浏览器中打开”。再次双击会唤回同一个启动器。关闭浏览器标签页后，可用启动器回到当前实验。
 
@@ -6,7 +12,21 @@
 
 在“设置”中可以选择自动分配端口、指定固定端口，以及每次启动后是否自动打开默认浏览器。默认使用自动端口，手动打开浏览器。保存设置后，当前实验仍可在原地址继续。下次启动会使用新设置；遇到端口占用时，在原窗口修改端口后点“重试”即可。
 
-命令行入口为同目录的 `nuclemu.exe`。运行 `.\nuclemu.exe serve --gui` 可以打开或唤回桌面启动器；运行 `.\nuclemu.exe serve --no-gui` 可启动独立的终端服务，访问打印的本机地址，用 Ctrl+C 停止。复制样包时保留同级的 `_internal` 目录，其中包括两个入口共用的 Python、Tk、SQLite、两门实验和工作台资源。学生机只需已有可运行工作台的浏览器。开始菜单和卸载入口随以后的安装程序交付。
+命令行入口为同目录的 `nuclemu.exe`。运行 `.\nuclemu.exe serve --gui` 可以打开或唤回桌面启动器；运行 `.\nuclemu.exe serve --no-gui` 可启动独立的终端服务，访问打印的本机地址，用 Ctrl+C 停止。复制样包时保留同级的 `_internal` 目录，其中包括两个入口共用的 Python、Tk、SQLite、两门实验和工作台资源。学生机只需已有可运行工作台的浏览器。目录包本身不注册开始菜单或卸载项；安装程序提供这些入口。
+
+## 构建安装程序
+
+先按下节生成目录载荷，再用 [Inno Setup 6.7.4](https://github.com/jrsoftware/issrc/releases/tag/is-6_7_4) 编译。编译器只用于构建，不随程序安装。可在一次性 Windows Sandbox 中安装编译器并执行本脚本，避免改变宿主安装状态。
+
+```powershell
+.\packaging\windows\build-installer.ps1 -Compiler 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+```
+
+默认读取 `dist/Nuclemu`，生成 `dist/release/Nuclemu-0.0.1-windows-x64-setup.exe` 及记录编译器、载荷和安装器 SHA256 的 manifest。脚本将载荷复制到临时本地目录，用本页更新包内 README，并生成只登记程序文件的升级台账；不会修改原目录载荷。安装程序不下载运行时。中文翻译和许可来源见 [THIRD-PARTY.md](THIRD-PARTY.md)。
+
+`verify-installer.ps1` 只供一次性测试机使用，要求明确的 `ExpectedComputerName`，覆盖普通/全机范围、旧候选升级、淘汰程序文件与未登记用户文件、偏好/工作台数据、αβ重开、入口、运行保护、卸载与重装。`sandbox-acceptance.ps1` 的固定映射路径和新建测试账户仅适用于独占沙箱，不应在学生机运行。普通账户对测试输入只读，只有其结果目录可写。
+
+Windows PowerShell 5.1 按 BOM 识别含中文源码的测试脚本；`verify-installer.ps1` 因此使用 UTF-8 BOM。构建和测试仅设置各自进程的执行策略，不改变学生电脑的系统编码或执行策略。
 
 ## 从源码构建
 

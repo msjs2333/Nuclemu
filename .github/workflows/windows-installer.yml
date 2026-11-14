@@ -1,0 +1,68 @@
+name: Windows installer
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/windows-installer.yml'
+      - 'packaging/windows/**'
+      - 'packaging/samples/**'
+      - 'nuclemu/**'
+      - 'pyproject.toml'
+      - 'LICENSE'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.11.17'
+          enable-cache: false
+      - name: Freeze offline runtime
+        run: |
+          uv python install 3.12.13
+          uv venv --managed-python --python 3.12.13 build/freezer
+          uv pip install --python build/freezer/Scripts/python.exe PyInstaller==6.20.0 pyinstaller-hooks-contrib==2026.10
+          build/freezer/Scripts/python -m PyInstaller --clean --noconfirm packaging/windows/nuclemu.spec
+          dist/Nuclemu/nuclemu.exe validate
+      - name: Assemble both installer candidates
+        shell: pwsh
+        run: |
+          $tool = Join-Path $env:RUNNER_TEMP 'inno.exe'
+          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe' -OutFile $tool
+          if ((Get-FileHash $tool).Hash -ne 'A549929319F9120716677C685535CA4671E4B937B5FDC87E2585F32D8EB30E8C') { throw 'Unexpected compiler installer checksum' }
+          $compilerDir = Join-Path $env:RUNNER_TEMP 'nuclemu-iscc'
+          $process = Start-Process $tool -ArgumentList '/VERYSILENT','/NORESTART','/SUPPRESSMSGBOXES',"/DIR=`"$compilerDir`"" -Wait -PassThru
+          if ($process.ExitCode) { throw "Compiler installer failed ($($process.ExitCode))" }
+          $compiler = Join-Path $compilerDir 'ISCC.exe'
+          Copy-Item -LiteralPath 'dist/Nuclemu' -Destination 'build/previous-payload' -Recurse
+          Set-Content 'build/previous-payload/obsolete-runtime.txt' 'Previous package revision'
+          ./packaging/windows/build-installer.ps1 -Compiler $compiler -PayloadDirectory build/previous-payload -Version 0.0.0 -OutputDirectory build/previous
+          ./packaging/windows/build-installer.ps1 -Compiler $compiler
+      - name: Install, upgrade, uninstall and reopen retained data
+        shell: pwsh
+        run: |
+          ./packaging/windows/verify-installer.ps1 -ExpectedComputerName $env:COMPUTERNAME -Mode AllUsers `
+            -Setup dist/release/Nuclemu-0.0.1-windows-x64-setup.exe `
+            -PreviousSetup build/previous/Nuclemu-0.0.0-windows-x64-setup.exe `
+            -FixtureDirectory packaging/samples -OutputDirectory build/windows-acceptance
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Nuclemu-windows-x64
+          path: dist/release/
+          compression-level: 0
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: Windows-acceptance
+          path: build/windows-acceptance/
+          if-no-files-found: ignore
