@@ -455,6 +455,10 @@ class WebLab:
                     output_enabled=dict(w.session.output_enabled),
                     instrument=asdict(instrument) if instrument else None,
                     instruments=instruments,
+                    instrument_groups={part.id: (w.session.group_state(part.devices)
+                        if not self.readonly and not self.frozen else dict(can_start=False, can_stop=False))
+                        for part in w.session.experiment.components
+                        if part.kind == 'instrument' and part.devices and w.session.experiment.outputs},
                     particle_flow=({key: flow[key] for key in ('thickness_um', 'areal_density_g_cm2') if key in flow}
                                    if flow is not None else None),
                     **self.counter_window_payload(window_cursor, instruments),
@@ -655,6 +659,19 @@ class WebLab:
             raise ValueError('请选择包含多个窗的仪器。')
         return part.devices
 
+    def _operation_device(self, data):
+        """Keep the page context while targeting a member of its instrument."""
+        self._check_device_target(data)
+        current = self.work.device.id
+        target = data.get('operation_device', current)
+        if not isinstance(target, str) or target not in self.analysis:
+            raise ValueError('请选择有效的操作目标。')
+        if target != current and not any(
+                part.kind == 'instrument' and current in part.devices and target in part.devices
+                for part in self.work.session.experiment.components):
+            raise ValueError('操作目标不属于当前仪器。')
+        return target
+
     def change_analysis(self, data):
         self._check_device_target(data)
         w = self.work
@@ -698,6 +715,10 @@ class WebLab:
     def act(self, data):
         """Apply one action, settling its clock only after exit-round validation."""
         self.check_confirmation(data)
+        operation_device = None
+        if data['action'] in ('snapshot', 'begin_clear') or (
+                data['action'] == 'finish_clear' and 'operation_device' in data):
+            operation_device = self._operation_device(data)
         if data['action'] == 'stop_group':
             devices = self.instrument_group(data['component'])
             cycles = data.get('gate_cycles')
@@ -785,8 +806,7 @@ class WebLab:
             w.set_output(data["output"], data["enabled"])
             self.edits += 1
         elif action == "snapshot":
-            self._check_device_target(data)
-            snapshot = w.snapshot(writer=self.write_cache)
+            snapshot = w.snapshot(device=operation_device, writer=self.write_cache)
             self.bind_saved_calibration(snapshot)
             self.edits += 1
         elif action == "cache_calibration":
@@ -805,15 +825,14 @@ class WebLab:
             w.configure_acquisition(**{key: data[key] for key in ('duration_s', 'count_limit', 'window_s') if key in data})
             self.edits += 1
         elif action == "begin_clear":
-            self._check_device_target(data)
-            request = w.begin_clear()
+            request = w.begin_clear(device=operation_device)
             if request.snapshot is None:
-                w.finish_clear(request.token, "discard")
+                w.finish_clear(request.token, "discard", device=operation_device)
             else:
-                self._clear_requests[w.device.id] = request
+                self._clear_requests[operation_device] = request
             self.edits += 1
         elif action == "finish_clear":
-            device = data["device"]
+            device = operation_device if operation_device is not None else data["device"]
             if device not in self.analysis:
                 raise ValueError("请选择有效的设备。")
             try:

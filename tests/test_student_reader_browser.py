@@ -81,7 +81,10 @@ class StudentReaderBrowserTests(unittest.TestCase):
         expect(self.page.locator('[data-page=instrument]')).to_have_attribute('aria-current', 'page')
         expect(self.page.locator('#gate-status')).to_have_attribute('data-running', 'true')
         self.now = 2
-        expect(self.page.locator('#exposure')).to_have_text('2 s')
+        fixtures.expect_counter_exposure(self.page, 2)
+        fixtures.expect_counter_exposure(self.page, 2, 'counter_b')
+        expect(self.page.locator('.counter-window[data-device=counter] tbody tr')).to_have_count(2)
+        expect(self.page.locator('.counter-window[data-device=counter_b] tbody tr')).to_have_count(2)
         self.assertEqual(self.state()['instrument']['exposure_s'], 2)
 
 

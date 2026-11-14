@@ -13,25 +13,45 @@ const savedNotice = ref('')
 const tool = ref<'acquisition' | 'analysis'>('acquisition')
 const clearBusy = ref(false)
 const clearDialog = ref<HTMLDialogElement>()
-const clearing = ref<{session: string; device: string; label: string; token: number; exposure: number} | null>(null)
+const clearing = ref<{session: string; device: string; context: string; label: string; token: number; exposure: number} | null>(null)
 const selector = ref<HTMLSelectElement>()
+const workspace = ref<HTMLElement>()
 const durationInput = ref<HTMLInputElement>()
-defineExpose({focusDevice: () => selector.value?.focus()})
+const operationDialog = ref<HTMLDialogElement>()
+const operation = ref<'save' | 'clear' | 'cache' | 'file'>('save')
+const operationTarget = ref('')
+const operationContext = ref('')
+const operationLabels = {save: '保存读数', clear: '清空读数', cache: '从记录载入', file: '从文件载入'}
+function requestOperation(action: typeof operation.value) {
+  operation.value = action
+  operationContext.value = props.state.device
+  operationTarget.value = binding.value.devices[0]?.id ?? instrument.value.id
+  if (group.value) operationDialog.value?.showModal()
+  else performOperation()
+}
+function performOperation() {
+  const device = operationTarget.value
+  operationDialog.value?.close()
+  if (operation.value === 'save') saveCurrent(device, operationContext.value)
+  else if (operation.value === 'clear') run('begin_clear', {device: operationContext.value, operation_device: device})
+  else emit('loadMeasurement', device, operation.value)
+}
+defineExpose({focusDevice: () => (selector.value ?? workspace.value)?.focus()})
 const instrument = computed(() => props.state.definition.devices.find(d => d.id === props.state.device)!)
 const segment = computed(() => {
   const segments = props.state.product.segments
   if (props.state.selected !== null) return segments[props.state.selected]
   for (let i = segments.length - 1; i >= 0; i--) if (instrument.value.id in segments[i].readings) return segments[i]
 })
-const input = computed(() => props.state.definition.outputs?.find(o => o.id === instrument.value.input))
 const independent = computed(() => !!props.state.definition.outputs?.length)
 const binding = computed(() => instrumentBinding(props.state.definition, instrument.value.id))
 const group = computed(() => binding.value.devices.length > 1 ? binding.value.component : undefined)
 const targets = computed(() => instrumentDevices(props.state.definition))
+const chassis = computed(() => props.state.definition.components.filter(p => p.kind === 'instrument' && p.device))
 const groupRunning = computed(() => group.value ? group.value.devices!.some(id => props.state.gates[id]) : props.state.running)
-const groupAllRunning = computed(() => group.value ? group.value.devices!.every(id => props.state.gates[id]) : props.state.running)
+const groupActions = computed(() => group.value ? props.state.instrument_groups?.[group.value.id] : undefined)
 const hasExposure = computed(() => group.value ? group.value.devices!.some(id => (props.state.instruments[id]?.exposure_s ?? 0) > 0) : !!props.state.instrument?.readable_exposure_s)
-const status = computed(() => props.state.running ? '采集中' : props.state.instrument?.clearing ? '清空确认中'
+const status = computed(() => group.value ? groupRunning.value ? '采集中' : hasExposure.value ? '暂停' : '等待开始' : props.state.running ? '采集中' : props.state.instrument?.clearing ? '清空确认中'
   : ['time_limit', 'count_limit'].includes(props.state.instrument?.stop_reason ?? '') ? '到限暂停'
   : props.state.instrument?.acquisition ? '手动暂停' : '等待开始')
 watch(() => props.state.device, () => {
@@ -74,14 +94,13 @@ function configureTarget() {
 function pause() { group.value ? run('stop_group', {component: group.value.id,
   gate_cycles: Object.fromEntries(group.value.devices!.map(id => [id, props.state.instruments[id].cycle]))})
   : run('stop', {device: instrument.value.id, acquisition: props.state.active_acquisition, cycle: props.state.instrument?.cycle}) }
-function saveCurrent() {
-  const device = instrument.value.id, session = props.state.id
+function saveCurrent(device: string, context: string) {
+  const session = props.state.id
   emit('task', async () => {
-    await props.act('snapshot', {device}, session)
+    await props.act('snapshot', {device: context, operation_device: device}, session)
     savedNotice.value = '已保存'
   })
 }
-function requestClear() { run('begin_clear', {device: instrument.value.id}) }
 watch(() => [props.state.id, props.state.clear_confirmation] as const, async () => {
   const request = props.state.clear_confirmation as (State['clear_confirmation'] & {device?: string})
   if (!request) {
@@ -90,7 +109,8 @@ watch(() => [props.state.id, props.state.clear_confirmation] as const, async () 
     return
   }
   const device = request.device ?? props.state.device
-  clearing.value = {session: props.state.id, device, token: request.token, exposure: request.exposure_s,
+  const context = clearing.value?.token === request.token ? clearing.value.context : props.state.device
+  clearing.value = {session: props.state.id, device, context, token: request.token, exposure: request.exposure_s,
     label: props.state.definition.devices.find(d => d.id === device)?.label ?? device}
   await nextTick()
   if (!clearDialog.value?.open) clearDialog.value?.showModal()
@@ -101,7 +121,7 @@ function finishClear(choice: 'save' | 'discard' | 'cancel') {
   clearBusy.value = true
   emit('task', async () => {
     try {
-      await props.act('finish_clear', {device: target.device, token: target.token, choice}, target.session)
+      await props.act('finish_clear', {device: target.context, operation_device: target.device, token: target.token, choice}, target.session)
       clearDialog.value?.close()
       clearing.value = null
     } finally { clearBusy.value = false }
@@ -110,7 +130,8 @@ function finishClear(choice: 'save' | 'discard' | 'cancel') {
 </script>
 
 <template>
-  <section id="instrument" class="page">
+  <section id="instrument" ref="workspace" tabindex="-1" class="page">
+    <nav v-if="chassis.length > 1" class="chassis-navigation" aria-label="仪器"><button v-for="part in chassis" :key="part.id" :data-instrument="part.id" :aria-current="binding.component?.id === part.id ? 'true' : undefined" @click="run('device', {device: part.device})">{{ part.label }}</button></nav>
     <div class="instrument-workspace">
     <main class="instrument-display">
     <SpectrumPanel v-if="instrument.kind === 'spectrum'" :key="instrument.id" :course="state.definition" :device="instrument" :segments="state.product.segments"
@@ -127,45 +148,52 @@ function finishClear(choice: 'save' | 'discard' | 'cancel') {
     <div v-if="instrument.kind !== 'spectrum' && instrument.kind !== 'counter'" id="other">{{ segment ? instrument.label + '　' + segment.readings[instrument.id].join(' · ') : '等待读数' }}</div>
     </main>
     <aside class="instrument-controls" aria-label="仪器操作">
-      <label v-if="state.definition.devices.length > 1" class="device-select">{{ group ? '保存、清空与载入目标' : '操作仪器' }}
+      <label v-if="!group && state.definition.devices.length > 1" class="device-select">操作仪器
         <select ref="selector" id="device" :value="state.device" @change="run('device', {device: inputValue($event)})">
           <option v-for="d in targets" :key="d.id" :value="d.id">{{ deviceName(state.definition, d.id) }}</option>
         </select>
       </label>
       <div class="instrument-status">
-        <strong id="gate-status" :data-running="state.running">{{ status }}</strong>
-        <dl><div><dt>累计实际曝光</dt><dd id="exposure">{{ fmt(state.exposure_s ?? 0) }} <span>s</span></dd></div>
+        <strong id="gate-status" :data-running="groupRunning">{{ status }}</strong>
+        <dl v-if="!group"><div><dt>累计实际曝光</dt><dd id="exposure">{{ fmt(state.exposure_s ?? 0) }} <span>s</span></dd></div>
           <div><dt>可读计数</dt><dd id="current-readout">{{ fmt(state.instrument?.counts.reduce((a, b) => a + b, 0) ?? 0) }} <span>次</span></dd></div>
           <div class="target-readout"><dt>{{ state.instrument?.count_limit != null ? '目标计数' : state.instrument?.duration_s != null ? '目标曝光' : '采集方式' }}</dt><dd>{{ state.instrument?.count_limit != null ? fmt(state.instrument.count_limit) + ' 次' : state.instrument?.duration_s != null ? fmt(state.instrument.duration_s) + ' s' : '普通' }}</dd></div>
           <div class="remaining-readout"><template v-if="state.instrument?.duration_s != null"><dt>剩余曝光</dt><dd id="remaining">{{ state.remaining_s == null ? '—' : fmt(state.remaining_s) + ' s' }}</dd></template></div>
         </dl>
       </div>
       <form id="acquisition" class="fixed-acquisition" @submit.prevent="start">
-        <button class="primary" id="start" :disabled="groupAllRunning || state.readonly || state.instrument?.clearing">{{ group ? hasExposure ? '继续测量' : '开始测量' : state.instrument?.readable_exposure_s ? '继续采集' : '开始采集' }}</button>
-        <button type="button" id="stop" :disabled="!groupRunning || state.readonly" @click="pause">{{ group ? '暂停测量' : '暂停采集' }}</button>
+        <button class="primary" id="start" :disabled="(group ? !groupActions?.can_start : state.running) || state.readonly || state.instrument?.clearing">{{ group ? hasExposure ? '继续测量' : '开始测量' : state.instrument?.readable_exposure_s ? '继续采集' : '开始采集' }}</button>
+        <button type="button" id="stop" :disabled="(group ? !groupActions?.can_stop : !state.running) || state.readonly" @click="pause">{{ group ? '暂停测量' : '暂停采集' }}</button>
       </form>
       <div v-if="instrument.kind === 'spectrum'" class="instrument-tabs" role="tablist" aria-label="仪器工具">
         <button role="tab" :aria-selected="tool === 'acquisition'" @click="tool = 'acquisition'">采集</button>
         <button role="tab" :aria-selected="tool === 'analysis'" @click="tool = 'analysis'">谱分析</button>
       </div>
       <div v-show="tool === 'acquisition' || instrument.kind !== 'spectrum'" class="acquisition-fields">
-        <div class="snapshot-actions"><button id="save-current" :disabled="state.readonly || !state.instrument?.readable_exposure_s || state.instrument?.clearing" @click="saveCurrent">保存</button>
-          <button id="clear" :disabled="state.readonly || state.instrument?.clearing" @click="requestClear">清空</button></div>
+        <div class="snapshot-actions"><button id="save-current" :disabled="state.readonly || !hasExposure || state.instrument?.clearing" @click="requestOperation('save')">保存</button>
+          <button id="clear" :disabled="state.readonly || state.instrument?.clearing" @click="requestOperation('clear')">清空</button></div>
         <output id="snapshot-notice" role="status">{{ savedNotice }}</output>
-        <label>采集方式 <select id="mode" v-model="mode" :disabled="state.running || state.readonly"><option value="manual">普通</option><option value="timed">定时</option><option value="count">定计数</option></select></label>
-        <label v-if="mode === 'timed'">目标曝光 / s <input ref="durationInput" id="duration" v-model.number="duration" type="number" min="0.000001" step="any" required :disabled="state.running || state.readonly"></label>
-        <label v-if="mode === 'count'">目标计数 / 次 <input id="count-limit" v-model.number="countLimit" type="number" min="1" step="1" :disabled="state.running || state.readonly"></label>
+        <label>采集方式 <select id="mode" v-model="mode" :disabled="groupRunning || state.readonly"><option value="manual">普通</option><option value="timed">定时</option><option value="count">定计数</option></select></label>
+        <label v-if="mode === 'timed'">目标曝光 / s <input ref="durationInput" id="duration" v-model.number="duration" type="number" min="0.000001" step="any" required :disabled="groupRunning || state.readonly"></label>
+        <label v-if="mode === 'count'">目标计数 / 次 <input id="count-limit" v-model.number="countLimit" type="number" min="1" step="1" :disabled="groupRunning || state.readonly"></label>
         <label v-if="!group">统计窗 / s <input id="window-size" v-model.number="windowSize" type="number" min="0.000001" step="any" :disabled="state.readonly"></label>
         <button id="apply-acquisition" :disabled="state.readonly" @click="configureTarget">应用采集设置</button>
         <p v-if="mode === 'count'" class="notice">在完整统计窗末判断目标，计数可能超过目标。</p>
         <fieldset class="load-measurement"><legend>载入测量数据</legend>
-          <button :disabled="state.readonly || state.instrument?.clearing" @click="emit('loadMeasurement', instrument.id, 'cache')">从本场实验记录选择</button>
-          <button :disabled="state.readonly || state.instrument?.clearing" @click="emit('loadMeasurement', instrument.id, 'file')">从文件选择</button>
+          <button :disabled="state.readonly || state.instrument?.clearing" @click="requestOperation('cache')">从本场实验记录选择</button>
+          <button :disabled="state.readonly || state.instrument?.clearing" @click="requestOperation('file')">从文件选择</button>
         </fieldset>
       </div>
       <div id="spectrum-analysis-tools" v-show="tool === 'analysis'" class="spectrum-analysis-tools"></div>
     </aside>
     </div>
+    <dialog id="measurement-target" ref="operationDialog">
+      <h2>{{ operationLabels[operation] }}</h2>
+      <p>选择本次操作的窗。此选择不改变整机采集范围。</p>
+      <label>操作对象 <select id="operation-device" v-model="operationTarget"><option v-for="d in binding.devices" :key="d.id" :value="d.id">{{ deviceName(state.definition, d.id) }}</option></select></label>
+      <p v-if="operation === 'clear'">仅清空所选窗，另一窗保留。</p>
+      <div class="dialog-actions"><button @click="operationDialog?.close()">取消</button><button id="operation-confirm" class="primary" :disabled="operation === 'save' && !state.instruments[operationTarget]?.readable_exposure_s" @click="performOperation">{{ operationLabels[operation] }}</button></div>
+    </dialog>
     <dialog id="clear-confirm" ref="clearDialog" @cancel.prevent="finishClear('cancel')">
       <h2>清空前要保存当前读数吗？</h2>
       <p>{{ clearing?.label }}，实际可读曝光 {{ fmt(clearing?.exposure ?? 0) }} s。其他仪器继续采集。</p>
@@ -200,4 +228,6 @@ dt { color:#52616d; } dd { margin:0; font-variant-numeric:tabular-nums; white-sp
 .load-measurement { border:0; border-top:1px solid #c5ccd3; margin:8px 0 0; padding:12px 0 0; display:grid; gap:8px; }
 .load-measurement legend { font-size:14px; font-weight:600; }
 .device-select { display:grid; gap:6px; margin-bottom:12px; }
+.chassis-navigation { display:flex; gap:8px; margin-bottom:8px; }
+.chassis-navigation [aria-current=true] { font-weight:700; border-color:#2956a1; }
 </style>

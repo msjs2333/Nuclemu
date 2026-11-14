@@ -52,6 +52,7 @@ export interface State {
   any_running: boolean; clock_running: boolean; exposure_s: number | null
   output_enabled: Record<string, boolean>
   gates: Record<string, boolean>
+  instrument_groups: Record<string, {can_start: boolean; can_stop: boolean}>
   snapshots: {id: number; device: string; acquisition: number; time_s: number; exposure_s: number; counts: number; settings: Record<string, number>[]; background_eligible: boolean}[]
   imported_items: {id: string; device: string; title: string; acquisition: number; exposure_s: number; source: {package: string; item: string}}[]
   clear_confirmation: {device: string; token: number; exposure_s: number} | null

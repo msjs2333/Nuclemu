@@ -37,10 +37,11 @@ class DesktopRevisionTests(unittest.TestCase):
         self.beta()
         self.page.locator('#mode').select_option('timed')
         self.page.locator('#duration').fill('10')
+        self.page.locator('#apply-acquisition').click()
         self.start()
         self.now = 3
-        expect(self.page.locator('#exposure')).to_have_text('3 s')
-        self.page.locator('#clear').click()
+        fixtures.expect_counter_exposure(self.page, 3)
+        fixtures.measurement_operation(self.page, 'clear')
         expect(self.page.locator('#clear-confirm')).to_be_visible()
         token = self.state()['clear_confirmation']['token']
         self.page.reload()
@@ -55,35 +56,36 @@ class DesktopRevisionTests(unittest.TestCase):
         self.assertEqual(state['instruments']['counter_b']['exposure_s'], 5.5)
         self.screenshot('beta-refresh-clear-restored')
         self.now = 6
-        expect(self.page.locator('#exposure')).to_have_text('3.5 s')
+        fixtures.expect_counter_exposure(self.page, 3.5)
 
     def test_dual_windows_cache_and_files_load_only_target_then_append(self):
         self.beta()
         self.page.locator('#window-size-counter').fill('1')
         self.page.locator('#window-size-counter_b').fill('5')
+        self.page.locator('#window-size-counter_b').press('Tab')
         self.start()
         self.now = 3
-        expect(self.page.locator('#exposure')).to_have_text('3 s')
+        fixtures.expect_counter_exposure(self.page, 3)
         with self.page.expect_response(lambda r: r.url.endswith('/api/action') and r.request.post_data_json.get('action') == 'snapshot') as saved:
-            self.page.locator('#save-current').click()
+            fixtures.measurement_operation(self.page, 'save')
         self.assertTrue(saved.value.ok, saved.value.text())
         self.now = 5
-        expect(self.page.locator('#exposure')).to_have_text('5 s')
+        fixtures.expect_counter_exposure(self.page, 5)
         windows = self.state()['counter_windows']
         self.assertEqual((len(windows['counter']), len(windows['counter_b'])), (5, 1))
         self.screenshot('beta-five-windows-one-window')
         before = self.state()['instruments']['counter_b']
-        self.page.get_by_role('button', name='从本场实验记录选择', exact=True).click()
+        fixtures.measurement_operation(self.page, 'cache')
         expect(self.page.locator('#measurement-overwrite')).to_have_text('载入将覆盖当前测量数据')
         self.page.locator('#measurement-cancel').click()
         self.assertEqual(self.state()['instruments']['counter']['exposure_s'], 5)
-        self.page.get_by_role('button', name='从本场实验记录选择', exact=True).click()
+        fixtures.measurement_operation(self.page, 'cache')
         self.page.locator('#measurement-confirm').click()
-        expect(self.page.locator('#exposure')).to_have_text('3 s')
+        fixtures.expect_counter_exposure(self.page, 3)
         self.assertEqual(self.state()['instruments']['counter_b'], before)
         self.start()
         self.now = 6
-        expect(self.page.locator('#exposure')).to_have_text('4 s')
+        fixtures.expect_counter_exposure(self.page, 4)
         self.assertEqual(len(self.state()['counter_windows']['counter']), 4)
         self.page.locator('[data-page=records]').click()
         with self.page.expect_download() as download:
@@ -98,10 +100,10 @@ class DesktopRevisionTests(unittest.TestCase):
             source.write_bytes(export_item(doc, identity, fmt))
             self.page.locator('[data-page=instrument]').click()
             with self.page.expect_file_chooser() as chooser:
-                self.page.get_by_role('button', name='从文件选择', exact=True).click()
+                fixtures.measurement_operation(self.page, 'file')
             chooser.value.set_files(source)
             expect(self.page.locator('#measurement-overwrite')).to_be_visible()
             self.page.locator('#measurement-confirm').click()
-            expect(self.page.locator('#exposure')).to_have_text('3 s')
+            fixtures.expect_counter_exposure(self.page, 3)
             self.assertEqual(len(self.state()['counter_windows']['counter']), 3)
             self.assertEqual(self.state()['instruments']['counter_b']['exposure_s'], 6)

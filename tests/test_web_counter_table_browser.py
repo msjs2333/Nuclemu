@@ -1,4 +1,4 @@
-"""Counter tables annotate only unfinished rows and retain condition details."""
+"""Counter tables annotate only unfinished rows and show only measurement columns."""
 
 import unittest
 import test_catalog_records_browser as fixtures
@@ -47,9 +47,9 @@ class CounterTableBrowserTests(unittest.TestCase):
         expect(a.locator('tbody tr')).to_have_count(5)
         expect(b.locator('.unfinished-window')).to_have_count(0)
         expect(a.locator('.unfinished-window')).to_have_count(0)
-        expect(b.locator('tbody td:first-child details')).to_have_count(1)
-        b.locator('summary').click()
-        expect(b.locator('details')).to_contain_text('铝箔片数 4')
+        expect(b.locator('details')).to_have_count(0)
+        parts = self.page.request.get(self.url + '/api/state').json()['counter_windows']['counter_b'][0]['parts']
+        self.assertEqual({part['settings']['foil_count'] for part in parts}, {0, 4})
         self.assertTrue(b.locator('.window-ledger').evaluate('(el) => el.scrollWidth <= el.clientWidth'))
         expect(self.page.locator('#counter')).not_to_contain_text('已结清')
         self.screenshot('counter-table-complete-conditions')

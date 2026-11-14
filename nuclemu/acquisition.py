@@ -363,8 +363,19 @@ class InstrumentAcquisition:
     def stop_group(self, devices):
         self.stop(None, _devices=self._group(devices))
 
-    def start(self, device, duration, count_limit=None, window=None, *, _devices=None):
-        gates = _devices if _devices is not None else (list(self.gates.values()) if device is None else [self._gate(device)])
+    def group_state(self, devices):
+        """Read executable group actions without sampling or changing gates."""
+        gates = self._group(devices)
+        try:
+            can_start = bool(self._prepare_start(gates))
+        except ValueError:
+            can_start = False
+        return dict(can_start=can_start,
+                    can_stop=not any(g.pending is not None for g in gates)
+                    and any(g.opened is not None for g in gates))
+
+    def _prepare_start(self, gates, duration=None, count_limit=None, window=None):
+        """Validate the complete operation before any clock or gate mutation."""
         if any(g.pending is not None for g in gates):
             raise ValueError("Finish the instrument clear request before starting")
         if duration is not None:
@@ -382,7 +393,7 @@ class InstrumentAcquisition:
             raise ValueError("Pause the instrument before changing acquisition limits")
         gates = [g for g in gates if g.opened is None]
         if not gates:
-            return
+            return gates
         for g in gates:
             target = Decimal(str(duration)) if duration is not None else g.duration
             if g.current and ((target is not None and g.exposure >= target)
@@ -397,6 +408,13 @@ class InstrumentAcquisition:
             if target is not None:
                 self.session._future_time(float(target - g.exposure))
         self.session._future_time(1)
+        return gates
+
+    def start(self, device, duration, count_limit=None, window=None, *, _devices=None):
+        gates = _devices if _devices is not None else (list(self.gates.values()) if device is None else [self._gate(device)])
+        gates = self._prepare_start(gates, duration, count_limit, window)
+        if not gates:
+            return
         self.flush()
         self._activate_clock()
         for g in gates:

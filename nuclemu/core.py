@@ -423,6 +423,12 @@ class Session:
             raise ValueError("Instrument groups require independent gates")
         self._instruments.stop_group(devices)
 
+    def group_state(self, devices):
+        """Return whether this explicit group can start or pause at this instant."""
+        if self._instruments is None:
+            raise ValueError("Instrument groups require independent gates")
+        return self._instruments.group_state(devices)
+
     def configure_group(self, devices, *, duration_s=_UNCHANGED, count_limit=_UNCHANGED):
         """Apply shared targets atomically; per-window lengths stay independent."""
         if self._instruments is None:

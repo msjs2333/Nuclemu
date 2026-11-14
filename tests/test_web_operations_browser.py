@@ -83,7 +83,7 @@ class WebOperationsBrowserTests(unittest.TestCase):
         self.now = 5
         expect(first.locator('tbody tr')).to_have_count(5)
         expect(second.locator('tbody tr')).to_have_count(1)
-        self.page.locator('#device').select_option('counter_b')
+        expect(self.page.locator('#device')).to_have_count(0)
         expect(self.page.locator('#stop')).to_be_enabled()
         with self.page.expect_response(lambda r: r.url.endswith('/api/action') and r.request.post_data_json.get('action') == 'stop_group') as stopped:
             self.page.locator('#stop').click()
@@ -108,16 +108,16 @@ class WebOperationsBrowserTests(unittest.TestCase):
         self.page.locator('#start').click()
         expect(self.page.locator('#stop')).to_be_enabled()
         self.now = 3
-        expect(self.page.locator('#exposure')).to_have_text('3 s')
-        self.page.locator('#save-current').click()
+        fixtures.expect_counter_exposure(self.page, 3)
+        fixtures.measurement_operation(self.page, 'save')
         expect(self.page.locator('#snapshot-notice')).to_contain_text('已保存')
         background = self.server.app.lab.work.session.snapshots[0]
         self.assertTrue(self.state()['running'])
-        self.page.locator('#clear').click()
+        fixtures.measurement_operation(self.page, 'clear')
         expect(self.page.locator('#clear-confirm')).to_be_visible()
         self.page.locator('#clear-discard').click()
         expect(self.page.locator('#clear-confirm')).not_to_be_visible()
-        expect(self.page.locator('#exposure')).to_have_text('0 s')
+        fixtures.expect_counter_exposure(self.page, 0)
         self.source(1)
         self.open_instrument('counter')
         with self.page.expect_response(lambda r: r.url.endswith('/api/action') and r.request.post_data_json.get('action') == 'start_group') as resumed:
@@ -125,8 +125,8 @@ class WebOperationsBrowserTests(unittest.TestCase):
         self.assertTrue(resumed.value.ok, resumed.value.text())
         expect(self.page.locator('#stop')).to_be_enabled()
         self.now = 8
-        expect(self.page.locator('#exposure')).to_have_text('5 s')
-        self.page.locator('#save-current').click()
+        fixtures.expect_counter_exposure(self.page, 5)
+        fixtures.measurement_operation(self.page, 'save')
         expect(self.page.locator('#snapshot-notice')).to_contain_text('已保存')
         expect(self.page.locator('#background, #net-results')).to_have_count(0)
         sample = self.server.app.lab.work.session.snapshots[1]
@@ -158,7 +158,7 @@ class WebOperationsBrowserTests(unittest.TestCase):
         self.page.locator('#device').select_option('a')
         self.now = 3
         expect(self.page.locator('#exposure')).to_have_text('3 s')
-        self.page.locator('#clear').click()
+        fixtures.measurement_operation(self.page, 'clear')
         expect(self.page.locator('#clear-confirm')).to_be_visible()
         self.page.reload()
         expect(self.page.locator('#clear-confirm')).to_be_visible()
@@ -211,7 +211,7 @@ class WebOperationsBrowserTests(unittest.TestCase):
         self.now = 1
         expect(self.page.locator('#exposure')).to_have_text('1 s')
         self.assertEqual(sum(self.state()['instrument']['counts']), 0)
-        self.page.locator('#save-current').click()
+        fixtures.measurement_operation(self.page, 'save')
         expect(self.page.locator('#snapshot-notice')).to_contain_text('已保存')
         self.screenshot_sizes('alpha-mca')
 

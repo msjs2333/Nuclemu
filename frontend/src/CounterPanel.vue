@@ -19,7 +19,6 @@ const panels = computed(() => binding.value.devices.filter(d => d.kind === 'coun
 }))
 function windowExposure(window: Window) { return window.exposure_s ?? ((window.end_exposure_s ?? 0) - (window.start_exposure_s ?? 0)) }
 function counts(window: Window) { return Array.isArray(window.counts) ? window.counts.reduce((a, b) => a + b, 0) : window.counts }
-function changedConditions(window: Window) { return new Set(window.parts?.map(part => JSON.stringify(part.settings))).size > 1 }
 const windowDraft = reactive<Record<string, string>>({})
 function configureWindow(device: string, event: Event) {
   const input = event.target as HTMLInputElement
@@ -52,12 +51,13 @@ watch(() => panels.value.map(p => p.windows.length).join('/'), async () => {
     </div>
     <section v-for="panel in course.outputs?.length ? panels : []" :key="panel.device.id" class="counter-window" :data-device="panel.device.id" :aria-label="panel.label">
       <header><h2>{{ panel.label }}</h2><span class="window-state" :data-running="panel.running">{{ panel.running ? '采集中' : ['time_limit', 'count_limit'].includes(state?.instruments[panel.device.id]?.stop_reason ?? '') ? '到限暂停' : state?.instruments[panel.device.id]?.acquisition ? '暂停' : '等待开始' }}</span></header>
+      <p class="window-caption">最近完整窗</p>
       <div class="window-reading"><strong>{{ panel.latest ? counts(panel.latest).toLocaleString('zh-CN') : '—' }}</strong><span>次</span>
-        <output>{{ panel.latest ? '本窗实际曝光 ' + fmt(windowExposure(panel.latest)) + ' s' : '等待首个完整窗' }}</output></div>
+        </div>
       <label v-if="group" class="window-setting">单次曝光 / s <input :id="'window-size-' + panel.device.id" type="number" min="0.000001" step="any" :value="windowDraft[panel.device.id] ?? state?.instruments[panel.device.id]?.next_window_s ?? state?.instruments[panel.device.id]?.window_s" :disabled="readonly || state?.instruments[panel.device.id]?.clearing" @input="windowDraft[panel.device.id] = ($event.target as HTMLInputElement).value" @change="configureWindow(panel.device.id, $event)"></label>
       <div :ref="el => { if (el) ledgers.set(panel.device.id, el as HTMLElement) }" class="window-ledger" tabindex="0" role="region" :aria-label="panel.label + ' 逐窗数据'" @scroll="follow(panel.device.id, $event)"><table>
         <thead><tr><th>窗号</th><th>实际曝光 / s</th><th>计数 / 次</th></tr></thead>
-        <tbody><tr v-for="(window, i) in panel.windows" :key="i"><td>{{ window.number ?? window.index ?? window.window ?? i + 1 }}<small v-if="window.complete === false" class="unfinished-window">{{ panel.running ? '未满窗' : '未满窗 · 已暂停' }}</small><details v-if="changedConditions(window)"><summary>窗内工况</summary><div v-for="(part, j) in window.parts" :key="j">{{ fmt(part.start_s) }}–{{ fmt(part.end_s) }} s：{{ course.parameters.map(p => p.label + ' ' + part.settings[p.key] + (p.unit ? ' ' + p.unit : '')).join('，') }}</div></details></td><td>{{ fmt(windowExposure(window)) }}</td><td>{{ counts(window).toLocaleString('zh-CN') }}</td></tr>
+        <tbody><tr v-for="(window, i) in panel.windows" :key="i"><td>{{ window.number ?? window.index ?? window.window ?? i + 1 }}<small v-if="window.complete === false" class="unfinished-window">{{ panel.running ? '未满窗' : '未满窗 · 已暂停' }}</small></td><td>{{ fmt(windowExposure(window)) }}</td><td>{{ counts(window).toLocaleString('zh-CN') }}</td></tr>
           <tr v-if="!panel.windows.length"><td colspan="3">{{ readonly ? '此存档没有逐窗数据。' : '暂无逐窗读数' }}</td></tr></tbody>
       </table></div>
     </section>
@@ -74,13 +74,12 @@ watch(() => panels.value.map(p => p.windows.length).join('/'), async () => {
 .window-state { font-size:13px; color:#53616d; }
 .window-state[data-running="true"] { color:#197449; }
 .window-reading { display:grid; grid-template-columns:auto 1fr; gap:0 9px; align-items:baseline; padding:12px 0; }
+.window-caption { margin:12px 0 0; color:#53616d; font-size:13px; }
 .window-reading strong { font-size:48px; line-height:1.1; font-weight:600; font-variant-numeric:tabular-nums; color:#203c50; }
-.window-reading output { grid-column:1 / -1; margin-top:6px; font-size:14px; font-variant-numeric:tabular-nums; }
 .window-setting { display:flex; align-items:center; gap:8px; margin:12px 0; }
 .window-ledger { max-height:calc(100dvh - 310px); overflow:auto; border-top:1px solid #c5ccd3; }
 table { width:100%; border-collapse:collapse; font-size:14px; }
 .window-ledger table { table-layout:fixed; }
-.window-ledger details { overflow-wrap:anywhere; font-size:13px; }
 th, td { padding:7px 8px; text-align:right; font-variant-numeric:tabular-nums; }
 th:first-child, td:first-child { text-align:left; }
 .unfinished-window { display:block; font-size:12px; color:#65552e; }

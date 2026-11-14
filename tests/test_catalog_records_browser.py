@@ -65,16 +65,43 @@ def enable_output(test):
     page.locator("[data-page='instrument']").click()
 
 
+def measurement_operation(page, action, device='counter'):
+    """Choose a window for this operation without changing the active instrument."""
+    grouped = page.locator('.counter-window').count() > 1
+    if action in ('save', 'clear'):
+        page.locator('#save-current' if action == 'save' else '#clear').click()
+    else:
+        page.get_by_role('button', name={'cache': '从本场实验记录选择', 'file': '从文件选择'}[action], exact=True).click()
+    if grouped:
+        expect(page.locator('#measurement-target')).to_be_visible()
+        page.locator('#operation-device').select_option(device)
+        page.locator('#operation-confirm').click()
+
+
+def expect_counter_exposure(page, seconds, device='counter'):
+    """Check cumulative exposure from the visible per-window ledger, including a partial row."""
+    page.wait_for_function("""({device, seconds}) => {
+        const panel = document.querySelector(`.counter-window[data-device="${device}"]`);
+        if (!panel) return false;
+        const cells = [...panel.querySelectorAll('tbody tr td:nth-child(2)')];
+        return Math.abs(cells.reduce((sum, cell) => sum + Number(cell.textContent.replaceAll(',', '')), 0) - seconds) < 1e-8;
+    }""", arg={'device': device, 'seconds': seconds})
+
+
 def start_collection(test, seconds):
     """Use visible instrument controls, including a new round after reaching its limit."""
     page = test.page
     page.locator("[data-page='instrument']").click()
     state = page.request.get(test.url + "/api/state").json()
     instrument = state.get("instrument")
-    if instrument and instrument["stop_reason"] in ("time_limit", "count_limit"):
+    grouped = page.locator('.counter-window').count() > 1
+    targets = state.get('instruments', {}) if grouped else {state['device']: instrument}
+    for device, target in targets.items():
+        if not target or target["stop_reason"] not in ("time_limit", "count_limit"):
+            continue
         with page.expect_response(lambda r: r.url.endswith('/api/action') and
                                   r.request.post_data_json.get('action') == 'begin_clear') as clearing:
-            page.locator("#clear").click()
+            measurement_operation(page, "clear", device)
         test.assertTrue(clearing.value.ok, clearing.value.text())
         if clearing.value.json().get("clear_confirmation"):
             expect(page.locator("#clear-discard")).to_be_visible()
@@ -83,12 +110,13 @@ def start_collection(test, seconds):
                 page.locator("#clear-discard").click()
             test.assertTrue(cleared.value.ok, cleared.value.text())
             expect(page.locator("#clear-discard")).not_to_be_visible()
-        expect(page.locator("#start")).to_be_enabled()
+    expect(page.locator("#start")).to_be_enabled()
     enable_output(test)
     if state["definition"]["devices"][0]["kind"] == "spectrum":
         page.get_by_role("tab", name="采集", exact=True).click()
     page.locator("#mode").select_option("timed")
     page.locator("#duration").fill(str(seconds))
+    page.locator("#apply-acquisition").click()
     page.locator("#start").click()
     expect(page.locator("#gate-status")).to_have_text("采集中")
 

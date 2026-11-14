@@ -51,9 +51,8 @@ class SavedModeBrowserTests(unittest.TestCase):
         path.write_bytes(export_item(doc, item['id'], 'csv'))
         self.enter('beta')
         self.page.locator('[data-page=instrument]').click()
-        self.page.locator('#device').select_option('counter_b')
         with self.page.expect_file_chooser() as choosing:
-            self.page.get_by_role('button', name='从文件选择', exact=True).click()
+            fixtures.measurement_operation(self.page, 'file', 'counter_b')
         choosing.value.set_files(path)
         expect(self.page.locator('#measurement-mode')).to_contain_text('原有读数保留')
         expect(self.page.locator('#measurement-mode')).to_contain_text('独立')
