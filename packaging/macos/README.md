@@ -27,7 +27,7 @@ Intel 使用 `Nuclemu-0.0.1-macos-x86_64.dmg`，Apple Silicon 使用 `Nuclemu-0.
   --output build/macos-smoke-arm64
 ```
 
-smoke 驱动只用 runner 的 Python 标准库；应用运行和实验处理全部调用冻结 CLI，不导入源码。它挂载 DMG 后把 `.app` 复制到隔离的中文及空格目录，卸载镜像，再以最小 PATH、独立 HOME 运行；检查实际 Tcl、目录、资源、α 谱及刻度、β 双窗文件、SIGINT 返回与端口释放。随后以修订 2 替换修订 1、确认过时资源消失、旧文件可读，删除应用后确认偏好和实验文件字节不变。
+smoke 驱动只用 runner 的 Python 标准库；应用运行和实验处理全部调用冻结 CLI，不导入源码。它挂载 DMG 后把 `.app` 复制到隔离的中文及空格目录，卸载镜像，再以最小 PATH、独立 HOME 运行；检查代码签名、Mach-O 不引用构建机非系统绝对路径、实际 Tcl、目录、资源、α 谱及刻度、β 双窗文件、SIGINT 返回与端口释放。随后以修订 2 替换修订 1、确认过时资源消失、旧文件可读，删除应用后确认偏好、本地工作台目录和实验文件字节不变。
 
 smoke 无下载，但不改变 runner 全局网络；真正断网及无开发工具的普通用户、Finder、原生保存、Gatekeeper 仍需独立实测。每次结果以 `report.json` 和构建环境为准，脚本存在不表示已通过。
 

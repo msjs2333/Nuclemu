@@ -23,6 +23,7 @@ import sys
 from threading import Thread
 from time import monotonic
 from urllib.request import Request, urlopen
+from urllib.parse import urljoin, urlsplit
 
 
 def run(*args, **kwargs):
@@ -47,6 +48,25 @@ def post(url, route, data):
 
 def exercise(app, output, home):
     cli = app / 'Contents/MacOS/nuclemu-cli'
+    run('/usr/bin/codesign', '--verify', '--deep', '--strict', app)
+    # Reject links back into the builder's Python/Homebrew directories. The
+    # presence of Python on the runner must not conceal an incomplete bundle.
+    checked = set()
+    for binary in app.rglob('*'):
+        if not binary.is_file() or binary.resolve() in checked:
+            continue
+        with binary.open('rb') as stream:
+            magic = stream.read(4)
+        if magic not in (b'\xcf\xfa\xed\xfe', b'\xfe\xed\xfa\xcf', b'\xce\xfa\xed\xfe',
+                         b'\xfe\xed\xfa\xce', b'\xca\xfe\xba\xbe', b'\xbe\xba\xfe\xca'):
+            continue
+        checked.add(binary.resolve())
+        dependencies = run('/usr/bin/otool', '-L', binary)
+        for line in dependencies.splitlines()[1:]:
+            dependency = line.strip().split(' (', 1)[0]
+            if dependency.startswith('/'):
+                assert dependency.startswith(('/System/Library/', '/usr/lib/')), dependency
+    assert checked, 'No bundled Mach-O runtime found'
     env = {key: value for key, value in os.environ.items()
            if key not in ('PYTHONPATH', 'PYTHONHOME', 'VIRTUAL_ENV', 'TCL_LIBRARY', 'TK_LIBRARY')
            and not key.startswith('DYLD_')}
@@ -91,10 +111,12 @@ def exercise(app, output, home):
             assert {row['id'] for row in json.load(response)['experiments']} == {'alpha', 'beta'}
         with urlopen(url, timeout=10) as response:
             html = response.read().decode()
-        assets = set(re.findall(r'(?:href|src)="(/[^"?#]+)', html))
-        assets.update(('/draw.js', '/cover-beta-absorption.webp', '/lab-sans.woff', '/vue-LICENSE.txt'))
+        assets = {urljoin(url, path) for path in re.findall(r'(?:href|src)="([^"#]+)', html)
+                  if urlsplit(urljoin(url, path)).netloc == urlsplit(url).netloc}
+        assets.update(urljoin(url, path) for path in
+            ('/draw.js', '/cover-beta-absorption.webp', '/lab-sans.woff', '/vue-LICENSE.txt'))
         for asset in sorted(assets):
-            with urlopen(url.rstrip('/') + asset, timeout=10) as response:
+            with urlopen(asset, timeout=10) as response:
                 assert response.read(), asset
         readings = {}
         for name in ('AEL', 'BABS'):
@@ -140,8 +162,13 @@ def exercise(app, output, home):
     assert code == 0, code
     if port:
         with socket.socket() as listener:
+            # Match ThreadingHTTPServer's reuse policy. macOS retains closed
+            # HTTP connections in TIME_WAIT after the listener has exited.
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             listener.bind(('127.0.0.1', port))
-    return dict(runtime=runtime, measurements=readings, service_exit=code, port_released=True)
+            listener.listen()
+    return dict(runtime=runtime, measurements=readings, service_exit=code, port_released=True,
+                checked_native_binaries=len(checked), external_non_system_dependencies=False)
 
 
 def main():
@@ -161,6 +188,9 @@ def main():
     settings.parent.mkdir(parents=True)
     settings.write_text('{"port":0,"open_browser":false}\n')
     original_settings = settings.read_bytes()
+    workbench_sentinel = settings.parent / 'workbench' / 'keep.txt'
+    workbench_sentinel.parent.mkdir()
+    workbench_sentinel.write_text('Existing user workbench data\n')
     target = out / '中文 Applications' / 'Nuclemu.app'
     target.parent.mkdir()
     with mounted(previous, out / 'mount-old') as volume:
@@ -188,8 +218,10 @@ def main():
     for file in saved.iterdir():
         run(cli, 'files', 'inspect', file, cwd=out, env={**os.environ, 'HOME': str(home), 'PATH': '/usr/bin:/bin'})
     assert settings.read_bytes() == original_settings
+    assert workbench_sentinel.read_text() == 'Existing user workbench data\n'
     shutil.rmtree(target)
     assert not target.exists() and settings.read_bytes() == original_settings
+    assert workbench_sentinel.read_text() == 'Existing user workbench data\n'
     assert {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in saved.iterdir()} == digests
     report = dict(platform=platform.platform(), architecture=platform.machine(),
         install='DMG mounted read-only, app copied to isolated Applications directory',

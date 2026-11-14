@@ -76,5 +76,5 @@ PY
 codesign --force --deep --sign - "$STAGE/Nuclemu.app"
 PREVIOUS="$OUT/Nuclemu-$VERSION-macos-$ARCH-r1.dmg"
 hdiutil create -ov -format UDZO -fs HFS+ -volname Nuclemu-r1 -srcfolder "$STAGE" "$PREVIOUS"
-(cd "$OUT" && shasum -a 256 "$(basename "$DMG")" "$(basename "$PREVIOUS")" > SHA256SUMS)
+(cd "$OUT" && shasum -a 256 "$(basename "$DMG")" > SHA256SUMS)
 echo "Built $DMG"
