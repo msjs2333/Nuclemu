@@ -441,10 +441,11 @@ class WebLab:
                     output_enabled=dict(w.session.output_enabled),
                     instrument=asdict(instrument) if instrument else None,
                     instruments=instruments,
-                    instrument_groups={part.id: (w.session.group_state(part.devices)
+                    instrument_groups={part['id']: (w.session.group_state(part.get('devices') or (part['device'],))
                         if not self.readonly and not self.frozen else dict(can_start=False, can_stop=False))
-                        for part in w.session.experiment.components
-                        if part.kind == 'instrument' and part.devices and w.session.experiment.outputs},
+                        for part in self.info['components']
+                        if part['kind'] == 'instrument' and (part.get('devices') or part.get('device'))
+                        and w.session.experiment.outputs},
                     particle_flow=({key: flow[key] for key in ('thickness_um', 'areal_density_g_cm2') if key in flow}
                                    if flow is not None else None),
                     **self.counter_window_payload(window_cursor, instruments),

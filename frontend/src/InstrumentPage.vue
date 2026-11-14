@@ -75,7 +75,7 @@ const group = computed(() => binding.value.devices.length > 1 ? binding.value.co
 const targets = computed(() => instrumentDevices(props.state.definition))
 const chassis = computed(() => props.state.definition.components.filter(p => p.kind === 'instrument' && p.device))
 const groupRunning = computed(() => group.value ? group.value.devices!.some(id => props.state.gates[id]) : props.state.running)
-const groupActions = computed(() => group.value ? props.state.instrument_groups?.[group.value.id] : undefined)
+const groupActions = computed(() => binding.value.component ? props.state.instrument_groups?.[binding.value.component.id] : undefined)
 const hasExposure = computed(() => group.value ? group.value.devices!.some(id => (props.state.instruments[id]?.exposure_s ?? 0) > 0) : !!props.state.instrument?.readable_exposure_s)
 const status = computed(() => group.value ? groupRunning.value ? '采集中' : hasExposure.value ? '暂停' : '等待开始' : props.state.running ? '采集中' : props.state.instrument?.clearing ? '清空确认中'
   : ['time_limit', 'count_limit'].includes(props.state.instrument?.stop_reason ?? '') ? '到限暂停'
@@ -184,8 +184,8 @@ function finishClear(choice: 'save' | 'discard' | 'cancel') {
         </dl>
       </div>
       <form id="acquisition" class="fixed-acquisition" @submit.prevent="start">
-        <button class="primary" id="start" :disabled="(group ? !groupActions?.can_start : state.running) || state.readonly || state.instrument?.clearing">{{ group ? hasExposure ? '继续测量' : '开始测量' : state.instrument?.readable_exposure_s ? '继续采集' : '开始采集' }}</button>
-        <button type="button" id="stop" :disabled="(group ? !groupActions?.can_stop : !state.running) || state.readonly" @click="pause">{{ group ? '暂停测量' : '暂停采集' }}</button>
+        <button class="primary" id="start" :disabled="(groupActions ? !groupActions.can_start : state.running) || state.readonly || state.instrument?.clearing">{{ group ? hasExposure ? '继续测量' : '开始测量' : state.instrument?.readable_exposure_s ? '继续采集' : '开始采集' }}</button>
+        <button type="button" id="stop" :disabled="(groupActions ? !groupActions.can_stop : !state.running) || state.readonly" @click="pause">{{ group ? '暂停测量' : '暂停采集' }}</button>
       </form>
       <div v-if="instrument.kind === 'spectrum'" class="instrument-tabs" role="tablist" aria-label="仪器工具">
         <button role="tab" :aria-selected="tool === 'acquisition'" @click="tool = 'acquisition'">采集</button>
