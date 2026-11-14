@@ -54,7 +54,11 @@ class WebReviewBrowserTests(unittest.TestCase):
         response = page.request.post(self.url + '/api/open', data={kind: rows[0]['id']})
         self.assertEqual(response.ok, expected_ok, response.text())
         if response.ok:
-            page.goto(self.url + '/lab/' + response.json()['experiment'] + '/#instrument')
+            opened = response.json()
+            with page.expect_response(lambda r: r.url == self.url + '/api/state') as loaded:
+                page.goto(self.url + '/lab/' + opened['experiment'] + '/#instrument')
+            self.assertTrue(loaded.value.ok, loaded.value.text())
+            self.assertEqual(loaded.value.json()['id'], opened['id'])
             expect(page.locator('#workspace')).to_be_visible()
         return response
 
@@ -472,11 +476,22 @@ class WebReviewBrowserTests(unittest.TestCase):
 
     def test_spectrum_history_reference_and_display_keep_device_and_survive_archive(self):
         peer = self.spectra()
+        def select_and_wait(page, selector, value, action):
+            with page.expect_response(lambda r: r.url.endswith('/api/action') and
+                                      r.request.post_data_json.get('action') == action) as applied:
+                if value is None:
+                    page.locator(selector).check()
+                else:
+                    page.locator(selector).select_option(value)
+            self.assertTrue(applied.value.ok, applied.value.text())
+            if value is not None:
+                expect(page.locator(selector)).to_have_value(value)
+            return applied.value.json()
         self.collect(2)
         self.analysis_tab()
         release = self.hold_poll(self.page, self.state())
-        peer.locator("#device").select_option("right")
-        expect(peer.locator("#device")).to_have_value("right")
+        switched = select_and_wait(peer, '#device', 'right', 'device')
+        self.assertEqual(switched['device'], 'right')
         before = json.loads(json.dumps(self.server.app.lab.analysis))
         for selector, value in (("#sample", "segment:0"), ("#reference", "segment:0"), ("#rate", None)):
             with self.subTest(selector=selector):
@@ -491,16 +506,21 @@ class WebReviewBrowserTests(unittest.TestCase):
                 self.assertEqual(self.server.app.lab.analysis, before)
         release()
         expect(self.page.locator("#device")).to_have_value("right")
-        self.page.locator("#sample").select_option("segment:1")
-        self.page.locator("#reference").select_option("segment:0")
-        self.page.locator("#rate").check()
+        selected = select_and_wait(self.page, '#sample', 'segment:1', 'select')
+        self.assertEqual((selected['device'], selected['selected']), ('right', 1))
+        reference = select_and_wait(self.page, '#reference', 'segment:0', 'analysis')
+        self.assertEqual(reference['analysis']['reference'], 0)
+        rated = select_and_wait(self.page, '#rate', None, 'analysis')
+        self.assertTrue(rated['analysis']['rate_axis'])
         expect(self.page.locator("#sample")).to_have_value("segment:1")
         self.page.keyboard.press("Escape")
-        self.page.locator("#device").select_option("left")
-        expect(self.page.locator("#device")).to_have_value("left")
+        switched = select_and_wait(self.page, '#device', 'left', 'device')
+        self.assertEqual(switched['device'], 'left')
         self.analysis_tab()
-        self.page.locator("#sample").select_option("segment:0")
-        self.page.locator("#reference").select_option("segment:1")
+        selected = select_and_wait(self.page, '#sample', 'segment:0', 'select')
+        self.assertEqual((selected['device'], selected['selected']), ('left', 0))
+        reference = select_and_wait(self.page, '#reference', 'segment:1', 'analysis')
+        self.assertEqual(reference['analysis']['reference'], 1)
         expect(self.page.locator("#sample")).to_have_value("segment:0")
         self.page.keyboard.press("Escape")
         self.save_and_reopen_analysis()
@@ -509,7 +529,8 @@ class WebReviewBrowserTests(unittest.TestCase):
         expect(self.page.locator("#reference")).to_have_value("segment:1")
         expect(self.page.locator("#rate")).not_to_be_checked()
         self.page.keyboard.press("Escape")
-        self.page.locator("#device").select_option("right")
+        switched = select_and_wait(self.page, '#device', 'right', 'device')
+        self.assertEqual(switched['device'], 'right')
         self.analysis_tab()
         expect(self.page.locator("#sample")).to_have_value("segment:1")
         expect(self.page.locator("#reference")).to_have_value("segment:0")
