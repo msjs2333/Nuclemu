@@ -14,11 +14,19 @@ ACCENT, HOVER, PLANE, FOCUS = '#2956a1', '#204984', '#f7f9fa', '#376cc2'
 
 
 class _Launcher:
-    def __init__(self, root, service):
+    def __init__(self, root, service, *, settings=None, settings_path=None,
+                 settings_error=None, service_factory=None, instance=None):
         import tkinter as tk
         from tkinter import font
+        from .launcher_settings import LauncherSettings
 
         self.root, self.service = root, service
+        self.settings = settings if settings is not None else LauncherSettings()
+        self.settings_path, self.settings_error = settings_path, settings_error
+        self.service_factory, self.instance = service_factory, instance
+        self.settings_window = None
+        self._auto_pending = self.settings.open_browser
+        self._automatic_opened = False
         self.closed = self.closing = self.checking_close = False
         self.messages = SimpleQueue()
         self.url = None
@@ -85,8 +93,13 @@ class _Launcher:
         self.open_button = self.button(self.actions, '在浏览器中打开', self.open_browser, primary=True)
         self.open_button.shell.grid(row=0, column=0, sticky='w')
         self.open_button.shell.grid_remove()
+        self.retry_button = self.button(self.actions, '重试', self.retry, primary=True)
+        self.retry_button.shell.grid(row=0, column=0, sticky='w')
+        self.retry_button.shell.grid_remove()
+        self.settings_button = self.button(self.actions, '设置', self.show_settings)
+        self.settings_button.shell.grid(row=0, column=1, sticky='e')
         self.close_button = self.button(self.actions, '关闭', self.request_close)
-        self.close_button.shell.grid(row=0, column=1, sticky='e')
+        self.close_button.shell.grid(row=0, column=2, sticky='e')
         if sys.platform == 'win32':
             self.close_button.shell.grid_remove()
         self.message.trace_add('write', self._message_changed)
@@ -101,6 +114,8 @@ class _Launcher:
         self._later(0, self.start)
         self._later(50, self.poll)
         self._later(250, self._check_dpi)
+        if self.settings_error:
+            self._notice(self.settings_error, error=True)
 
     def _later(self, delay, callback):
         def run():
@@ -173,10 +188,11 @@ class _Launcher:
         self.address_entry.pack_configure(padx=self.px(8), pady=self.px(8))
         self.copy_button.shell.grid_configure(padx=(self.px(8), 0))
         self.actions.grid_configure(pady=(self.px(16), 0))
+        self.settings_button.shell.grid_configure(padx=(self.px(12), 0))
         self.close_button.shell.grid_configure(padx=(self.px(12), 0))
         if sys.platform == 'win32':
             self.close_button.shell.grid_remove()
-        for button in (self.copy_button, self.open_button, self.close_button):
+        for button in (self.copy_button, self.open_button, self.retry_button, self.settings_button, self.close_button):
             button.configure(padx=self.px(16), pady=self.px(8))
             button.pack_configure(padx=self.px(1), pady=self.px(1))
         self.root.minsize(1, 1)
@@ -242,11 +258,52 @@ class _Launcher:
             self._fitting = False
 
     def start(self):
-        if not self.checking_close and self.service.status().phase == 'new':
+        if not self.closing and not self.checking_close and self.service.status().phase == 'new':
             self.service.start()
 
+    def show_settings(self):
+        if self.closing or self.checking_close:
+            return
+        if self.settings_window is None:
+            from .desktop_settings import SettingsWindow
+            self.settings_window = SettingsWindow(self)
+        self.settings_window.activate()
+
+    def save_settings(self, settings):
+        from .launcher_settings import save_settings
+        save_settings(settings, self.settings_path)
+        self.settings, self.settings_error = settings, None
+        self._notice('设置已保存，下次启动或重试时生效。当前工作台继续运行。'
+                     if self.url else '设置已保存，下一次启动或重试时生效。')
+
+    def retry(self):
+        if (self.closing or self.checking_close or self.service_factory is None
+                or self.service.status().phase != 'failed' or not self.service.join(0)):
+            return
+        self.service = self.service_factory(self.settings.port)
+        self.url = None
+        self.address.set('')
+        self._auto_pending = self.settings.open_browser and not self._automatic_opened
+        self.status.set('正在启动…')
+        self.status_label.configure(foreground=MUTED)
+        self._notice(self.settings_error or '正在重新启动本机工作台…', error=bool(self.settings_error))
+        self.retry_button.shell.grid_remove()
+        self.settings_button.configure(text='设置')
+        self.ready.grid_remove()
+        self.open_button.shell.grid_remove()
+        self.start()
+
+    def activate(self):
+        if self.closed:
+            return
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+        if self.settings_window is not None:
+            self.settings_window.activate()
+
     def open_browser(self):
-        if not self.url or self.closing:
+        if not self.url or self.closing or self.checking_close:
             return
         try:
             if not webbrowser.open(self.url):
@@ -269,6 +326,8 @@ class _Launcher:
             return
         self.checking_close = True
         self._enable(self.close_button, False)
+        self._enable(self.settings_button, False)
+        self._enable(self.retry_button, False)
         def check():
             try:
                 self.messages.put(('close', self.service.stop_if_idle()))
@@ -290,6 +349,8 @@ class _Launcher:
                 self._enable(self.copy_button, False)
             else:
                 self._enable(self.close_button, True)
+                self._enable(self.settings_button, True)
+                self._enable(self.retry_button, True)
                 self._notice('实验仍在工作台中。请返回工作台退出实验，再关闭启动器。'
                              if kind == 'close' else f'无法关闭服务：{result}', error=kind == 'error')
         state = self.service.status()
@@ -303,19 +364,39 @@ class _Launcher:
             self.address.set(state.url)
             self.status.set('已就绪')
             self.status_label.configure(foreground=ACCENT)
-            self._notice('')
+            self._notice(self.settings_error or '', error=bool(self.settings_error))
             self.ready.grid(row=2, sticky='ew')
             self.open_button.shell.grid()
             self._schedule_fit()
         elif state.phase == 'failed' and self.status.get() != '启动失败':
             self.status.set('启动失败')
             self.status_label.configure(foreground='#9b2c21')
-            self._notice(f'{state.error} 请关闭窗口后重试，或使用 nuclemu serve --no-gui。', error=True)
+            self._notice(f'{state.error} 可修改端口后重试，或使用 nuclemu serve --no-gui。', error=True)
+            self.settings_button.configure(text='修改端口')
+            self.retry_button.shell.grid()
+            self._enable(self.retry_button, self.service_factory is not None)
+        if self.url and self._auto_pending and not self.closing and not self.checking_close:
+            self._auto_pending = False
+            self._automatic_opened = True
+            self.open_browser()
+        if self.instance is not None and self.instance.take_activation():
+            self.activate()
         self._later(50, self.poll)
 
 
-def launch(paths=(), *, port=0, directory=None):
+def launch(paths=(), *, port=None, directory=None, settings_path=None, instance_directory=None):
     """Show the launcher before discovering courses and starting its service."""
+    from .launcher_instance import acquire_or_activate
+    owner = acquire_or_activate(instance_directory)
+    if owner is None:
+        return
+    try:
+        _launch_owned(paths, port=port, directory=directory, settings_path=settings_path, instance=owner)
+    finally:
+        owner.close()
+
+
+def _launch_owned(paths, *, port, directory, settings_path, instance):
     enable_windows_dpi_awareness()
     try:
         import tkinter as tk
@@ -325,14 +406,31 @@ def launch(paths=(), *, port=0, directory=None):
     except tk.TclError as error:
         raise OSError(f'无法创建桌面窗口：{error}；请使用 nuclemu serve --no-gui。') from error
     try:
+        from .launcher_settings import LauncherSettings, load_settings
+        settings_error = None
+        try:
+            settings = load_settings(settings_path)
+        except (OSError, ValueError) as error:
+            settings, settings_error = LauncherSettings(), str(error)
         from .web_service import WorkbenchService
-        window = _Launcher(root, WorkbenchService(paths, port=port, directory=directory))
+        paths = tuple(paths)
+        def factory(selected_port):
+            return WorkbenchService(paths, port=selected_port, directory=directory)
+        window = _Launcher(root, factory(settings.port if port is None else port),
+            settings=settings, settings_path=settings_path, settings_error=settings_error,
+            service_factory=factory, instance=instance)
         root.update_idletasks()
     except Exception:
         root.destroy()
         raise
-    while not window.closed:
-        try:
-            root.mainloop()
-        except KeyboardInterrupt:
-            window.request_close()
+    try:
+        while not window.closed:
+            try:
+                root.mainloop()
+            except KeyboardInterrupt:
+                window.request_close()
+    finally:
+        # Unexpected Tk teardown must not leave a service owned by a released
+        # single-instance lock. Normal closing has already joined the worker.
+        window.service.stop(force=True)
+        window.service.join()
