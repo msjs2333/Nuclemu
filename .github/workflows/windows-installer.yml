@@ -48,7 +48,7 @@ jobs:
           ./packaging/windows/build-installer.ps1 -Compiler $compiler -PayloadDirectory build/previous-payload -Version 0.0.0 -OutputDirectory build/previous
           ./packaging/windows/build-installer.ps1 -Compiler $compiler
       - name: Install, upgrade, uninstall and reopen retained data
-        shell: pwsh
+        shell: powershell
         run: |
           ./packaging/windows/verify-installer.ps1 -ExpectedComputerName $env:COMPUTERNAME -Mode AllUsers `
             -Setup dist/release/Nuclemu-0.0.1-windows-x64-setup.exe `

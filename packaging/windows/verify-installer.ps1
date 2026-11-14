@@ -34,8 +34,14 @@ function Assert-Installed($version) {
     $entry = Get-ItemProperty -LiteralPath $key
     if ($entry.DisplayVersion -ne $version -or $entry.InstallLocation.TrimEnd('\') -ne $app) { throw 'Scope, version or previous directory not preserved' }
     if (!(Test-Path -LiteralPath $shortcut)) { throw 'Missing Start menu shortcut' }
-    $link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
-    if ($link.TargetPath -ne "$app\Nuclemu-Desktop.exe" -or $link.WorkingDirectory -ne $app) { throw 'Shortcut target or shared working directory is wrong' }
+    $shell = New-Object -ComObject Shell.Application
+    $link = $shell.Namespace($shortcutRoot).ParseName('Nuclemu.lnk').GetLink
+    $target = [Environment]::ExpandEnvironmentVariables($link.Path)
+    $working = [Environment]::ExpandEnvironmentVariables($link.WorkingDirectory)
+    Write-Output "Start menu shortcut: target=[$target], working directory=[$working], install=[$app]"
+    if ($target -ne "$app\Nuclemu-Desktop.exe" -or $working.TrimEnd('\') -ne $app) {
+        throw 'Shortcut target or shared working directory is wrong'
+    }
     & "$app/nuclemu.exe" validate
     if ($LASTEXITCODE -ne 0) { throw 'Installed catalog failed' }
 }
