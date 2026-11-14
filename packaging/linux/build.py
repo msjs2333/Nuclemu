@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import tarfile
@@ -45,6 +46,30 @@ def main():
         str(root / 'packaging/linux/nuclemu.spec'))
     bundle = work / 'bundle/Nuclemu'
     write(bundle / 'nuclemu-desktop', '#!/bin/sh\nAPP=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$APP/nuclemu" serve --gui "$@"\n', 0o755)
+    # Resolve only shipped shared libraries to their Debian package notices.
+    notices = bundle / 'licenses/Debian-notices'
+    packages = set()
+    for library in bundle.rglob('*.so*'):
+        if not library.is_file():
+            continue
+        owners = subprocess.check_output(['dpkg-query', '-S', '*/' + library.name], text=True)
+        for line in owners.splitlines():
+            package = line.split(': ', 1)[0].split(':', 1)[0]
+            packages.add(package)
+    common_licenses = set()
+    for package in sorted(packages):
+        copyright_file = Path('/usr/share/doc') / package / 'copyright'
+        destination = notices / package / 'copyright'
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(copyright_file, destination)
+        common_licenses.update(re.findall(r'/usr/share/common-licenses/([A-Za-z0-9.+-]+)', copyright_file.read_text()))
+    for name in sorted(common_licenses):
+        source_license = Path('/usr/share/common-licenses') / name
+        if source_license.is_file():
+            destination = bundle / 'licenses/common-licenses' / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source_license, destination)
+    write(bundle / 'licenses/Debian-packages.json', json.dumps(sorted(packages), indent=2) + '\n')
     try:
         source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True, stderr=subprocess.DEVNULL).strip()
     except (FileNotFoundError, subprocess.CalledProcessError):

@@ -27,4 +27,4 @@ docker build --target builder -t nuclemu-linux-builder -f packaging/linux/Docker
 docker run --rm -v "$PWD:/src" -e NUCLEMU_SOURCE_SHA="$(git rev-parse HEAD)" nuclemu-linux-builder python packaging/linux/build.py
 ```
 
-产物位于 `dist/release/`，每个文件附 SHA256。`BUILD-INFO.json` 记录源码、版本和运行时基线。`--revision 0` 可制作较早候选供隔离升级验收，正式默认候选为 `0.0.1-1`。构建过程需下载工具与系统包；完成后的目标机运行不联网。实际验收范围见随本次交付的记录，尚未实测的平台不列为已支持。
+产物位于 `dist/release/`，每个文件附 SHA256。`BUILD-INFO.json` 记录源码、版本和运行时基线；`licenses/` 按实际携带的共享库查询 Debian 所属包，仅保留相应版权通知及其引用的许可全文，另列入 Python 和 PyInstaller 许可。`--revision 0` 可制作较早候选供隔离升级验收，正式默认候选为 `0.0.1-1`。构建过程需下载工具与系统包；完成后的目标机运行不联网。实际验收范围见随本次交付的记录，尚未实测的平台不列为已支持。

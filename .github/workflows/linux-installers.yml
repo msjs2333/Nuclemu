@@ -56,6 +56,9 @@ jobs:
             dist/release/*-1-linux-amd64.tar.gz*
           compression-level: 0
           if-no-files-found: warn
+      - name: Collect files created by the isolated test account
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" build/linux-acceptance build/linux-runtime
       - uses: actions/upload-artifact@v6
         if: always()
         with:
