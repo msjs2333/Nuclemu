@@ -138,6 +138,7 @@ def _add_windows(segments, records, tails=None):
         previous = tails.get(key)
         if (previous is None or row.acquisition != previous["acquisition"]
                 or row.origin != previous.get("origin")
+                or (row.signal.document() if row.signal else None) != previous.get("signal")
                 or row.settings != previous["settings"] or row.start_s != previous["end_s"]):
             segments.append({"acquisition": row.acquisition, "start_s": row.start_s,
                              "end_s": row.end_s, "settings": dict(row.settings),
@@ -145,6 +146,8 @@ def _add_windows(segments, records, tails=None):
             tails[key] = segments[-1]
             if row.origin is not None:
                 segments[-1]["origin"] = row.origin
+            if row.signal is not None:
+                segments[-1]["signal"] = row.signal.document()
             touched.append(segments[-1])
         else:
             segment = previous
@@ -173,6 +176,16 @@ def collect(experiment, records, seed):
 def snapshot_product(experiment, snapshot, seed):
     """Serialize one immutable instrument snapshot without sampling a model."""
     product = collect(experiment, snapshot.segments, seed)
+    from .core import SignalBinding
+    device = next(d for d in experiment.devices if d.id == snapshot.device)
+    native_signal = (SignalBinding(device.input, tuple(d.id for d in experiment.devices if d.input == device.input))
+                     if device.input is not None else None)
+    # Imported segments carry their own contract. An unidentified foreign
+    # prefix must never inherit the receiving instrument's current binding.
+    if native_signal is not None:
+        for segment in product["segments"]:
+            if segment.get("origin") is None and "signal" not in segment:
+                segment["signal"] = native_signal.document()
     product["devices"] = {snapshot.device: product["devices"][snapshot.device]}
     product["snapshot"] = {"id": snapshot.id, "device": snapshot.device,
                            "acquisition": snapshot.acquisition,
@@ -188,7 +201,9 @@ def snapshot_product(experiment, snapshot, seed):
                                window_s=w.window_s,
                                parts=[dict(start_s=p.start_s, end_s=p.end_s, settings=dict(p.settings),
                                            readings={k:list(v) for k,v in p.readings.items()}, acquisition=p.acquisition,
-                                           **({"origin": p.origin} if p.origin is not None else {}))
+                                           **({"origin": p.origin} if p.origin is not None else {}),
+                                           **({"signal": p.signal.document()} if p.signal is not None else
+                                              {"signal": native_signal.document()} if p.origin is None and native_signal is not None else {}))
                                       for p in w.parts]) for w in snapshot.windows]
     return product
 

@@ -6,7 +6,7 @@ from math import isclose, isfinite
 from types import MappingProxyType
 
 from .acquisition import ConfigurationChange, RoundInfo, SettingChange, Snapshot, TargetChange, InstrumentWindow, WindowChange
-from .core import Measurement
+from .core import Measurement, SignalBinding
 
 
 def _number(value, label, *, positive=False):
@@ -136,6 +136,9 @@ def load_history(experiment, time_s, rounds, snapshots, history):
                 raise ValueError("Imported snapshot segment has the wrong instrument or round")
             start, end = _number(row.start_s, "segment start"), _number(row.end_s, "segment end")
             origin = row.origin
+            if row.signal is not None and (not isinstance(row.signal, SignalBinding)
+                                          or item.device not in row.signal.consumers):
+                raise ValueError("Imported signal provenance does not include the measured instrument")
             if origin is not None and (not isinstance(origin, str) or not origin):
                 raise ValueError("Imported measurement origin must be a nonempty source identity")
             if not previous.get(origin, 0) <= start < end or (origin is None and end > item.time_s):
@@ -147,7 +150,7 @@ def load_history(experiment, time_s, rounds, snapshots, history):
             exposure += end - start
             previous[origin] = end
             segments.append(Measurement(start, end, _values(row.settings),
-                                        MappingProxyType({item.device: values}), row.acquisition, origin))
+                                        MappingProxyType({item.device: values}), row.acquisition, origin, row.signal))
         if tuple(totals) != tuple(item.counts) or not isclose(exposure, item.exposure_s, rel_tol=1e-10, abs_tol=1e-12):
             raise ValueError("Imported snapshot totals or exposure do not match its segments")
         prefix = _number(item.window_prefix_exposure_s, "unknown-window prefix exposure")

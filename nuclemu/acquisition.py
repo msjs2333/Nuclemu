@@ -6,7 +6,7 @@ from decimal import Decimal
 from math import isfinite
 from types import MappingProxyType
 
-from .core import Measurement, _UNCHANGED
+from .core import Measurement, SignalBinding, _UNCHANGED
 
 
 @dataclass(frozen=True)
@@ -177,6 +177,9 @@ class InstrumentAcquisition:
         self.session = session
         self.gates = {d.id: _Gate() for d in session.experiment.devices}
         self.enabled = {o.id: False for o in session.experiment.outputs}
+        signals = {o.id: SignalBinding(o.id, tuple(d.id for d in session.experiment.devices if d.input == o.id))
+                   for o in session.experiment.outputs if any(d.input == o.id for d in session.experiment.devices)}
+        self._signals = {d.id: signals[d.input] for d in session.experiment.devices}
         self._output_groups = {key: (key,) for key in self.enabled}
         for part in session.experiment.components:
             if part.outputs:
@@ -504,7 +507,7 @@ class InstrumentAcquisition:
                     result[output.id] = (0,) * output.channels
             rows = [Measurement(start, end, settings,
                                 MappingProxyType({d.id: result[d.input]}),
-                                self.gates[d.id].acquisition)
+                                self.gates[d.id].acquisition, signal=self._signals[d.id])
                     for d in s.experiment.devices if self.gates[d.id].opened is not None]
         except Exception as error:
             s._rng.setstate(rng_state)
@@ -520,11 +523,12 @@ class InstrumentAcquisition:
             g.readable_exposure += boundary - self.begin
             if (g.segments and g.segments[-1].end_s == start
                     and g.segments[-1].origin == row.origin
+                    and g.segments[-1].signal == row.signal
                     and g.segments[-1].settings == settings):
                 old = g.segments[-1]
                 merged = tuple(a + b for a, b in zip(old.readings[device], values))
                 g.segments[-1] = Measurement(old.start_s, end, old.settings,
-                                             MappingProxyType({device: merged}), g.acquisition, old.origin)
+                                             MappingProxyType({device: merged}), g.acquisition, old.origin, old.signal)
             else:
                 g.segments.append(row)
         self.begin = boundary

@@ -23,6 +23,7 @@ from uuid import UUID, uuid4, uuid5
 from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 from .catalog import describe, resolve_saved_experiment
+from .core import SignalBinding
 from .download_names import calibration_label, download_prefix, measurement_label
 from .results import Calibration, configuration_document, round_document, snapshot_product, write_product
 
@@ -44,6 +45,31 @@ def _copy(value):
     return json.loads(_json(value))
 
 
+def _measurement_item(item, definition, container):
+    """Preserve known contracts; infer only native observations of this container."""
+    if (item["kind"] != "measurement" or item["source"]["package"] != container
+            or item["source"]["item"] != item["id"]):
+        return item
+    if not any(row.get("origin") is None and "signal" not in row for row in item["document"]["segments"]):
+        return item
+    bindings = {d["id"]: d.get("input") for d in definition["devices"]}
+    outputs = {o["id"] for o in definition.get("outputs", ())}
+    product = item["document"]
+    device = product["snapshot"]["device"]
+    signal_input = bindings.get(device)
+    if signal_input not in outputs:
+        return item
+    signal = SignalBinding(signal_input, tuple(key for key, value in bindings.items() if value == signal_input))
+    def annotate(row):
+        if row.get("origin") is None and "signal" not in row:
+            return dict(row, signal=signal.document())
+        return row
+    # Copy only metadata being augmented; immutable count arrays stay shared.
+    return dict(item, document=dict(product, segments=[annotate(row) for row in product["segments"]],
+        **({"windows": [dict(w, parts=[annotate(p) for p in w["parts"]]) for w in product["windows"]]}
+           if "windows" in product else {})))
+
+
 def capture_session(session, previous=None, *, definition=None, device=None, analysis=None):
     """Refresh metadata and include explicit snapshots; preserve prior item identities.
 
@@ -59,6 +85,8 @@ def capture_session(session, previous=None, *, definition=None, device=None, ana
         raise ValueError("Expected a portable Nuclemu experiment")
     if previous is not None and doc["definition"]["id"] != session.experiment.id:
         raise ValueError("Cannot capture a different experiment into this package")
+    if previous is not None:
+        doc["items"] = [_measurement_item(i, previous["definition"], doc["id"]) for i in doc["items"]]
     doc.update(definition=_copy(definition if definition is not None else describe(session.experiment)),
                seed=session.seed, random_stream=session.random_stream, configuration=configuration_document(session),
                rounds=[round_document(r) for r in session.rounds],
@@ -139,6 +167,12 @@ def _check_product(product):
         raise ValueError("Instrument channels must be positive integers")
     exposure, previous_end = 0, {}
     for segment in product["segments"]:
+        if "signal" in segment:
+            if not isinstance(segment["signal"], dict):
+                raise ValueError("Invalid signal provenance")
+            signal = SignalBinding(**segment["signal"])
+            if not set(segment["readings"]) <= set(signal.consumers):
+                raise ValueError("Signal provenance does not include the measured instrument")
         if segment.get("origin") is not None and (not isinstance(segment["origin"], str) or not segment["origin"]):
             raise ValueError("Invalid measurement origin")
         start, end = segment["start_s"], segment["end_s"]
@@ -233,7 +267,7 @@ def _coalesce(rows):
             row.pop("origin", None)
         previous = merged[-1] if merged else None
         if (previous is not None and previous["end_s"] == row["start_s"]
-                and all(previous.get(k) == row.get(k) for k in ("settings", "acquisition", "origin"))
+                and all(previous.get(k) == row.get(k) for k in ("settings", "acquisition", "origin", "signal"))
                 and previous["readings"].keys() == row["readings"].keys()):
             previous["end_s"] = row["end_s"]
             for key, values in row["readings"].items():
@@ -408,7 +442,8 @@ def _snapshot(product):
 
     def parts(rows):
         return tuple(Measurement(s["start_s"], s["end_s"], MappingProxyType(dict(s["settings"])),
-            MappingProxyType({key: tuple(counts) for key, counts in s["readings"].items()}), s["acquisition"], s.get("origin"))
+            MappingProxyType({key: tuple(counts) for key, counts in s["readings"].items()}), s["acquisition"], s.get("origin"),
+            SignalBinding(**s["signal"]) if "signal" in s else None)
             for s in rows)
     metadata = product["snapshot"]
     device = metadata["device"]
@@ -457,7 +492,7 @@ def decode_measurement(source, experiment, device, item_id=None):
     restored = resolve_saved_experiment(experiment, bundle["definition"])
     bound = next((d for d in restored.devices if d.id == device), None)
     target = next((d for d in experiment.devices if d.id == device), None)
-    product = item["document"]
+    product = _measurement_item(item, bundle["definition"], bundle.get("id", bundle.get("package")))["document"]
     saved = product["devices"].get(device)
     archived = next((d for d in bundle["definition"]["devices"] if d["id"] == device), None)
     if (product["experiment"] != experiment.id or bound is None or target is None or saved is None
@@ -511,7 +546,7 @@ def reopen_session(doc, experiment, *, seed=None):
         if (item["kind"] != "measurement" or item["source"]["package"] != doc["id"]
                 or item["source"]["item"] != item["id"]):
             continue
-        product = item["document"]
+        product = _measurement_item(item, doc["definition"], doc["id"])["document"]
         snapshots.append(_snapshot(product))
     configuration = doc["configuration"]
     history = tuple(ConfigurationChange(**change) for change in configuration.get("history", ()))
@@ -537,7 +572,8 @@ def _bundle(doc, identity):
     if item.get("calibration_id"):
         items.append(_item(doc, item["calibration_id"]))
     return dict(format=ITEM_FORMAT, package=doc["id"], definition=doc["definition"],
-                items=deepcopy(items), rounds=deepcopy(doc["rounds"]))
+                items=deepcopy([_measurement_item(i, doc["definition"], doc["id"]) for i in items]),
+                rounds=deepcopy(doc["rounds"]))
 
 
 def export_item(doc, identity, format="json"):
@@ -571,14 +607,17 @@ def export_item(doc, identity, format="json"):
                    if len(bundle["items"]) == 2 else None)
     body = StringIO(newline="")
     write_product(body, "csv", product, calibration=calibration)
-    if any(s.get("origin") is not None for s in product["segments"]):
+    extra = [key for key in ("origin", "signal") if any(s.get(key) is not None for s in product["segments"])]
+    if extra:
         rows = csv.DictReader(StringIO(body.getvalue()))
-        writer = csv.DictWriter(output, fieldnames=[*rows.fieldnames, "origin"])
+        writer = csv.DictWriter(output, fieldnames=[*rows.fieldnames, *extra])
         writer.writeheader()
-        origins = (s.get("origin", "") for s in product["segments"]
-                   for counts in s["readings"].values() for _ in counts)
-        for row, origin in zip(rows, origins):
-            writer.writerow(dict(row, origin=origin))
+        fields_by_segment = [{key: (_json(s[key]) if key == "signal" else s[key]) if s.get(key) is not None else ""
+                              for key in extra} for s in product["segments"]]
+        provenance = (fields for s, fields in zip(product["segments"], fields_by_segment)
+                      for counts in s["readings"].values() for _ in counts)
+        for row, fields in zip(rows, provenance):
+            writer.writerow(dict(row, **fields))
     else:
         output.write(body.getvalue())
     return output.getvalue().encode("utf-8")
@@ -638,7 +677,8 @@ def _load_item(source):
             if row["experiment"] != product["experiment"]:
                 raise ValueError("CSV experiment disagrees with its saved metadata")
             device, channel = row["device"], int(row["channel"])
-            key = (device, float(row["start_s"]), float(row["end_s"]), row["settings"], int(row["acquisition"]), row.get("origin") or None)
+            key = (device, float(row["start_s"]), float(row["end_s"]), row["settings"], int(row["acquisition"]),
+                   row.get("origin") or None, row.get("signal") or None)
             counts = groups.get(key)
             if counts is None:
                 counts = [None] * product["devices"][device]["channels"]
@@ -647,6 +687,8 @@ def _load_item(source):
                                      acquisition=key[4], readings={device: counts}))
                 if key[5] is not None:
                     segments[-1]["origin"] = key[5]
+                if key[6] is not None:
+                    segments[-1]["signal"] = json.loads(key[6])
             if not 0 <= channel < len(counts) or (key, channel) in seen:
                 raise ValueError("CSV has duplicate or invalid instrument channels")
             if not isclose(float(row["exposure_s"]), key[2] - key[1], rel_tol=1e-10):
@@ -680,7 +722,7 @@ def import_item(target, source, identity):
     chosen = next((i for i in bundle["items"] if i["id"] == identity), None)
     if chosen is None:
         raise ValueError("Selected item is not in the source file")
-    copied = [deepcopy(chosen)]
+    copied = [deepcopy(_measurement_item(chosen, bundle["definition"], bundle["package"]))]
     if chosen.get("calibration_id"):
         calibration = next((i for i in bundle["items"] if i["id"] == chosen["calibration_id"]), None)
         if calibration is None:
@@ -793,7 +835,7 @@ def _convert_archive(database, identifier):
                 cal = _item(doc, calibrations[device])
                 if Calibration.from_document(cal["document"]).applies_to(segment["settings"]):
                     item["calibration_id"] = calibrations[device]
-            doc["items"].append(item)
+            doc["items"].append(_measurement_item(item, info, identity))
             references[index, device] = item_id
     for device, selection in old.get("analysis", {}).items():
         doc["analysis"][device] = deepcopy(selection)

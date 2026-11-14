@@ -277,6 +277,25 @@ class Experiment:
 
 
 @dataclass(frozen=True)
+class SignalBinding:
+    """The original input and its declared consumers for one observation."""
+
+    input: str
+    consumers: tuple[str, ...]
+
+    def __post_init__(self):
+        if (not isinstance(self.input, str) or not self.input
+                or not isinstance(self.consumers, (list, tuple)) or not self.consumers
+                or any(not isinstance(key, str) or not key for key in self.consumers)
+                or len(set(self.consumers)) != len(self.consumers)):
+            raise ValueError("Signal provenance requires an input and distinct named consumers")
+        object.__setattr__(self, "consumers", tuple(sorted(self.consumers)))
+
+    def document(self):
+        return dict(input=self.input, consumers=list(self.consumers))
+
+
+@dataclass(frozen=True)
 class Measurement:
     start_s: float
     end_s: float
@@ -284,6 +303,7 @@ class Measurement:
     readings: Mapping[str, tuple[int, ...]]
     acquisition: int = 1
     origin: str | None = None
+    signal: SignalBinding | None = None
 
     @property
     def exposure_s(self) -> float:
