@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {computed, nextTick, ref, watch} from 'vue'
 import {fmt, inputValue} from './display'
+import {errorMessage} from './api'
 import {deviceName, instrumentBinding, instrumentDevices} from './instrumentBindings'
 import CounterPanel from './CounterPanel.vue'
 import SpectrumPanel from './SpectrumPanel.vue'
@@ -35,12 +36,14 @@ const durationInput = ref<HTMLInputElement>()
 const saveDialog = ref<HTMLDialogElement>()
 const measurementName = ref('')
 const saving = ref(false)
+const saveError = ref('')
 let saveContext: {session: string; component: string | undefined; device: string; acquisitions: Record<string, number | null>} | null = null
 function defaultName() {
   const now = new Date(), pad = (n: number) => String(n).padStart(2, '0')
   return `${props.state.definition.short_code ?? props.state.experiment}_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
 }
 function nameMeasurement() {
+  saveError.value = ''
   saveContext = {session: props.state.id, component: binding.value.component?.id, device: props.state.device,
     acquisitions: Object.fromEntries(binding.value.devices.map(d => [d.id, props.state.instruments[d.id]?.acquisition ?? null]))}
   measurementName.value = defaultName()
@@ -55,7 +58,8 @@ function saveNamedMeasurement() {
       await props.act('snapshot_group', {component: context.component, device: context.device, acquisitions: context.acquisitions, title: name}, context.session)
       savedNotice.value = '已保存'
       saveDialog.value?.close()
-    } finally { saving.value = false }
+    } catch (error) { saveError.value = errorMessage(error) }
+    finally { saving.value = false }
   })
 }
 defineExpose({focusDevice: () => (selector.value ?? workspace.value)?.focus()})
@@ -209,6 +213,7 @@ function finishClear(choice: 'save' | 'discard' | 'cancel') {
       <h2 id="measurement-save-title">保存测量</h2>
       <form @submit.prevent="saveNamedMeasurement">
         <label>名称 <input id="measurement-name" v-model="measurementName" required autofocus></label>
+        <p v-if="saveError" id="measurement-save-error" role="alert">{{ saveError }}</p>
         <div class="dialog-actions"><button type="button" :disabled="saving" @click="saveDialog?.close()">取消</button><button id="measurement-save-confirm" class="primary" :disabled="saving || !measurementName.trim()">保存</button></div>
       </form>
     </dialog>

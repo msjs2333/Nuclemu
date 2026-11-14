@@ -65,17 +65,14 @@ def enable_output(test):
     page.locator("[data-page='instrument']").click()
 
 
-def measurement_operation(page, action, device='counter'):
-    """Choose a window for this operation without changing the active instrument."""
-    grouped = page.locator('.counter-window').count() > 1
-    if action in ('save', 'clear'):
-        page.locator('#save-current' if action == 'save' else '#clear').click()
+def measurement_operation(page, action):
+    if action == 'save':
+        page.locator('#save-current').click()
+        page.locator('#measurement-save-confirm').click()
+    elif action == 'clear':
+        page.locator('#clear').click()
     else:
         page.get_by_role('button', name={'cache': '从本场实验记录选择', 'file': '从文件选择'}[action], exact=True).click()
-    if grouped:
-        expect(page.locator('#measurement-target')).to_be_visible()
-        page.locator('#operation-device').select_option(device)
-        page.locator('#operation-confirm').click()
 
 
 def expect_counter_exposure(page, seconds, device='counter'):
@@ -96,17 +93,15 @@ def start_collection(test, seconds):
     instrument = state.get("instrument")
     grouped = page.locator('.counter-window').count() > 1
     targets = state.get('instruments', {}) if grouped else {state['device']: instrument}
-    for device, target in targets.items():
-        if not target or target["stop_reason"] not in ("time_limit", "count_limit"):
-            continue
+    if any(target and target['stop_reason'] in ('time_limit', 'count_limit') for target in targets.values()):
         with page.expect_response(lambda r: r.url.endswith('/api/action') and
-                                  r.request.post_data_json.get('action') == 'begin_clear') as clearing:
-            measurement_operation(page, "clear", device)
+                                  r.request.post_data_json.get('action') == 'begin_clear_group') as clearing:
+            measurement_operation(page, "clear")
         test.assertTrue(clearing.value.ok, clearing.value.text())
         if clearing.value.json().get("clear_confirmation"):
             expect(page.locator("#clear-discard")).to_be_visible()
             with page.expect_response(lambda r: r.url.endswith('/api/action') and
-                                      r.request.post_data_json.get('action') == 'finish_clear') as cleared:
+                                      r.request.post_data_json.get('action') == 'finish_clear_group') as cleared:
                 page.locator("#clear-discard").click()
             test.assertTrue(cleared.value.ok, cleared.value.text())
             expect(page.locator("#clear-discard")).not_to_be_visible()
@@ -118,7 +113,7 @@ def start_collection(test, seconds):
     page.locator("#duration").fill(str(seconds))
     page.locator("#apply-acquisition").click()
     page.locator("#start").click()
-    expect(page.locator("#gate-status")).to_have_text("采集中")
+    expect(page.locator("#stop")).to_be_enabled()
 
 
 @unittest.skipUnless(sync_playwright, "Install Playwright to run browser checks")
@@ -171,7 +166,7 @@ class CatalogRecordsBrowserTests(unittest.TestCase):
     def collect(self, seconds):
         start_collection(self, seconds)
         self.now += seconds
-        expect(self.page.locator("#gate-status")).to_have_attribute("data-running", "false")
+        expect(self.page.locator("#stop")).to_be_disabled()
 
     def test_guide_and_empty_states_at_desktop_width(self):
         card = self.page.locator("article").filter(has=self.page.locator("[data-experiment='alpha']"))
@@ -273,9 +268,10 @@ class CatalogRecordsBrowserTests(unittest.TestCase):
         self.page.locator("#calibrate button").click()
         expect(self.page.locator("#save-calibration")).to_be_enabled()
         self.page.locator("#save-calibration").click()
+        self.page.locator('#calibration-save-confirm').click()
         expect(self.page.locator("#calibration-notice")).to_contain_text("刻度已保存")
         self.records()
-        row = self.page.locator(".product[data-key^='c/']")
+        row = self.page.locator('.product').filter(has=self.page.get_by_text('能量刻度', exact=True))
         expect(row).to_be_visible()
         expect(row.locator(".product-exposure")).to_have_text("—")
         expect(row.locator("select option")).to_have_count(1)

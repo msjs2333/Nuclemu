@@ -53,18 +53,23 @@ class PortableWebBrowserTests(unittest.TestCase):
         self.page.locator('#open-package').set_input_files(path)
         expect(self.page.locator('#plot')).to_be_visible()
         self.page.locator('[data-page=instrument]').click()
-        expect(self.page.locator('#peak')).to_contain_text('2.57704 MeV')
         self.page.get_by_role('tab', name='谱分析', exact=True).click()
+        self.assertIsNone(self.state()['roi_result'])
+        self.page.locator('#roi button').click()
+        expect(self.page.locator('#roi-result')).to_contain_text('2.57704 MeV')
         self.page.locator('#sample').select_option(doc['items'][0]['id'])
         self.page.locator('#reference').select_option(other)
         self.page.keyboard.press('Escape')
-        expect(self.page.locator('#peak')).to_contain_text('5.15407 MeV')
+        expect(self.page.locator('#roi-result')).to_contain_text('2.57704 MeV')
+        self.page.locator('#roi button').click()
+        expect(self.page.locator('#roi-result')).to_contain_text('5.15407 MeV')
         self.assertEqual(self.state()['reference_calibration']['energy2'], 3)
         expect(self.page.locator('#legend span')).to_have_count(2)
         self.page.get_by_role('tab', name='谱分析', exact=True).click()
         self.page.locator('#sample').select_option(other)
         self.page.keyboard.press('Escape')
-        expect(self.page.locator('#peak')).to_contain_text('2.57704 MeV')
+        self.page.locator('#roi button').click()
+        expect(self.page.locator('#roi-result')).to_contain_text('2.57704 MeV')
 
     def test_spectra_and_saved_calibration_download_and_reopen_offline(self):
         self.enter('alpha')
@@ -77,7 +82,7 @@ class PortableWebBrowserTests(unittest.TestCase):
         expect(self.page.locator('#stop')).to_be_enabled()
         self.now = 3
         expect(self.page.locator('#exposure')).to_have_text('3 s')
-        self.page.locator('#save-current').click()
+        fixtures.measurement_operation(self.page, 'save')
         expect(self.page.locator('#snapshot-notice')).to_have_text('已保存')
         self.assertEqual(len(self.state()['snapshots']), 1)
         self.page.get_by_role('tab', name='谱分析', exact=True).click()
@@ -87,20 +92,34 @@ class PortableWebBrowserTests(unittest.TestCase):
         self.page.locator('#calibrate button').click()
         expect(self.page.locator('#save-calibration')).to_be_enabled()
         self.page.locator('#save-calibration').click()
+        self.page.locator('#calibration-name').fill('初始能量刻度')
+        self.page.locator('#calibration-save-confirm').click()
         expect(self.page.locator('#calibration-notice')).to_contain_text('刻度已保存')
         self.page.keyboard.press('Escape')
         self.page.get_by_role('tab', name='采集', exact=True).click()
         self.now = 5
         expect(self.page.locator('#exposure')).to_have_text('5 s')
-        self.page.locator('#save-current').click()
+        fixtures.measurement_operation(self.page, 'save')
         self.assertEqual(len(self.state()['snapshots']), 2)
         original = self.state()
         self.now = 7
         expect(self.page.locator('#exposure')).to_have_text('7 s')
         self.page.locator('[data-page=records]').click()
         expect(self.page.locator('#products .product')).to_have_count(3)
-        self.page.locator('[data-key="s/1"] input').check()
-        self.page.locator('[data-key^="c/"] input').check()
+        measurement_id = original['snapshots'][0]['item_id']
+        calibration_id = original['cached_calibrations'][0]['id']
+        measurement_row = self.page.locator(f'[data-key="r/{measurement_id}"]')
+        calibration_row = self.page.locator(f'[data-key="r/{calibration_id}"]')
+        expect(calibration_row.locator('.product-measurement')).to_contain_text('初始能量刻度')
+        calibration_row.locator('[data-rename-record]').click()
+        self.page.locator('#record-name').fill('复核能量刻度')
+        with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
+                                       r.request.post_data_json.get('action') == 'rename_record') as renamed_calibration:
+            self.page.locator('#rename-confirm').click()
+        self.assertTrue(renamed_calibration.value.ok, renamed_calibration.value.text())
+        expect(calibration_row.locator('.product-measurement')).to_contain_text('复核能量刻度')
+        measurement_row.locator('input').check()
+        calibration_row.locator('input').check()
         with self.page.expect_download() as batch:
             self.page.locator('#export').click()
         batch_path = Path(self.folder.name, batch.value.suggested_filename)
@@ -111,19 +130,46 @@ class PortableWebBrowserTests(unittest.TestCase):
             self.assertEqual({Path(name).suffix for name in selected.namelist()}, {'.csv', '.json'})
             calibration_file = Path(self.folder.name, 'saved-calibration.json')
             calibration_file.write_bytes(selected.read(next(name for name in selected.namelist() if name.endswith('.json'))))
-        self.page.locator('[data-key^="c/"] input').uncheck()
+            named_calibration = json.loads(calibration_file.read_text(encoding='utf-8'))['items'][0]
+            self.assertEqual(named_calibration['id'], calibration_id)
+            self.assertEqual(named_calibration['title'], '复核能量刻度')
+            self.assertEqual(named_calibration['document']['energy2'], 6)
+        calibration_row.locator('input').uncheck()
         with self.page.expect_download() as single_spectrum:
             self.page.locator('#export').click()
         self.assertRegex(single_spectrum.value.suggested_filename,
                          r'^AEL_\d{8}-\d{6}-\d{6}_spectrum\.csv$')
         single_spectrum.value.save_as(Path(self.folder.name, single_spectrum.value.suggested_filename))
-        self.page.locator('[data-key="s/1"] input').uncheck()
-        self.page.locator('[data-key^="c/"] input').check()
+        measurement_row.locator('input').uncheck()
+        calibration_row.locator('input').check()
         with self.page.expect_download() as single_calibration:
             self.page.locator('#export').click()
         self.assertRegex(single_calibration.value.suggested_filename,
                          r'^AEL_\d{8}-\d{6}-\d{6}_calibration\.json$')
         single_calibration.value.save_as(Path(self.folder.name, single_calibration.value.suggested_filename))
+        measurement_ids = [row['item_id'] for row in original['snapshots']]
+        for identity in measurement_ids:
+            row = self.page.locator(f'[data-key="r/{identity}"]')
+            row.locator('[data-rename-record]').click()
+            self.page.locator('#record-name').fill('同名参考谱')
+            with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
+                                           r.request.post_data_json.get('action') == 'rename_record') as renamed:
+                self.page.locator('#rename-confirm').click()
+            self.assertTrue(renamed.value.ok, renamed.value.text())
+            expect(row.locator('.product-measurement')).to_contain_text('同名参考谱')
+        calibration_row.locator('input').uncheck()
+        measurement_row.locator('input').check()
+        measurement_row.locator('select').select_option('json')
+        with self.page.expect_download() as renamed_spectrum:
+            self.page.locator('#export').click()
+        renamed_path = Path(self.folder.name, 'renamed-first.json')
+        renamed_spectrum.value.save_as(renamed_path)
+        renamed_bundle = json.loads(renamed_path.read_text(encoding='utf-8'))
+        renamed_item = next(item for item in renamed_bundle['items'] if item['kind'] == 'measurement')
+        self.assertEqual(renamed_item['id'], measurement_ids[0])
+        self.assertEqual(renamed_item['title'], '同名参考谱')
+        self.assertEqual(renamed_item['document']['snapshot']['exposure_s'], 3)
+        self.assertEqual(renamed_item['calibration_id'], calibration_id)
         self.page.locator('[data-page=instrument]').click()
         self.page.get_by_role('tab', name='谱分析', exact=True).click()
         self.page.locator('.calibration-tools').evaluate('(el) => el.open = true')
@@ -154,6 +200,8 @@ class PortableWebBrowserTests(unittest.TestCase):
         self.assertEqual([m['document']['snapshot']['exposure_s'] for m in measurements], [3, 5])
         self.assertEqual(len({m['document']['snapshot']['acquisition'] for m in measurements}), 1)
         self.assertEqual(len({m['calibration_id'] for m in measurements}), 1)
+        self.assertEqual([m['id'] for m in measurements], measurement_ids)
+        self.assertEqual([m['title'] for m in measurements], ['同名参考谱'] * 2)
         self.assertTrue(self.state()['running'])
         self.page.locator('#menu-file').click()
         with self.page.expect_download() as same_command:
@@ -178,8 +226,10 @@ class PortableWebBrowserTests(unittest.TestCase):
                 self.assertEqual(restored['readout']['counts'], original['snapshots'][1]['counts'])
                 self.assertEqual(restored['readout']['exposure_s'], 5)
                 self.assertEqual(restored['instrument']['exposure_s'], 0)
+                self.assertIsNone(restored['roi_result'])
                 self.assertIsNotNone(restored['calibration'])
-                self.assertEqual(restored['cached_calibrations'], original['cached_calibrations'])
+                self.assertEqual(restored['cached_calibrations'],
+                                 [{**original['cached_calibrations'][0], 'title': '复核能量刻度'}])
                 page.locator('[data-page=setup]').click()
                 page.locator('#output-alpha_detector').check()
                 page.locator('[data-part=mca]').click()
@@ -242,7 +292,7 @@ class PortableWebBrowserTests(unittest.TestCase):
         expect(self.page.locator('#stop')).to_be_enabled()
         self.now = 1
         expect(self.page.locator('#exposure')).to_have_text('1 s')
-        self.page.locator('#save-current').click()
+        fixtures.measurement_operation(self.page, 'save')
         expect(self.page.locator('#snapshot-notice')).to_have_text('已保存')
         self.assertEqual(len(self.state()['snapshots']), 1)
         original = self.state()
@@ -262,7 +312,7 @@ class PortableWebBrowserTests(unittest.TestCase):
             self.page.locator('#save-exit').click()
         pending.value.cancel()
         self.assertRegex(pending.value.suggested_filename, r'^AEL_\d{8}-\d{6}-\d{6}\.nuclemu$')
-        expect(self.page.locator('#exit-download-status')).to_contain_text('已发起下载')
+        expect(self.page.locator('#exit-download-status')).to_contain_text('请确认文件已保存')
         expect(self.page.locator('#confirm')).to_be_visible()
         self.page.locator('#cancel').click()
         expect(self.page.locator('#confirm')).not_to_be_visible()
@@ -283,8 +333,8 @@ class PortableWebBrowserTests(unittest.TestCase):
         expect(self.page.locator('#stop')).to_be_enabled()
         self.now = 1
         expect(self.page.locator('#exposure')).to_have_text('1 s')
-        with self.page.expect_response(lambda r: r.url.endswith('/api/action') and r.request.post_data_json.get('action') == 'snapshot') as saved:
-            self.page.locator('#save-current').click()
+        with self.page.expect_response(lambda r: r.url.endswith('/api/action') and r.request.post_data_json.get('action') == 'snapshot_group') as saved:
+            fixtures.measurement_operation(self.page, 'save')
         self.assertTrue(saved.value.ok)
         original = self.state()
         invalid = Path(self.folder.name, 'invalid.nuclemu')

@@ -94,7 +94,7 @@ class WindowExchangeTests(unittest.TestCase):
         source.advance(3)
         source.snapshot("a")
         original = capture_session(source)
-        source_bytes = package_bytes(original)
+        original_contents = load_package(package_bytes(original))
         item_id = original["items"][0]["id"]
         for fmt in ("json", "csv"):
             with self.subTest(format=fmt):
@@ -124,7 +124,7 @@ class WindowExchangeTests(unittest.TestCase):
                 for output in ("json", "csv"):
                     bundle = load_item(export_item(doc, doc["items"][0]["id"], output))
                     self.assertEqual(bundle["items"][0]["document"], doc["items"][0]["document"])
-                self.assertEqual(package_bytes(original), source_bytes)
+                self.assertEqual(load_package(package_bytes(original)), original_contents)
                 with self.assertRaises(TypeError):
                     decoded.snapshot.segments[0].settings["foil"] = 1
 

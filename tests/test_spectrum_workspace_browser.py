@@ -1,6 +1,7 @@
 """Real alpha spectrum workflow: cumulative channels, ROI and energy calibration."""
 
 import json
+import re
 from pathlib import Path
 import unittest
 
@@ -141,13 +142,33 @@ class SpectrumWorkspaceBrowserTests(unittest.TestCase):
             self.page.locator('#calibrate button').click()
         self.assertTrue(calibrated.value.ok, calibrated.value.text())
         applied = self.state()
+        self.page.locator('#save-calibration').click()
+        expect(self.page.locator('#calibration-name')).to_have_value(re.compile(r'^AEL_\d{8}-\d{6}_calibration$'))
+        self.page.locator('#calibration-save-cancel').click()
+        self.assertEqual(self.state()['cached_calibrations'], [])
+        self.assertEqual(self.state()['calibration'], applied['calibration'])
+        self.page.locator('#save-calibration').click()
+        self.page.locator('#calibration-name').fill('两点能量刻度')
+        self.screenshot('alpha-calibration-naming-dialog')
+        def fail_calibration_save(route):
+            if route.request.post_data_json.get('action') == 'cache_calibration':
+                route.fulfill(status=500, json={'error': 'controlled calibration save failure'})
+            else:
+                route.continue_()
+        self.page.route('**/api/action', fail_calibration_save)
+        self.page.locator('#calibration-save-confirm').click()
+        expect(self.page.locator('#calibration-save-error')).to_contain_text('controlled calibration save failure')
+        expect(self.page.locator('#calibration-name')).to_have_value('两点能量刻度')
+        self.assertEqual(self.state()['cached_calibrations'], [])
+        self.page.unroute('**/api/action', fail_calibration_save)
         with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
                                        r.request.post_data_json.get('action') == 'cache_calibration') as cached:
-            self.page.locator('#save-calibration').click()
+            self.page.locator('#calibration-save-confirm').click()
         self.assertTrue(cached.value.ok, cached.value.text())
         expect(self.page.locator('#calibration-notice')).to_have_text('刻度已保存到本场记录')
         saved = self.state()
         self.assertEqual(len(saved['cached_calibrations']), 1)
+        self.assertEqual(saved['cached_calibrations'][0]['title'], '两点能量刻度')
         self.assertEqual(saved['calibration'], applied['calibration'])
         self.assertEqual(saved['instrument'], applied['instrument'])
         middle = self.roi(900, 928)

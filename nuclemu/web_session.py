@@ -17,7 +17,7 @@ from .web_download import make_download
 from .web_store import ArchiveStore
 from .web_exchange import WebExchange
 from .web_spectrum_analysis import calculate_roi, roi_context, spectrum_readout
-from .exchange import cache_calibration, bind_calibration, load_item, decode_measurement, list_records
+from .exchange import cache_calibration, bind_calibration, load_item, decode_measurement, list_records, validate_record_name
 
 
 def analysis_error(error):
@@ -132,7 +132,9 @@ class WebLab:
                               preserved_analysis=getattr(self, 'portable_preserved_analysis', None), identity_analysis=self.saved_analysis)
         return self.exchange.download_package() if selections is None else self.exchange.download_selected(selections)
 
-    def cache_calibration(self):
+    def cache_calibration(self, title=None):
+        if title is not None:
+            title = validate_record_name(title)
         calibration = self.selected_calibration()
         if calibration is None:
             raise ValueError("请先应用适用的能量刻度。")
@@ -140,7 +142,7 @@ class WebLab:
                                     product=self.work.product(), analysis=self.analysis,
                                     item_indices=getattr(self.work.lab.view, 'item_indices', None),
                                     preserved_analysis=getattr(self, 'portable_preserved_analysis', None), identity_analysis=self.saved_analysis)
-        identity = cache_calibration(doc, calibration)
+        identity = cache_calibration(doc, calibration, title=title)
         for item in doc['items']:
             if (item['kind'] == 'measurement' and not item.get('calibration_id') and calibration.device in item['document']['devices']
                     and all(calibration.applies_to(s['settings']) for s in item['document']['segments'])):
@@ -796,7 +798,7 @@ class WebLab:
             self.edits += 1
         elif action == "cache_calibration":
             self._check_device_target(data)
-            self.cache_calibration()
+            self.cache_calibration(data.get('title'))
             self.edits += 1
         elif action == "import_item":
             from .web_import import apply_import

@@ -2,6 +2,7 @@
 import {computed, onBeforeUnmount, onMounted, ref, watch} from 'vue'
 import {pointerChannels, drawSpectrum, spectrumExtent} from '/draw.js'
 import {describe, exposure, fmt, segmentName} from './display'
+import {errorMessage} from './api'
 import type {Act, Calibration, CalibrationContext, Course, Device, Segment, Series, State} from './types'
 
 type SavedMeasurement = {id: string; device: string; title: string; exposure_s: number; settings: Record<string, number>[]; calibration_id: string | null}
@@ -18,6 +19,7 @@ const props = defineProps<{
 const emit = defineEmits<{task: [fn: () => Promise<void>]}>()
 const available = computed(() => props.segments.map((segment, index) => ({segment, index}))
   .filter(({segment}) => props.device.id in segment.readings))
+const legacySegments = computed(() => props.course.outputs?.length ? [] : available.value)
 const current = computed(() => {
   if (props.index !== null) return props.segments[props.index]
   if (props.currentAcquisition === undefined) return available.value.at(-1)?.segment
@@ -53,7 +55,7 @@ const series = computed(() => {
       counts: segment.readings[props.device.id], divisor: props.analysis.rate_axis ? exposure(segment) : 1, channelPosition})
   }
   if (currentCounts.value && currentExposure.value > 0) {
-    lines.push({label: props.selectedObservation?.title ?? (props.index === null ? '本轮累计谱' : '分段谱'),
+    lines.push({label: '当前谱：' + (props.selectedObservation?.title ?? (props.index === null ? '本轮累计谱' : '历史谱')),
       counts: currentCounts.value, divisor: props.analysis.rate_axis ? currentExposure.value : 1})
   }
   if (!incompatible.value) {
@@ -97,6 +99,11 @@ watch(() => props.analysis.roi.join('/'), (_next, previous) => {
 const points = ref<(number | string)[]>([])
 const calibrationFile = ref<HTMLInputElement>()
 const calibrationNotice = ref('')
+const calibrationSaveDialog = ref<HTMLDialogElement>()
+const calibrationName = ref('')
+const savingCalibration = ref(false)
+const calibrationSaveError = ref('')
+let calibrationSaveTarget: {device: string; session: string; context: CalibrationContext} | null = null
 let submitted: number[] | null = null
 function copyContext(context: CalibrationContext): CalibrationContext {
   return {...context, settings: {...context.settings}}
@@ -158,13 +165,29 @@ function chooseCalibrationFile() {
   fileTarget = {context: copyContext(formContext), session: props.session}
   calibrationFile.value?.click()
 }
+function nameCalibration() {
+  calibrationSaveError.value = ''
+  const now = new Date(), pad = (n: number) => String(n).padStart(2, '0')
+  calibrationName.value = `${props.course.short_code ?? props.course.id}_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}_calibration`
+  calibrationSaveTarget = {device: props.device.id, session: props.session,
+    context: copyContext(props.calibrationContext)}
+  calibrationSaveDialog.value?.showModal()
+}
 function saveCalibration() {
-  const device = props.device.id, session = props.session
-  const context = copyContext(props.calibrationContext)
+  const target = calibrationSaveTarget, title = calibrationName.value.trim()
+  if (!target || !title || savingCalibration.value) return
+  savingCalibration.value = true
+  calibrationSaveError.value = ''
   calibrationNotice.value = ''
   emit('task', async () => {
-    await props.act('cache_calibration', {device, calibration_context: context}, session)
-    calibrationNotice.value = '刻度已保存到本场记录'
+    try {
+      await props.act('cache_calibration', {device: target.device, calibration_context: target.context, title}, target.session)
+      calibrationNotice.value = '刻度已保存到本场记录'
+      calibrationSaveDialog.value?.close()
+    } catch (error) {
+      calibrationSaveError.value = errorMessage(error)
+      throw error
+    } finally { savingCalibration.value = false }
   })
 }
 function load(e: Event) {
@@ -184,12 +207,12 @@ function load(e: Event) {
       <label>当前谱 <select id="sample" :value="selectedValue" @change="selectSpectrum($event)">
         <option value="">本轮累计谱</option>
         <optgroup v-if="saved.length" label="已保存道谱"><option v-for="item in saved" :key="item.id" :value="item.id">{{ item.title }} · {{ fmt(item.exposure_s) }} s</option></optgroup>
-        <optgroup v-if="available.length" label="分段查看"><option v-for="{segment, index: i} in available" :key="i" :value="'segment:' + i">{{ segmentName(segment, i) }}</option></optgroup>
+        <optgroup v-if="legacySegments.length" label="历史记录"><option v-for="{segment, index: i} in legacySegments" :key="i" :value="'segment:' + i">{{ segmentName(segment, i) }}</option></optgroup>
       </select></label>
       <label>参考谱 <select id="reference" :value="referenceValue" @change="selectSpectrum($event, true)">
         <option value="">无参考谱</option>
         <optgroup v-if="saved.length" label="已保存道谱"><option v-for="item in saved" :key="item.id" :value="item.id">{{ item.title }} · {{ fmt(item.exposure_s) }} s</option></optgroup>
-        <optgroup v-if="available.length" label="分段查看"><option v-for="{segment, index: i} in available" :key="i" :value="'segment:' + i">{{ segmentName(segment, i) }}</option></optgroup>
+        <optgroup v-if="legacySegments.length" label="历史记录"><option v-for="{segment, index: i} in legacySegments" :key="i" :value="'segment:' + i">{{ segmentName(segment, i) }}</option></optgroup>
       </select></label>
       <label><input type="checkbox" id="energy" :disabled="!calibration" :checked="!!energyScale" @change="change('energy_axis', checked($event))"> MeV 横轴</label>
       <label><input type="checkbox" id="rate" :checked="analysis.rate_axis" @change="change('rate_axis', checked($event))"> 按曝光归一</label>
@@ -221,11 +244,23 @@ function load(e: Event) {
       </form>
       <div class="calibration-file-actions">
         <button id="load-calibration" type="button" @click="chooseCalibrationFile">载入刻度</button>
-        <button id="save-calibration" type="button" :disabled="!calibration" @click="saveCalibration">保存刻度</button>
+        <button id="save-calibration" type="button" :disabled="!calibration" @click="nameCalibration">保存刻度</button>
       </div>
       <input ref="calibrationFile" id="cal-file" type="file" accept=".json" hidden @cancel="fileTarget = null" @change="load">
       <output v-if="calibrationNotice" id="calibration-notice" role="status">{{ calibrationNotice }}</output>
     </details></Teleport>
+    <dialog id="calibration-save-dialog" ref="calibrationSaveDialog" aria-labelledby="calibration-save-title"
+      @cancel="savingCalibration && $event.preventDefault()">
+      <h2 id="calibration-save-title">保存能量刻度</h2>
+      <form class="calibration-name-form" @submit.prevent="saveCalibration">
+        <label>名称 <input id="calibration-name" v-model="calibrationName" required autofocus :disabled="savingCalibration"></label>
+        <p v-if="calibrationSaveError" id="calibration-save-error" role="alert">{{ calibrationSaveError }}</p>
+        <div class="dialog-actions">
+          <button id="calibration-save-cancel" type="button" :disabled="savingCalibration" @click="calibrationSaveDialog?.close()">取消</button>
+          <button id="calibration-save-confirm" class="primary" :disabled="savingCalibration || !calibrationName.trim()">保存刻度</button>
+        </div>
+      </form>
+    </dialog>
   </div>
 </template>
 
@@ -246,4 +281,7 @@ function load(e: Event) {
 #calibration-notice { display: block; margin-top: 8px; font-size: 13px; }
 #roi-result { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px; margin:8px 0 14px; font-size:13px; overflow-wrap:anywhere; }
 #roi-result strong { grid-column:1/-1; }
+.calibration-name-form { display:grid; gap:12px; }
+.calibration-name-form label { display:grid; gap:6px; }
+#calibration-name { width:100%; min-width:min(320px,70vw); }
 </style>

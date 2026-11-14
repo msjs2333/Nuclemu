@@ -99,7 +99,7 @@ class WebReviewBrowserTests(unittest.TestCase):
         expect(other.locator("#catalog")).to_be_visible()
         self.assertEqual(self.state()["id"], before["id"])
         self.page.reload()
-        expect(self.page.locator("#gate-status")).to_have_attribute("data-running", "true")
+        expect(self.page.locator("#stop")).to_be_enabled()
         self.assertEqual(self.state()["id"], before["id"])
         self.assertEqual(self.server.app.catalog()["drafts"], [])
         self.assertEqual(self.server.app.catalog()["archives"], [])
@@ -112,7 +112,7 @@ class WebReviewBrowserTests(unittest.TestCase):
         self.assertEqual(self.state()["time_s"], 1.5)
         before = self.state()
         self.page.reload()
-        expect(self.page.locator("#gate-status")).to_have_text("采集中")
+        expect(self.page.locator("#stop")).to_be_enabled()
         expect(self.page.locator("#recovered")).to_have_count(0)
         after = self.state()
         self.assertEqual(after["id"], before["id"])
@@ -307,7 +307,10 @@ class WebReviewBrowserTests(unittest.TestCase):
             expect(peer.locator('#device')).to_have_value('left')
             current = self.state()
             self.assertEqual(current['device'], 'left')
-            self.assertEqual(current['readout']['centroid'], 1)
+            self.analysis_tab()
+            self.page.locator('#roi button').click()
+            expect(self.page.locator('#roi-result')).to_contain_text('重心')
+            self.assertEqual(self.state()['roi_result']['readout']['centroid'], 1)
             self.assertEqual(current['product'], product)
         self.page.locator("[data-page='setup']").click()
         self.page.route('**/api/action', lambda route: route.fulfill(
@@ -365,16 +368,17 @@ class WebReviewBrowserTests(unittest.TestCase):
         peer.locator("[data-instrument=solo-instrument]").click()
         expect(peer.locator("#device")).to_have_value("solo")
         with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
-                r.request.post_data_json.get('action') == 'snapshot') as pending:
+                r.request.post_data_json.get('action') == 'snapshot_group') as pending:
             fixtures.measurement_operation(self.page, 'save')
         self.assertEqual(pending.value.status, 400)
         self.assertEqual(pending.value.request.post_data_json['device'], before['device'])
-        self.assertEqual(pending.value.request.post_data_json['operation_device'], 'counter')
-        expect(self.page.locator("#error")).to_contain_text("设备已改变")
+        self.assertEqual(pending.value.request.post_data_json['component'], 'counter')
+        expect(self.page.locator('#measurement-save-error')).to_contain_text('仪器已改变')
         after = self.state()
         self.assertEqual(after['instruments'], before['instruments'])
         self.assertEqual(after['snapshots'], before['snapshots'])
         self.assertEqual(after['product'], before['product'])
+        self.page.locator('#measurement-save').get_by_role('button', name='取消').click()
         release()
         expect(self.page.locator("#device")).to_have_value("solo")
         self.page.locator("[data-instrument=counter]").click()
@@ -403,7 +407,9 @@ class WebReviewBrowserTests(unittest.TestCase):
         reopened = self.state()
         self.assertEqual(reopened['instruments']['counter']['window_s'], 3)
         self.assertEqual(reopened['instruments']['counter_b']['window_s'], 5)
-        self.assertEqual(len(reopened['saved_measurements']), 1)
+        self.assertEqual(len(reopened['records']), 1)
+        self.assertEqual({member['device'] for member in reopened['records'][0]['measurements']},
+                         {'counter', 'counter_b'})
 
     def test_saved_spectrum_uuid_selection_survives_real_package_reopen(self):
         self.enter("alpha")
@@ -415,10 +421,10 @@ class WebReviewBrowserTests(unittest.TestCase):
         self.assertTrue(configured.value.ok, configured.value.text())
         self.assertEqual(self.state()['settings']['source_present'], 1)
         self.collect(1)
-        self.page.locator("#save-current").click()
+        fixtures.measurement_operation(self.page, 'save')
         expect(self.page.locator("#snapshot-notice")).to_have_text("已保存")
         self.collect(2)
-        self.page.locator("#save-current").click()
+        fixtures.measurement_operation(self.page, 'save')
         expect(self.page.locator("#snapshot-notice")).to_have_text("已保存")
         saved = self.state()['saved_measurements']
         self.assertEqual(len(saved), 2)
@@ -541,7 +547,7 @@ class WebReviewBrowserTests(unittest.TestCase):
         self.page.locator("#first").fill("1")
         self.page.locator("#last").fill("2")
         self.page.locator("#roi button").click()
-        self.page.wait_for_function("document.querySelector('#peak').textContent.includes('选区峰心')")
+        expect(self.page.locator('#roi-result')).to_contain_text('重心')
         self.assertEqual(self.server.app.lab.analysis["right"]["roi"], [1, 2])
         self.assertEqual(self.server.app.lab.analysis["left"]["roi"], [0, 3])
 

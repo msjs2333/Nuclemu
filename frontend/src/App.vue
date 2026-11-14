@@ -58,19 +58,7 @@ watch(confirming, async value => {
   if (value && !dialog.value?.open) dialog.value?.showModal()
   if (!value && dialog.value?.open) dialog.value.close()
 })
-const reason = computed(() => {
-  const s = state.value
-  if (!s || !confirming.value) return []
-  const pending = s.unsaved, details: string[] = []
-  if (pending.active_exposure) details.push(livePortable.value ? '仍有仪器正在采集' : '活动曝光' + (s.remaining_s === null ? '（手动）' : '剩余 ' + fmt(s.remaining_s) + ' s'))
-  if (pending.cached_items) details.push('本场缓存 ' + pending.cached_items + ' 份已保存记录')
-  if (pending.measurements.length) details.push('未保存的测量 ' + pending.measurements.length + ' 项（' +
-    pending.measurements.map(m => '段 ' + (m.index + 1) + ' · ' + m.device).join('、') + '）')
-  if (pending.calibrations.length) details.push('未保存的刻度 ' + pending.calibrations.join('、'))
-  if (pending.settings) details.push('已更改装置工况')
-  if (pending.analysis) details.push('已更改仪器或分析选择')
-  return details
-})
+const hasUncachedReadings = computed(() => !!state.value?.unsaved.measurements.length)
 function toDevice(id: string) {
   void report(async () => {
     await act('device', {device: id})
@@ -163,26 +151,27 @@ async function returnToExperiment() { replacementFile.value = null; await cancel
       <InstrumentPage ref="instruments" v-show="page === 'instrument'" :state="state" :act="act" @task="fn => { message = ''; report(fn) }"
         @load-measurement="requestMeasurementLoad"/>
       <RecordsPage v-show="page === 'records'" :session="state.id" :course="state.definition" :segments="state.product.segments"
+        :records="state.records"
         :calibrated="state.calibrated_devices" :snapshots="state.snapshots" :cached="!!state.definition.outputs?.length && !state.readonly"
         :calibrations="state.cached_calibrations"
         :imported="state.imported_items" :act="act"
         @task="report" @notice="message = $event"/>
       <output v-show="message" id="message" role="status">{{ message }}</output>
       <StudentPage v-show="page === 'materials'" :course="state.definition" :status="(state.running ? '采集中' : '待机') + (state.exposure_s !== null ? ' · 曝光 ' + fmt(state.exposure_s) + ' s' : '')" @back="navigate(previousPage)"/>
-      <MeasurementLoader ref="measurementLoader" :session="state.id" :act="act" @task="report" @notice="message = $event"/>
+      <MeasurementLoader ref="measurementLoader" :session="state.id" :course="state.definition" :act="act" @task="report" @notice="message = $event"/>
       </div>
     </section>
   </main>
   <dialog id="confirm" ref="dialog" aria-labelledby="exit-title" @cancel.prevent="report(returnToExperiment)">
-    <h2 id="exit-title">{{ replacementFile ? '载入实验' : '退出实验' }}</h2><p id="exit-message">{{ reason.length ? reason.join('，') + '。确认期间仿真时钟冻结。' : '退出并返回实验目录？' }}</p>
-    <p v-if="livePortable" class="notice">本场缓存只保留在当前服务中。下载整场文件后可在另一台电脑重开；取消下载或尚未保存文件时可返回实验。</p>
-    <p v-if="exitDownloadStarted" id="exit-download-status">浏览器已发起下载。确认文件已保存后再退出。</p>
-    <p v-if="copyNotice" id="copy-notice">{{ copyNotice }}</p>
-    <p id="exit-error" role="alert" :hidden="!error">{{ error }}</p><div class="dialog-actions">
-      <button id="cancel" autofocus @click="report(returnToExperiment)">继续实验</button>
-      <button id="discard" @click="leave(false)">{{ replacementFile ? '放弃本场并载入' : reason.length ? '放弃并退出' : '退出并返回目录' }}</button>
-      <button id="save-exit" class="primary" :hidden="convertedFile || (!reason.length && !livePortable)" @click="leave(true)">{{ livePortable ? '下载整场实验' : state?.readonly ? '保存副本并退出' : '保存实验并退出' }}</button>
-      <button v-if="exitDownloadStarted" id="exit-after-download" @click="leave(false)">{{ replacementFile ? '文件已保存，载入' : '文件已保存，退出' }}</button>
+    <h2 id="exit-title">{{ replacementFile ? '载入前是否保存实验？' : '退出前是否保存实验？' }}</h2>
+    <p v-if="!exitDownloadStarted && hasUncachedReadings" id="exit-message">尚有未保存的测量读数。</p>
+    <p v-if="exitDownloadStarted" id="exit-download-status">请确认文件已保存，再{{ replacementFile ? '载入' : '退出' }}。</p>
+    <p id="exit-error" role="alert" :hidden="!error">{{ error }}</p>
+    <div class="dialog-actions">
+      <button id="cancel" autofocus @click="report(returnToExperiment)">取消</button>
+      <button id="discard" :hidden="exitDownloadStarted" @click="leave(false)">放弃</button>
+      <button id="save-exit" class="primary" :hidden="convertedFile || exitDownloadStarted" @click="leave(true)">保存</button>
+      <button v-if="exitDownloadStarted" id="exit-after-download" class="primary" @click="leave(false)">{{ replacementFile ? '确认载入' : '确认退出' }}</button>
     </div>
   </dialog>
 </template>

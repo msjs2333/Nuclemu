@@ -135,3 +135,26 @@ class GroupFilesBrowserTests(unittest.TestCase):
         self.assertEqual(self.state()['instruments']['counter_b']['exposure_s'],0)
         expect(self.page.locator('.counter-window[data-device=counter_b] .window-reading strong')).to_have_text('—')
         self.screenshot('group-missing-side-remains-empty')
+
+    def test_failed_member_save_keeps_both_readings_and_typed_name(self):
+        self.enter('beta')
+        self.page.locator('[data-page=instrument]').click()
+        self.action('start_group',lambda:self.page.locator('#start').click())
+        self.now=2
+        expect(self.page.locator('.counter-window[data-device=counter] tbody tr')).to_have_count(2)
+        before=self.state()['instruments']
+        def fail_second(snapshot):
+            if snapshot.device=='counter_b':
+                raise OSError('第二窗保存失败')
+        self.server.app.lab.cache_writer=fail_second
+        self.page.locator('#save-current').click()
+        self.page.locator('#measurement-name').fill('保留我输入的名称')
+        with self.page.expect_response(lambda r:r.url.endswith('/api/action') and r.request.post_data_json.get('action')=='snapshot_group') as response:
+            self.page.locator('#measurement-save-confirm').click()
+        self.assertFalse(response.value.ok)
+        expect(self.page.locator('#measurement-save-error')).to_contain_text('第二窗保存失败')
+        expect(self.page.locator('#measurement-name')).to_have_value('保留我输入的名称')
+        self.assertEqual(self.state()['records'],[])
+        self.assertEqual(self.state()['instruments'],before)
+        self.page.locator('#measurement-save').get_by_role('button',name='取消',exact=True).click()
+        expect(self.page.locator('#measurement-save')).not_to_be_visible()

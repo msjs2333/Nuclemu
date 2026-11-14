@@ -127,6 +127,25 @@ class LoadedCalibrationTests(unittest.TestCase):
         instrument = lab.work.session.instrument('mca')
         self.assert_downloads(lab, (instrument.counts, instrument.exposure_s))
 
+    def test_calibration_names_are_explicit_and_invalid_names_publish_nothing(self):
+        lab = self.fresh()
+        lab.work.apply_calibration(self.calibration)
+        for title in ('', '   ', False, 12):
+            with self.subTest(title=title), self.assertRaises(ValueError):
+                lab.act(dict(action='cache_calibration', device='mca', title=title,
+                             calibration_context=lab.calibration_context()))
+            self.assertIsNone(lab.exchange.document)
+            self.assertEqual(lab.work.lab.calibrations['mca'], self.calibration)
+        lab.act(dict(action='cache_calibration', device='mca', title='  我的能量刻度  ',
+                     calibration_context=lab.calibration_context()))
+        item = lab.exchange.document['items'][0]
+        self.assertEqual(item['title'], '我的能量刻度')
+        self.assertEqual(item['document'], self.calibration.document())
+        bundle = load_item(lab.portable_download([dict(id=item['id'], format='json')])[2])
+        self.assertEqual(bundle['items'][0], item)
+        document = load_package(lab.portable_download()[2])
+        self.assertEqual(document['items'][0], item)
+
 
 if __name__ == '__main__':
     unittest.main()
