@@ -69,6 +69,7 @@ def measurement_operation(page, action):
     if action == 'save':
         page.locator('#save-current').click()
         page.locator('#measurement-save-confirm').click()
+        expect(page.locator('#measurement-save')).not_to_be_visible()
     elif action == 'clear':
         page.locator('#clear').click()
     else:

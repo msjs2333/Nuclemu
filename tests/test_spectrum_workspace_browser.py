@@ -80,7 +80,7 @@ class SpectrumWorkspaceBrowserTests(unittest.TestCase):
     def save_current(self):
         self.page.get_by_role('tab', name='采集', exact=True).click()
         with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
-                                       r.request.post_data_json.get('action') == 'snapshot_group') as saved:
+                                       r.request.post_data_json.get('action') == 'commit_snapshot_group') as saved:
             fixtures.measurement_operation(self.page, 'save')
         self.assertTrue(saved.value.ok, saved.value.text())
         return saved.value.json()['snapshots'][-1]['id']
@@ -231,13 +231,24 @@ class SpectrumWorkspaceBrowserTests(unittest.TestCase):
         self.assertEqual(sum(segments[-1]['readings']['mca']), 0)
         self.analysis()
         identity = next(snapshot['item_id'] for snapshot in self.state()['snapshots'] if snapshot['id'] == zero_snapshot)
-        self.page.locator('#sample').select_option(identity)
+        with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
+                                       r.request.post_data_json.get('action') == 'select') as selected_response:
+            self.page.locator('#sample').select_option(identity)
+        self.assertTrue(selected_response.value.ok, selected_response.value.text())
+        expect(self.page.locator('#sample')).to_have_value(identity)
+        title = next(item['title'] for item in self.state()['saved_measurements'] if item['id'] == identity)
+        expect(self.page.locator('#legend')).to_contain_text('当前谱：' + title)
         selected = self.state()
         self.assertEqual(selected['readout']['counts'], 0)
         self.assertEqual(selected['readout']['exposure_s'], 1)
         self.assertEqual(self.channels(zero_snapshot), [0] * 1024)
         self.analysis()
-        self.page.locator('#sample').select_option('')
+        with self.page.expect_response(lambda r: r.url.endswith('/api/action') and
+                                       r.request.post_data_json.get('action') == 'select') as current_response:
+            self.page.locator('#sample').select_option('')
+        self.assertTrue(current_response.value.ok, current_response.value.text())
+        expect(self.page.locator('#sample')).to_have_value('')
+        expect(self.page.locator('#legend')).to_contain_text('当前谱：本轮累计谱')
         self.assertEqual(sum(self.channels()), state['readout']['counts'])
 
     def test_live_roi_result_changes_only_on_calculation_and_survives_refresh(self):

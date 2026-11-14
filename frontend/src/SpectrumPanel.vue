@@ -137,7 +137,7 @@ function applyCalibration() {
 }
 function instrumentAction(name: string, fields: Record<string, unknown>, device = props.device.id) {
   const session = props.session
-  emit('task', () => props.act(name, {device, ...fields}, session))
+  emit('task', async () => { await props.act(name, {device, ...fields}, session) })
 }
 function change(key: string, value: unknown, device = props.device.id) {
   instrumentAction('analysis', {[key]: value}, device)
@@ -195,9 +195,9 @@ function load(e: Event) {
   const target = fileTarget ?? {context: copyContext(formContext), session: props.session}
   fileTarget = null
   input.value = ''
-  if (file) emit('task', async () => props.act('load_calibration', {
+  if (file) emit('task', async () => { await props.act('load_calibration', {
     calibration: JSON.parse(await file.text()), calibration_context: target.context,
-  }, target.session))
+  }, target.session) })
 }
 </script>
 

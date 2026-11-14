@@ -74,7 +74,7 @@ class CounterIdentityBrowserTests(unittest.TestCase):
         expect(panels.nth(0).locator('.window-reading strong')).to_have_text('10')
         expect(panels.nth(1).locator('.window-reading strong')).to_have_text('50')
         self.screenshot('counter-reversed-panels')
-        self.action('snapshot_group', lambda: fixtures.measurement_operation(self.page, 'save'))
+        self.action('commit_snapshot_group', lambda: fixtures.measurement_operation(self.page, 'save'))
         self.page.locator('[data-instrument=solo-instrument]').click()
         expect(panels).to_have_count(1)
         expect(panels.locator('h2')).to_have_text('独立计数器')
@@ -91,7 +91,7 @@ class CounterIdentityBrowserTests(unittest.TestCase):
         self.assertTrue(state['gates']['counter_b'])
         self.assertFalse(state['gates']['solo'])
         self.screenshot('counter-independent-panel')
-        self.action('snapshot_group', lambda: fixtures.measurement_operation(self.page, 'save'))
+        self.action('commit_snapshot_group', lambda: fixtures.measurement_operation(self.page, 'save'))
         self.page.locator('[data-page=records]').click()
         expect(self.page.locator('#products .product')).to_have_count(2)
         expected = {'counter': {'counter': 5, 'counter_b': 5}, 'solo': {'solo': 1}}

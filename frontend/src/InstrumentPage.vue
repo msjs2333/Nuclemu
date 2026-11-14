@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {computed, nextTick, ref, watch} from 'vue'
+import {computed, nextTick, onBeforeUnmount, ref, watch} from 'vue'
 import {fmt, inputValue} from './display'
 import {errorMessage} from './api'
 import {deviceName, instrumentBinding, instrumentDevices} from './instrumentBindings'
@@ -10,8 +10,15 @@ import type {Act, State} from './types'
 const props = defineProps<{state: State; act: Act}>()
 const emit = defineEmits<{task: [fn: () => Promise<void>]; acquisitionSettings: []; loadMeasurement: [device: string, source: 'cache' | 'file']}>()
 const mode = ref('manual'), duration = ref(10), countLimit = ref(100), windowSize = ref(1)
-const savedNotice = ref('')
 const tool = ref<'acquisition' | 'analysis'>('acquisition')
+const toolTabs = ref<HTMLButtonElement[]>([])
+function chooseTool(value: 'acquisition' | 'analysis') { tool.value = value }
+function toolKey(event: KeyboardEvent) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  chooseTool(event.key === 'Home' ? 'acquisition' : event.key === 'End' ? 'analysis' : tool.value === 'acquisition' ? 'analysis' : 'acquisition')
+  toolTabs.value[tool.value === 'acquisition' ? 0 : 1]?.focus()
+}
 const clearBusy = ref(false)
 const clearDialog = ref<HTMLDialogElement>()
 const clearing = ref<{session: string; device: string; context: string; label: string; token: number | string; exposure: number; component?: string; exposures?: Record<string, number>} | null>(null)
@@ -36,18 +43,32 @@ const durationInput = ref<HTMLInputElement>()
 const saveDialog = ref<HTMLDialogElement>()
 const measurementName = ref('')
 const saving = ref(false)
+const openingSave = ref(false)
 const saveError = ref('')
-let saveContext: {session: string; component: string | undefined; device: string; acquisitions: Record<string, number | null>} | null = null
+const saveExposures = ref<Record<string, number>>({})
+let saveContext: {session: string; token: string} | null = null
 function defaultName() {
   const now = new Date(), pad = (n: number) => String(n).padStart(2, '0')
   return `${props.state.definition.short_code ?? props.state.experiment}_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
 }
 function nameMeasurement() {
+  if (openingSave.value) return
   saveError.value = ''
-  saveContext = {session: props.state.id, component: binding.value.component?.id, device: props.state.device,
-    acquisitions: Object.fromEntries(binding.value.devices.map(d => [d.id, props.state.instruments[d.id]?.acquisition ?? null]))}
-  measurementName.value = defaultName()
-  saveDialog.value?.showModal()
+  const session = props.state.id, component = binding.value.component?.id, device = props.state.device
+  const acquisitions = Object.fromEntries(binding.value.devices.map(d => [d.id, props.state.instruments[d.id]?.acquisition ?? null]))
+  const name = defaultName()
+  openingSave.value = true
+  emit('task', async () => {
+    try {
+      const begun = await props.act('begin_snapshot_group', {component, device, acquisitions}, session)
+      const pending = begun?.pending_snapshot
+      if (props.state.id !== session || !pending) return
+      saveContext = {session, token: pending.token}
+      saveExposures.value = pending.exposures
+      measurementName.value = name
+      saveDialog.value?.showModal()
+    } finally { openingSave.value = false }
+  })
 }
 function saveNamedMeasurement() {
   const name = measurementName.value.trim(), context = saveContext
@@ -55,13 +76,32 @@ function saveNamedMeasurement() {
   saving.value = true
   emit('task', async () => {
     try {
-      await props.act('snapshot_group', {component: context.component, device: context.device, acquisitions: context.acquisitions, title: name}, context.session)
-      savedNotice.value = '已保存'
+      await props.act('commit_snapshot_group', {token: context.token, title: name}, context.session)
       saveDialog.value?.close()
+      saveContext = null
     } catch (error) { saveError.value = errorMessage(error) }
     finally { saving.value = false }
   })
 }
+function cancelMeasurement() {
+  const context = saveContext
+  if (!context || saving.value) return
+  saving.value = true
+  emit('task', async () => {
+    try {
+      await props.act('cancel_snapshot_group', {token: context.token}, context.session)
+    } finally {
+      saveDialog.value?.close()
+      saveContext = null
+      saving.value = false
+    }
+  })
+}
+watch(() => props.state.id, () => { saveDialog.value?.close(); saveContext = null })
+onBeforeUnmount(() => {
+  const context = saveContext
+  if (context) void props.act('cancel_snapshot_group', {token: context.token}, context.session).catch(() => {})
+})
 defineExpose({focusDevice: () => (selector.value ?? workspace.value)?.focus()})
 const instrument = computed(() => props.state.definition.devices.find(d => d.id === props.state.device)!)
 const segment = computed(() => {
@@ -80,19 +120,45 @@ const hasExposure = computed(() => group.value ? group.value.devices!.some(id =>
 const status = computed(() => group.value ? groupRunning.value ? '采集中' : hasExposure.value ? '暂停' : '等待开始' : props.state.running ? '采集中' : props.state.instrument?.clearing ? '清空确认中'
   : ['time_limit', 'count_limit'].includes(props.state.instrument?.stop_reason ?? '') ? '到限暂停'
   : props.state.instrument?.acquisition ? '手动暂停' : '等待开始')
-watch(() => props.state.device, () => {
+const formEdited = ref(false), formConflict = ref(false), acquisitionError = ref('')
+let formExpected: Record<string, number | null> = {}
+function appliedTargets() {
   const target = props.state.instrument
-  mode.value = target?.count_limit != null ? 'count' : target?.duration_s != null || !independent.value ? 'timed' : 'manual'
-  duration.value = target?.duration_s ?? 10
-  countLimit.value = target?.count_limit ?? 100
-  windowSize.value = target?.window_s ?? 1
-  savedNotice.value = ''
+  return {duration_s: target?.duration_s ?? null, count_limit: target?.count_limit ?? null,
+    ...(!group.value ? {window_s: target?.next_window_s ?? target?.window_s ?? 1} : {})}
+}
+function appliedSettings() {
+  const target = props.state.instrument
+  return {mode: target?.count_limit != null ? 'count' : target?.duration_s != null || !independent.value ? 'timed' : 'manual',
+    duration: target?.duration_s ?? 10, countLimit: target?.count_limit ?? 100,
+    windowSize: group.value ? 1 : target?.next_window_s ?? target?.window_s ?? 1}
+}
+function syncForm() {
+  const target = appliedSettings()
+  mode.value = target.mode; duration.value = target.duration; countLimit.value = target.countLimit; windowSize.value = target.windowSize
+  formEdited.value = formConflict.value = false
+  formExpected = appliedTargets()
+  acquisitionError.value = ''
+}
+const formScope = computed(() => props.state.id + '/' + props.state.device)
+watch([formScope, () => JSON.stringify(appliedSettings())], (next, previous) => {
+  if (!previous || next[0] !== previous[0] || !formEdited.value) syncForm()
+  else formConflict.value = true
 }, {immediate: true})
+function editForm() {
+  if (!formEdited.value) formExpected = appliedTargets()
+  formEdited.value = true
+  acquisitionError.value = ''
+}
 function run(name: string, fields: Record<string, unknown> = {}) {
   const session = props.state.id
-  emit('task', () => props.act(name, fields, session))
+  emit('task', async () => { await props.act(name, fields, session) })
 }
 async function start() {
+  if (formConflict.value) {
+    acquisitionError.value = '采集设置已在其他页面更新，请先核对并应用当前输入。'
+    return
+  }
   if (mode.value === 'timed' && durationInput.value && !durationInput.value.validity.valid) {
     emit('acquisitionSettings')
     await nextTick()
@@ -100,22 +166,41 @@ async function start() {
     durationInput.value.reportValidity()
     return
   }
-  const device = instrument.value.id, session = props.state.id, fields = acquisitionTargets()
+  const device = instrument.value.id, session = props.state.id, fields = acquisitionTargets(), component = group.value?.id
+  const edited = formEdited.value, modern = independent.value, legacyDuration = mode.value === 'manual' ? null : duration.value
+  const expected = {...formExpected}
   emit('task', async () => {
-    if (group.value) {
-      await props.act('instrument_group_config', {component: group.value.id, duration_s: fields.duration_s, count_limit: fields.count_limit}, session)
-      await props.act('start_group', {component: group.value.id}, session)
-    } else if (independent.value) {
-      await props.act('instrument_config', {device, ...fields}, session)
+    if (edited && modern) {
+      try {
+        await props.act(component ? 'instrument_group_config' : 'instrument_config', component
+          ? {component, duration_s: fields.duration_s, count_limit: fields.count_limit, expected}
+          : {device, ...fields, expected}, session)
+      } catch (error) {
+        acquisitionError.value = errorMessage(error)
+        formConflict.value = true
+        return
+      }
+    }
+    if (component) {
+      await props.act('start_group', {component}, session)
+    } else if (modern) {
       await props.act('start', {device}, session)
-    } else await props.act('start', {duration: mode.value === 'manual' ? null : duration.value}, session)
+    } else await props.act('start', {duration: legacyDuration}, session)
+    await nextTick()
+    if (props.state.id === session && props.state.device === device) syncForm()
   })
 }
 function acquisitionTargets() { return {duration_s: mode.value === 'timed' ? duration.value : null,
   count_limit: mode.value === 'count' ? countLimit.value : null, window_s: windowSize.value} }
 function configureTarget() {
-  if (group.value) run('instrument_group_config', {component: group.value.id, duration_s: acquisitionTargets().duration_s, count_limit: acquisitionTargets().count_limit})
-  else run('instrument_config', {device: instrument.value.id, ...(props.state.running ? {window_s: windowSize.value} : acquisitionTargets())})
+  const component = group.value?.id, device = instrument.value.id, session = props.state.id
+  const fields = component ? {component, duration_s: acquisitionTargets().duration_s, count_limit: acquisitionTargets().count_limit}
+    : {device, ...(props.state.running ? {window_s: windowSize.value} : acquisitionTargets())}
+  emit('task', async () => {
+    await props.act(component ? 'instrument_group_config' : 'instrument_config', fields, session)
+    await nextTick()
+    if (props.state.id === session && props.state.device === device) syncForm()
+  })
 }
 function pause() { group.value ? run('stop_group', {component: group.value.id,
   gate_cycles: Object.fromEntries(group.value.devices!.map(id => [id, props.state.instruments[id].cycle]))})
@@ -187,18 +272,18 @@ function finishClear(choice: 'save' | 'discard' | 'cancel') {
         <button class="primary" id="start" :disabled="(groupActions ? !groupActions.can_start : state.running) || state.readonly || state.instrument?.clearing">{{ group ? hasExposure ? '继续测量' : '开始测量' : state.instrument?.readable_exposure_s ? '继续采集' : '开始采集' }}</button>
         <button type="button" id="stop" :disabled="(groupActions ? !groupActions.can_stop : !state.running) || state.readonly" @click="pause">{{ group ? '暂停测量' : '暂停采集' }}</button>
       </form>
-      <div v-if="instrument.kind === 'spectrum'" class="instrument-tabs" role="tablist" aria-label="仪器工具">
-        <button role="tab" :aria-selected="tool === 'acquisition'" @click="tool = 'acquisition'">采集</button>
-        <button role="tab" :aria-selected="tool === 'analysis'" @click="tool = 'analysis'">谱分析</button>
+      <div v-if="instrument.kind === 'spectrum'" class="instrument-tabs" role="tablist" aria-label="仪器工具" @keydown="toolKey">
+        <button id="acquisition-tool-tab" :ref="el => { if (el) toolTabs[0] = el as HTMLButtonElement }" role="tab" aria-controls="acquisition-fields" :tabindex="tool === 'acquisition' ? 0 : -1" :aria-selected="tool === 'acquisition'" @click="chooseTool('acquisition')">采集</button>
+        <button id="analysis-tool-tab" :ref="el => { if (el) toolTabs[1] = el as HTMLButtonElement }" role="tab" aria-controls="spectrum-analysis-tools" :tabindex="tool === 'analysis' ? 0 : -1" :aria-selected="tool === 'analysis'" @click="chooseTool('analysis')">谱分析</button>
       </div>
-      <div v-show="tool === 'acquisition' || instrument.kind !== 'spectrum'" class="acquisition-fields">
-        <div class="snapshot-actions"><button id="save-current" :disabled="state.readonly || !hasExposure || state.instrument?.clearing" @click="nameMeasurement">保存</button>
+      <div id="acquisition-fields" v-show="tool === 'acquisition' || instrument.kind !== 'spectrum'" class="acquisition-fields" :role="instrument.kind === 'spectrum' ? 'tabpanel' : undefined" :aria-labelledby="instrument.kind === 'spectrum' ? 'acquisition-tool-tab' : undefined">
+        <div class="snapshot-actions"><button id="save-current" :disabled="openingSave || state.readonly || !hasExposure || state.instrument?.clearing" @click="nameMeasurement">保存</button>
           <button id="clear" :disabled="state.readonly || state.instrument?.clearing" @click="run('begin_clear_group', {component: binding.component?.id, device: state.device})">清空</button></div>
-        <output id="snapshot-notice" role="status">{{ savedNotice }}</output>
-        <label>采集方式 <select id="mode" v-model="mode" :disabled="groupRunning || state.readonly"><option value="manual">普通</option><option value="timed">定时</option><option value="count">定计数</option></select></label>
-        <label v-if="mode === 'timed'">目标曝光 / s <input ref="durationInput" id="duration" v-model.number="duration" type="number" min="0.000001" step="any" required :disabled="groupRunning || state.readonly"></label>
-        <label v-if="mode === 'count'">目标计数 / 次 <input id="count-limit" v-model.number="countLimit" type="number" min="1" step="1" :disabled="groupRunning || state.readonly"></label>
-        <label v-if="!group">统计窗 / s <input id="window-size" v-model.number="windowSize" type="number" min="0.000001" step="any" :disabled="state.readonly"></label>
+        <p v-if="formConflict || acquisitionError" id="acquisition-error" role="alert">{{ acquisitionError || '采集设置已在其他页面更新，请核对后重新应用输入。' }}</p>
+        <label>采集方式 <select id="mode" v-model="mode" :disabled="groupRunning || state.readonly" @change="editForm"><option value="manual">普通</option><option value="timed">定时</option><option value="count">定计数</option></select></label>
+        <label v-if="mode === 'timed'">目标曝光 / s <input ref="durationInput" id="duration" v-model.number="duration" type="number" min="0.000001" step="any" required :disabled="groupRunning || state.readonly" @input="editForm"></label>
+        <label v-if="mode === 'count'">目标计数 / 次 <input id="count-limit" v-model.number="countLimit" type="number" min="1" step="1" :disabled="groupRunning || state.readonly" @input="editForm"></label>
+        <label v-if="!group">统计窗 / s <input id="window-size" v-model.number="windowSize" type="number" min="0.000001" step="any" :disabled="state.readonly" @input="editForm"></label>
         <button id="apply-acquisition" :disabled="state.readonly" @click="configureTarget">应用采集设置</button>
         <p v-if="mode === 'count'" class="notice">在完整统计窗末判断目标，计数可能超过目标。</p>
         <fieldset class="load-measurement"><legend>载入测量数据</legend>
@@ -206,15 +291,16 @@ function finishClear(choice: 'save' | 'discard' | 'cancel') {
           <button :disabled="state.readonly || state.instrument?.clearing" @click="emit('loadMeasurement', instrument.id, 'file')">从文件选择</button>
         </fieldset>
       </div>
-      <div id="spectrum-analysis-tools" v-show="tool === 'analysis'" class="spectrum-analysis-tools"></div>
+      <div id="spectrum-analysis-tools" v-show="instrument.kind === 'spectrum' && tool === 'analysis'" class="spectrum-analysis-tools" role="tabpanel" aria-labelledby="analysis-tool-tab"></div>
     </aside>
     </div>
-    <dialog id="measurement-save" ref="saveDialog" aria-labelledby="measurement-save-title">
+    <dialog id="measurement-save" ref="saveDialog" aria-labelledby="measurement-save-title" @cancel.prevent="cancelMeasurement">
       <h2 id="measurement-save-title">保存测量</h2>
       <form @submit.prevent="saveNamedMeasurement">
         <label>名称 <input id="measurement-name" v-model="measurementName" required autofocus></label>
+        <p v-for="(seconds, device) in saveExposures" :key="device" class="snapshot-cutoff">{{ deviceName(state.definition, String(device)) }}：本次保存截止曝光 {{ fmt(seconds) }} s</p>
         <p v-if="saveError" id="measurement-save-error" role="alert">{{ saveError }}</p>
-        <div class="dialog-actions"><button type="button" :disabled="saving" @click="saveDialog?.close()">取消</button><button id="measurement-save-confirm" class="primary" :disabled="saving || !measurementName.trim()">保存</button></div>
+        <div class="dialog-actions"><button type="button" :disabled="saving" @click="cancelMeasurement">取消</button><button id="measurement-save-confirm" class="primary" :disabled="saving || !measurementName.trim()">保存</button></div>
       </form>
     </dialog>
     <dialog id="clear-confirm" ref="clearDialog" @cancel.prevent="finishClear('cancel')">
@@ -253,7 +339,6 @@ dt { color:#52616d; } dd { margin:0; font-variant-numeric:tabular-nums; white-sp
 .acquisition-fields { display:grid; gap:12px; }
 .acquisition-fields label { display:grid; grid-template-columns:1fr 135px; gap:8px; align-items:center; }
 .snapshot-actions { display:flex; gap:12px; }
-#snapshot-notice { min-height:18px; font-size:13px; }
 .load-measurement { border:0; border-top:1px solid #c5ccd3; margin:8px 0 0; padding:12px 0 0; display:grid; gap:8px; }
 .load-measurement legend { font-size:14px; font-weight:600; }
 .device-select { display:grid; gap:6px; margin-bottom:12px; }

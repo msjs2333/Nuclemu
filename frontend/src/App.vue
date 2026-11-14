@@ -83,7 +83,11 @@ function leave(save: boolean) {
   }
   void report(async () => {
     const replacement = replacementFile.value
-    if (replacement) { await replacePackage(replacement); replacementFile.value = null; return }
+    if (replacement) {
+      await replacePackage(replacement, save)
+      replacementFile.value = null
+      return
+    }
     await finish(save)
     replacementFile.value = null
     await nextTick()

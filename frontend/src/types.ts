@@ -52,6 +52,7 @@ export interface State {
   saved_measurements: {id: string; device: string; title: string; exposure_s: number; settings: Record<string, number>[]; calibration_id: string | null}[]
   measurement_end_s: number
   confirmation_id: number | null
+  pending_snapshot: {token: string; component: string | null; devices: string[]; acquisitions: Record<string, number | null>; exposures: Record<string, number>} | null
   active_acquisition: number | null
   any_running: boolean; clock_running: boolean; exposure_s: number | null
   output_enabled: Record<string, boolean>
@@ -68,7 +69,8 @@ export interface State {
   counter_analysis: {index: number; net_rate?: number; uncertainty?: number; background_reference?: boolean; error?: string}[]
   instrument: {device: string; acquisition: number | null; cycle: number | null;
     counts: number[]; readable_exposure_s: number; stop_reason: string | null; clearing: boolean;
-    duration_s: number | null; count_limit: number | null; window_s: number; next_window_s?: number | null} | null
+    duration_s: number | null; count_limit: number | null; window_s: number; next_window_s?: number | null;
+    window_prefix_exposure_s?: number; window_prefix_counts?: number[]} | null
   instruments: Record<string, NonNullable<State['instrument']> & {running: boolean; exposure_s: number; remaining_s: number | null}>
   counter_windows: Record<string, {number: number; start_exposure_s: number; end_exposure_s: number; counts: number[]; complete: boolean; parts: {start_s: number; end_s: number; settings: Record<string, number>}[]}[]>
   particle_flow: {thickness_um?: number; areal_density_g_cm2?: number} | null
@@ -85,6 +87,6 @@ export interface State {
   readout: {counts: number; exposure_s: number; roi_counts?: number; centroid?: number | null; energy_MeV?: number | null} | null
 }
 export type Page = 'setup' | 'instrument' | 'records' | 'materials'
-export type Act = (name: string, fields?: Record<string, unknown>, session?: string) => Promise<void>
+export type Act = (name: string, fields?: Record<string, unknown>, session?: string) => Promise<State | null | void>
 export type Open = {experiment: string} | {archive: string} | {draft: string}
 export interface Series { label: string; counts: number[]; divisor: number; channelPosition?: (channel: number) => number }

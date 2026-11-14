@@ -26,7 +26,7 @@ class GroupFilesBrowserTests(unittest.TestCase):
         self.page.locator('#save-current').click()
         expect(self.page.locator('#measurement-name')).to_have_value(__import__('re').compile(r'^BABS_\d{8}-\d{6}$'))
         self.page.locator('#measurement-name').fill(name)
-        return self.action('snapshot_group',lambda:self.page.locator('#measurement-save-confirm').click())
+        return self.action('commit_snapshot_group',lambda:self.page.locator('#measurement-save-confirm').click())
 
     def test_named_group_partial_csv_rename_clear_and_resume(self):
         self.enter('beta')
@@ -149,7 +149,7 @@ class GroupFilesBrowserTests(unittest.TestCase):
         self.server.app.lab.cache_writer=fail_second
         self.page.locator('#save-current').click()
         self.page.locator('#measurement-name').fill('保留我输入的名称')
-        with self.page.expect_response(lambda r:r.url.endswith('/api/action') and r.request.post_data_json.get('action')=='snapshot_group') as response:
+        with self.page.expect_response(lambda r:r.url.endswith('/api/action') and r.request.post_data_json.get('action')=='commit_snapshot_group') as response:
             self.page.locator('#measurement-save-confirm').click()
         self.assertFalse(response.value.ok)
         expect(self.page.locator('#measurement-save-error')).to_contain_text('第二窗保存失败')

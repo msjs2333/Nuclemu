@@ -42,7 +42,7 @@ class WindowDeltaBrowserTests(unittest.TestCase):
         self.assertEqual(paused['counter_windows_delta'], {})
         full = self.page.request.get(self.url + '/api/state').json()
         self.assertLess(len(polled.value.body()), len(json.dumps(full).encode()) / 5)
-        saved = self.action('snapshot_group', lambda: fixtures.measurement_operation(self.page, 'save'))
+        saved = self.action('commit_snapshot_group', lambda: fixtures.measurement_operation(self.page, 'save'))
 
         peer = self.browser.new_page(viewport={'width': 1366, 'height': 768})
         self.addCleanup(peer.close)

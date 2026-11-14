@@ -83,7 +83,7 @@ class PortableWebBrowserTests(unittest.TestCase):
         self.now = 3
         expect(self.page.locator('#exposure')).to_have_text('3 s')
         fixtures.measurement_operation(self.page, 'save')
-        expect(self.page.locator('#snapshot-notice')).to_have_text('已保存')
+        expect(self.page.locator('#snapshot-notice')).not_to_be_visible()
         self.assertEqual(len(self.state()['snapshots']), 1)
         self.page.get_by_role('tab', name='谱分析', exact=True).click()
         self.page.locator('.calibration-tools').evaluate('(el) => el.open = true')
@@ -293,7 +293,7 @@ class PortableWebBrowserTests(unittest.TestCase):
         self.now = 1
         expect(self.page.locator('#exposure')).to_have_text('1 s')
         fixtures.measurement_operation(self.page, 'save')
-        expect(self.page.locator('#snapshot-notice')).to_have_text('已保存')
+        expect(self.page.locator('#snapshot-notice')).not_to_be_visible()
         self.assertEqual(len(self.state()['snapshots']), 1)
         original = self.state()
         self.page.reload()
@@ -333,7 +333,7 @@ class PortableWebBrowserTests(unittest.TestCase):
         expect(self.page.locator('#stop')).to_be_enabled()
         self.now = 1
         expect(self.page.locator('#exposure')).to_have_text('1 s')
-        with self.page.expect_response(lambda r: r.url.endswith('/api/action') and r.request.post_data_json.get('action') == 'snapshot_group') as saved:
+        with self.page.expect_response(lambda r: r.url.endswith('/api/action') and r.request.post_data_json.get('action') == 'commit_snapshot_group') as saved:
             fixtures.measurement_operation(self.page, 'save')
         self.assertTrue(saved.value.ok)
         original = self.state()

@@ -2,14 +2,29 @@
 import {nextTick, ref} from 'vue'
 import {api, filePayload} from './api'
 import {fmt} from './display'
-import type {Act} from './types'
-const props = defineProps<{session: string; act: Act}>()
+import {counterWindowName, deviceName} from './instrumentBindings'
+import type {Act, Course, State} from './types'
+const props = defineProps<{session: string; course: Course; act: Act}>()
 const emit = defineEmits<{task: [fn: () => Promise<void>]; notice: [message: string]}>()
-type Choice = {id: string; title: string; kind: string; device: string; exposure_s: number | null}
+type Choice = State['records'][number]
 const fileInput = ref<HTMLInputElement>(), dialog = ref<HTMLDialogElement>()
 const choices = ref<Choice[]>([]), selected = ref('')
 let session = '', token = ''
 function chooseFile() { session = props.session; fileInput.value?.click() }
+function choiceLabel(choice: Choice) {
+  const name = (device: string) => props.course.devices.some(item => item.id === device)
+    ? deviceName(props.course, device) : '测量仪器'
+  if (choice.kind === 'calibration') return `${choice.title} · ${name(choice.device)} · 能量刻度`
+  if (choice.group) {
+    const members = choice.group.members.map(device => {
+      const measured = choice.measurements?.find(item => item.device === device)
+      return `${name(device)} · ${measured ? fmt(measured.exposure_s) + ' s' : '无读数'}`
+    })
+    return `${choice.title} · ${members.join('；')}`
+  }
+  const single = counterWindowName(props.course, choice.device) ? ' · 单窗读数' : ''
+  return `${choice.title} · ${name(choice.device)}${single} · ${fmt(choice.exposure_s ?? 0)} s`
+}
 function inspect(event: Event) {
   const input = event.target as HTMLInputElement, file = input.files?.[0], target = session
   input.value = ''
@@ -35,7 +50,7 @@ function apply() {
   <input ref="fileInput" id="import-saved-file" type="file" accept=".nuclemu,.json,.csv" hidden @change="inspect">
   <dialog ref="dialog" id="import-choice" aria-labelledby="import-title">
     <h2 id="import-title">选择一份记录导入</h2>
-    <label>记录 <select id="import-selection" v-model="selected"><option v-for="choice in choices" :key="choice.id" :value="choice.id">{{ choice.title }} · {{ choice.device }}{{ choice.exposure_s === null ? ' · 刻度' : ' · ' + fmt(choice.exposure_s) + ' s' }}</option></select></label>
+    <label>记录 <select id="import-selection" v-model="selected"><option v-for="choice in choices" :key="choice.id" :value="choice.id">{{ choiceLabel(choice) }}</option></select></label>
     <p>导入只添加实验记录，不会替换仪器当前测量。</p>
     <div class="dialog-actions"><button id="cancel-import" @click="dialog?.close()">取消</button><button id="confirm-import" class="primary" :disabled="!selected" @click="apply">导入所选记录</button></div>
   </dialog>

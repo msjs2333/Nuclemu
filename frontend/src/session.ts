@@ -56,7 +56,8 @@ export function useSession() {
       next.readout = stable(prev.readout, next.readout)
       next.particle_flow = stable(prev.particle_flow, next.particle_flow)
     }
-    state.value = {...next, product, counter_windows: counterWindows}
+    const accepted = {...next, product, counter_windows: counterWindows}
+    state.value = accepted
     if (!next.frozen) {
       confirming.value = false
       confirmationId = dismissedConfirmationId = null
@@ -65,6 +66,7 @@ export function useSession() {
       confirmationId = next.confirmation_id
       confirming.value = true
     }
+    return accepted
   }
   function serial<T>(fn: () => Promise<T>) {
     pending++
@@ -81,7 +83,7 @@ export function useSession() {
     const s = state.value
     if (!s || s.id !== session) throw Error('实验已变更，请重新执行操作。')
     const next = await api<Snapshot | null>('action', {session: s.id, product_cursor: s.product_cursor, window_cursor: s.window_cursor, action: name, ...fields})
-    if (next) accept(next)
+    return next ? accept(next) : null
   }
   const act: Act = (name, fields, session = state.value?.id) => {
     return serial(() => action(name, fields, session))
@@ -117,11 +119,11 @@ export function useSession() {
       history.pushState({id: next.id, page: 'instrument'}, '', labUrl())
     })
   }
-  function replacePackage(file: File) {
+  function replacePackage(file: File, save: boolean) {
     const session = state.value?.id, round = confirmationId
     return serial(async () => {
       if (!session || !confirming.value) throw Error('请先确认是否替换当前实验。')
-      const next = await api<Snapshot>('replace_package', {session, confirmation_id: round, file: await filePayload(file)})
+      const next = await api<Snapshot>('replace_package', {session, confirmation_id: round, save, file: await filePayload(file)})
       confirming.value = false
       confirmationId = dismissedConfirmationId = null
       enter(next, 'instrument')

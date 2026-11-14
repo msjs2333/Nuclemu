@@ -96,7 +96,7 @@ class CliGuiRoundTripTests(unittest.TestCase):
         self.exposure(3, beta)
         self.page.locator('#save-current').click()
         self.page.locator('#measurement-name').fill(name + ' three seconds')
-        saved = self.action('snapshot_group', lambda: self.page.locator('#measurement-save-confirm').click())
+        saved = self.action('commit_snapshot_group', lambda: self.page.locator('#measurement-save-confirm').click())
         identity = saved['records'][0]['id']
         self.now = 5
         self.exposure(5, beta)

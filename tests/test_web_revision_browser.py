@@ -66,7 +66,7 @@ class DesktopRevisionTests(unittest.TestCase):
         self.start()
         self.now = 3
         fixtures.expect_counter_exposure(self.page, 3)
-        with self.page.expect_response(lambda r: r.url.endswith('/api/action') and r.request.post_data_json.get('action') == 'snapshot_group') as saved:
+        with self.page.expect_response(lambda r: r.url.endswith('/api/action') and r.request.post_data_json.get('action') == 'commit_snapshot_group') as saved:
             fixtures.measurement_operation(self.page, 'save')
         self.assertTrue(saved.value.ok, saved.value.text())
         self.now = 5

@@ -5,7 +5,7 @@ import {counterWindowName, deviceName, instrumentBinding} from './instrumentBind
 import type {Course, Device, Segment, State} from './types'
 
 type Window = {index?: number; window?: number; number?: number; exposure_s?: number; start_exposure_s?: number; end_exposure_s?: number; counts: number | number[]; complete?: boolean; parts?: {start_s: number; end_s: number; settings: Record<string, number>}[]}
-type CounterState = State & {instruments?: Record<string, {windows?: Window[]; readable_exposure_s: number; counts: number[]}>; counter_windows?: Record<string, Window[]>}
+type CounterState = State & {instruments?: Record<string, {windows?: Window[]; readable_exposure_s: number; counts: number[]; window_prefix_exposure_s?: number; window_prefix_counts?: number[]}>; counter_windows?: Record<string, Window[]>}
 const props = defineProps<{course: Course; device: Device; segments: Segment[]; readonly: boolean; state?: CounterState}>()
 const emit = defineEmits<{windowChange: [device: string, seconds: number]}>()
 const binding = computed(() => instrumentBinding(props.course, props.device.id))
@@ -15,7 +15,7 @@ const panels = computed(() => binding.value.devices.filter(d => d.kind === 'coun
   const windows = props.state?.counter_windows?.[device.id] ?? instrument?.windows ?? []
   const last = windows.at(-1)
   const latest = last?.complete === false ? windows.at(-2) : last
-  return {device, label: counterWindowName(props.course, device.id) ?? deviceName(props.course, device.id), windows, latest, running: props.state?.gates[device.id] ?? false}
+  return {device, instrument, label: counterWindowName(props.course, device.id) ?? deviceName(props.course, device.id), windows, latest, running: props.state?.gates[device.id] ?? false}
 }))
 function windowExposure(window: Window) { return window.exposure_s ?? ((window.end_exposure_s ?? 0) - (window.start_exposure_s ?? 0)) }
 function counts(window: Window) { return Array.isArray(window.counts) ? window.counts.reduce((a, b) => a + b, 0) : window.counts }
@@ -54,6 +54,8 @@ watch(() => panels.value.map(p => p.windows.length).join('/'), async () => {
       <p class="window-caption">最近完整窗</p>
       <div class="window-reading"><strong>{{ panel.latest ? counts(panel.latest).toLocaleString('zh-CN') : '—' }}</strong><span>次</span>
         </div>
+      <p v-if="panel.instrument && panel.instrument.readable_exposure_s > 0" class="counter-total">累计读数：<strong>{{ panel.instrument.counts.reduce((a, b) => a + b, 0).toLocaleString('zh-CN') }}</strong> 次 / <span>{{ fmt(panel.instrument.readable_exposure_s) }}</span> s</p>
+      <p v-if="panel.instrument?.window_prefix_exposure_s" class="counter-history">含历史累计：<strong>{{ (panel.instrument.window_prefix_counts ?? []).reduce((a, b) => a + b, 0).toLocaleString('zh-CN') }}</strong> 次 / <span>{{ fmt(panel.instrument.window_prefix_exposure_s) }}</span> s（无逐窗明细）</p>
       <label v-if="group" class="window-setting">单次曝光 / s <input :id="'window-size-' + panel.device.id" type="number" min="0.000001" step="any" :value="windowDraft[panel.device.id] ?? state?.instruments[panel.device.id]?.next_window_s ?? state?.instruments[panel.device.id]?.window_s" :disabled="readonly || state?.instruments[panel.device.id]?.clearing" @input="windowDraft[panel.device.id] = ($event.target as HTMLInputElement).value" @change="configureWindow(panel.device.id, $event)"></label>
       <div :ref="el => { if (el) ledgers.set(panel.device.id, el as HTMLElement) }" class="window-ledger" tabindex="0" role="region" :aria-label="panel.label + ' 逐窗数据'" @scroll="follow(panel.device.id, $event)"><table>
         <thead><tr><th>窗号</th><th>实际曝光 / s</th><th>计数 / 次</th></tr></thead>
@@ -75,6 +77,7 @@ watch(() => panels.value.map(p => p.windows.length).join('/'), async () => {
 .window-state[data-running="true"] { color:#197449; }
 .window-reading { display:grid; grid-template-columns:auto 1fr; gap:0 9px; align-items:baseline; padding:12px 0; }
 .window-caption { margin:12px 0 0; color:#53616d; font-size:13px; }
+.counter-total, .counter-history { margin:6px 0; font-size:14px; font-variant-numeric:tabular-nums; }
 .window-reading strong { font-size:48px; line-height:1.1; font-weight:600; font-variant-numeric:tabular-nums; color:#203c50; }
 .window-setting { display:flex; align-items:center; gap:8px; margin:12px 0; }
 .window-ledger { max-height:calc(100dvh - 310px); overflow:auto; border-top:1px solid #c5ccd3; }

@@ -7,7 +7,7 @@ import {deviceName, instrumentBinding} from './instrumentBindings'
 const props = defineProps<{session: string; course: Course; act: Act}>()
 const emit = defineEmits<{task: [fn: () => Promise<void>]; notice: [message: string]}>()
 const input = ref<HTMLInputElement>(), dialog = ref<HTMLDialogElement>()
-type Preview = {token: string; device: string; items: {id: string; title: string; exposure_s?: number; devices?: string[]; exposures?: Record<string, number>; historical_single?: boolean; overwrite_required?: boolean}[]; overwrite_required: boolean; notice?: string}
+type Preview = {token: string; device: string; items: {id: string; title: string; exposure_s?: number; devices?: string[]; exposures?: Record<string, number>; historical_single?: boolean; overwrite_required?: boolean; notice?: string}[]; overwrite_required: boolean; notice?: string}
 function exposureLabel(item: Preview['items'][number]) {
   if (!item.devices) return item.exposure_s == null ? '' : fmt(item.exposure_s) + ' s'
   return item.devices.map(id => deviceName(props.course, id) + '：' + (item.exposures?.[id] == null ? '—' : fmt(item.exposures[id]) + ' s')).join('；')
@@ -15,6 +15,7 @@ function exposureLabel(item: Preview['items'][number]) {
 const preview = ref<Preview | null>(null), selected = ref(''), busy = ref(false)
 const loadError = ref('')
 const chosen = computed(() => preview.value?.items.find(row => row.id === selected.value))
+const modeNotice = computed(() => chosen.value?.notice ?? preview.value?.notice ?? '')
 const overwriteRequired = computed(() => chosen.value?.overwrite_required ?? preview.value?.overwrite_required ?? false)
 let component = '', session = ''
 async function inspect(file?: File) {
@@ -38,12 +39,13 @@ function load() {
   if (!preview.value || busy.value) return
   const target = preview.value, identity = selected.value, original = session
   const overwrite = overwriteRequired.value
+  const notice = modeNotice.value
   busy.value = true
   emit('task', async () => {
     try {
       await props.act('load_measurement', {token: target.token, item_id: identity, overwrite}, original)
       dialog.value?.close()
-      emit('notice', target.notice || '测量数据已载入，可继续采集。')
+      emit('notice', notice || '测量数据已载入，可继续采集。')
     } catch (error) { loadError.value = errorMessage(error) }
     finally { busy.value = false }
   })
@@ -58,7 +60,7 @@ defineExpose({open})
     <p v-if="overwriteRequired" id="measurement-overwrite">载入将覆盖当前测量数据</p>
     <p v-if="chosen?.historical_single">这是历史单窗读数，仅载入文件所记录的一窗，另一窗保持原样。</p>
     <p v-else>载入作用于整台仪器，已保存的记录保持不变。</p>
-    <p v-if="preview?.notice" id="measurement-mode">{{ preview.notice }}</p>
+    <p v-if="modeNotice" id="measurement-mode">{{ modeNotice }}</p>
     <p v-if="loadError" id="measurement-load-error" role="alert">{{ loadError }}</p>
     <div class="dialog-actions"><button id="measurement-cancel" :disabled="busy" autofocus @click="dialog?.close()">取消</button><button id="measurement-confirm" class="primary" :disabled="busy || !selected" @click="load">{{ overwriteRequired ? '确认覆盖并载入' : '载入' }}</button></div>
   </dialog>

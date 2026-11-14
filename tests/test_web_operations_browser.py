@@ -110,7 +110,7 @@ class WebOperationsBrowserTests(unittest.TestCase):
         self.now = 3
         fixtures.expect_counter_exposure(self.page, 3)
         fixtures.measurement_operation(self.page, 'save')
-        expect(self.page.locator('#snapshot-notice')).to_contain_text('已保存')
+        expect(self.page.locator('#snapshot-notice')).not_to_be_visible()
         background = self.server.app.lab.work.session.snapshots[0]
         self.assertTrue(self.state()['running'])
         fixtures.measurement_operation(self.page, 'clear')
@@ -127,7 +127,7 @@ class WebOperationsBrowserTests(unittest.TestCase):
         self.now = 8
         fixtures.expect_counter_exposure(self.page, 5)
         fixtures.measurement_operation(self.page, 'save')
-        expect(self.page.locator('#snapshot-notice')).to_contain_text('已保存')
+        expect(self.page.locator('#snapshot-notice')).not_to_be_visible()
         expect(self.page.locator('#background, #net-results')).to_have_count(0)
         sample = next(snapshot for snapshot in self.server.app.lab.work.session.snapshots
                       if snapshot.device == background.device and snapshot.id != background.id)
@@ -213,7 +213,7 @@ class WebOperationsBrowserTests(unittest.TestCase):
         expect(self.page.locator('#exposure')).to_have_text('1 s')
         self.assertEqual(sum(self.state()['instrument']['counts']), 0)
         fixtures.measurement_operation(self.page, 'save')
-        expect(self.page.locator('#snapshot-notice')).to_contain_text('已保存')
+        expect(self.page.locator('#snapshot-notice')).not_to_be_visible()
         self.screenshot_sizes('alpha-mca')
 
 

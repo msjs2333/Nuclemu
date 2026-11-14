@@ -115,7 +115,7 @@ async function saveExperiment() {
     <div class="section-title records-heading">
       <h2 id="records-title" tabindex="-1">实验记录</h2>
       <div class="records-actions">
-        <ImportSaved v-if="cached" :session="session" :act="act" @task="emit('task', $event)" @notice="emit('notice', $event)"/>
+        <ImportSaved v-if="cached" :session="session" :course="course" :act="act" @task="emit('task', $event)" @notice="emit('notice', $event)"/>
         <button v-if="cached" id="download-experiment" @click="emit('task', saveExperiment)">下载整场实验</button>
       </div>
     </div>

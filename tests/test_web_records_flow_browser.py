@@ -30,7 +30,7 @@ class RecordsFlowBrowserTests(unittest.TestCase):
         expect(self.page.locator('.counter-window[data-device=counter] tbody tr')).to_have_count(3)
         self.page.locator('#save-current').click()
         self.page.locator('#measurement-name').fill('3秒保存')
-        with self.page.expect_response(lambda r:r.url.endswith('/api/action') and r.request.post_data_json.get('action')=='snapshot_group') as response:
+        with self.page.expect_response(lambda r:r.url.endswith('/api/action') and r.request.post_data_json.get('action')=='commit_snapshot_group') as response:
             self.page.locator('#measurement-save-confirm').click()
         self.assertTrue(response.value.ok,response.value.text())
         self.page.locator('#menu-file').click()
