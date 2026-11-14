@@ -3,6 +3,7 @@ import {computed, defineComponent, h} from 'vue'
 import type {VNodeChild} from 'vue'
 
 type Block = {kind: 'heading'; level: number; text: string; id: string}
+  | {kind: 'image'; alt: string; src: string}
   | {kind: 'paragraph' | 'code'; text: string}
   | {kind: 'list'; ordered: boolean; items: string[]}
   | {kind: 'table'; rows: string[][]}
@@ -10,10 +11,14 @@ function blocks(source: string): Block[] {
   const lines = source.split(/\r?\n/), result: Block[] = []
   let i = 0, heading = 0
   const cells = (line: string) => line.trim().replace(/^\||\|$/g, '').split('|').map(cell => cell.trim())
-  const startsBlock = (line: string) => /^(#{1,6}\s|```|\s*(?:[-*] |\d+\. )|\|)/.test(line)
+  const startsBlock = (line: string) => /^(#{1,6}\s|```|!\[|\s*(?:[-*] |\d+\. )|\|)/.test(line)
   while (i < lines.length) {
     const line = lines[i]
     if (!line.trim()) { i++; continue }
+    const picture = /^!\[([^\]]*)\]\(([^)]+)\)\s*$/.exec(line)
+    if (picture && /^(?:https?:\/\/|\/(?!\/))/.test(picture[2])) {
+      result.push({kind:'image', alt:picture[1], src:picture[2]}); i++; continue
+    }
     const title = /^(#{1,6})\s+(.+)$/.exec(line)
     if (title) {
       if (title[1].length > 1) result.push({kind: 'heading', level: title[1].length,
@@ -47,7 +52,7 @@ function blocks(source: string): Block[] {
   }
   return result
 }
-function inline(text: string): VNodeChild[] {
+function inline(text: string, openDocument?: (path: string) => void): VNodeChild[] {
   const parts: VNodeChild[] = [], token = /(`[^`]+`|\*\*[^*]+\*\*|\[([^\]]+)\]\(([^)]+)\))/g
   let from = 0
   for (const match of text.matchAll(token)) {
@@ -55,6 +60,7 @@ function inline(text: string): VNodeChild[] {
     if (match[0].startsWith('`')) parts.push(h('code', match[0].slice(1, -1)))
     else if (match[0].startsWith('**')) parts.push(h('strong', match[0].slice(2, -2)))
     else if (/^https?:\/\//i.test(match[3])) parts.push(h('a', {href: match[3], target: '_blank', rel: 'noopener noreferrer'}, match[2]))
+    else if (['gui.md', 'alpha.md', 'beta.md'].includes(match[3]) && openDocument) parts.push(h('button', {type: 'button', class: 'reader-document-link', onClick: () => openDocument(match[3])}, match[2]))
     else parts.push(match[2])
     from = match.index! + match[0].length
   }
@@ -62,17 +68,20 @@ function inline(text: string): VNodeChild[] {
   return parts
 }
 export default defineComponent({
+  emits: ['document'],
   props: {source: {type: String, required: true}},
-  setup(props) {
+  setup(props, {emit}) {
     const content = computed(() => blocks(props.source))
+    const renderInline = (text: string) => inline(text, path => emit('document', path))
     return () => h('div', {class: 'markdown-body'}, content.value.map(block => {
-      if (block.kind === 'heading') return h('h' + block.level, {id: block.id}, inline(block.text))
-      if (block.kind === 'paragraph') return h('p', inline(block.text))
+      if (block.kind === 'image') return h('figure', [h('img', {src:block.src, alt:block.alt}), h('figcaption', block.alt)])
+      if (block.kind === 'heading') return h('h' + block.level, {id: block.id}, renderInline(block.text))
+      if (block.kind === 'paragraph') return h('p', renderInline(block.text))
       if (block.kind === 'code') return h('pre', [h('code', block.text)])
-      if (block.kind === 'list') return h(block.ordered ? 'ol' : 'ul', block.items.map(item => h('li', inline(item))))
+      if (block.kind === 'list') return h(block.ordered ? 'ol' : 'ul', block.items.map(item => h('li', renderInline(item))))
       if (block.kind === 'table') return h('div', {class: 'reader-table', tabindex: 0, role: 'region', 'aria-label': '学生记录表，可横向滚动'},
-        [h('table', [h('thead', [h('tr', block.rows[0].map(cell => h('th', {scope: 'col'}, inline(cell))))]),
-          h('tbody', block.rows.slice(1).map(row => h('tr', row.map(cell => h('td', inline(cell))))))])])
+        [h('table', [h('thead', [h('tr', block.rows[0].map(cell => h('th', {scope: 'col'}, renderInline(cell))))]),
+          h('tbody', block.rows.slice(1).map(row => h('tr', row.map(cell => h('td', renderInline(cell))))))])])
     }))
   },
 })
@@ -87,7 +96,10 @@ export default defineComponent({
 .markdown-body :deep(li) { padding-left: 4px; margin-bottom: 10px; }
 .markdown-body :deep(pre) { margin: 16px 0; padding: 14px 16px; background: #f7f9fa; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
 .markdown-body :deep(code) { font-size: .9em; }
+.markdown-body :deep(figure) { margin: 18px 0; }
+.markdown-body :deep(figcaption) { color: var(--muted); font-size: 13px; }
 .markdown-body :deep(a) { color: var(--accent, #3859d9); text-underline-offset: 3px; }
+.markdown-body :deep(.reader-document-link) { display:inline; min-height:0; padding:0; border:0; border-radius:0; background:transparent; color:var(--accent, #3859d9); text-decoration:underline; text-underline-offset:3px; }
 .markdown-body :deep(.reader-table) { max-width: 100%; margin: 18px 0; overflow: auto; }
 .markdown-body :deep(table) { min-width: max-content; font-size: 14px; }
 .markdown-body :deep(td), .markdown-body :deep(th) { padding: 9px 12px; }

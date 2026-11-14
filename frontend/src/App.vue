@@ -11,6 +11,7 @@ import {fmt, inputValue} from './display'
 import {useSession} from './session'
 import {downloadExperiment} from './api'
 import type {Open, Page} from './types'
+import {deviceName} from './instrumentBindings'
 
 const {state, catalog, page, confirming, recovered, message, error, act, report, open, openPackage, replacePackage, askExit, cancelExit, finish, setPage} = useSession()
 const tabs = computed<{id: Page; label: string}[]>(() => [{id: 'setup', label: '实验装置'}, {id: 'instrument', label: kind.value === 'spectrum' ? '多道谱仪' : '计数器'}, {id: 'records', label: '实验记录'}, {id: 'materials', label: '实验资料'}])
@@ -26,6 +27,12 @@ function requestMeasurementLoad(device: string, source: 'cache' | 'file') { meas
 const title = ref<HTMLHeadingElement>()
 const kind = computed(() => state.value?.definition.devices.find(d => d.id === state.value?.device)?.kind)
 const livePortable = computed(() => !!state.value?.definition.outputs?.length && !state.value?.readonly)
+const readingStatus = computed(() => {
+  const s = state.value
+  if (!s?.any_running) return undefined
+  const active = Object.entries(s.instruments).filter(([, item]) => item.running)
+  return '采集中 · ' + (active.length ? active.map(([id, item]) => deviceName(s.definition, id) + ' 实际曝光 ' + fmt(item.exposure_s) + ' s').join('；') : '实际曝光 ' + fmt(s.exposure_s ?? 0) + ' s')
+})
 const exitDownloadStarted = ref(false)
 const convertedFile = computed(() => state.value?.readonly && state.value?.portable_loaded)
 const copyNotice = computed(() => state.value?.readonly && !convertedFile.value
@@ -110,7 +117,7 @@ async function returnToExperiment() { replacementFile.value = null; await cancel
 </script>
 
 <template>
-  <header v-if="!state" class="mast"><div class="wrap brand"><span class="mark" aria-hidden="true">N</span><span>Nuclemu</span></div></header>
+  <header v-if="!state" class="mast"><div class="wrap brand"><span class="mark" aria-hidden="true">N</span><span>Nuclemu</span><a class="github-link" href="https://github.com/msjs2333/Nuclemu" target="_blank" rel="noopener noreferrer" aria-label="在 GitHub 查看 Nuclemu 源码"><svg viewBox="0 0 24 24" width="25" height="25" aria-hidden="true" fill="currentColor"><path d="M12 .8a11.2 11.2 0 0 0-3.54 21.83c.56.1.77-.24.77-.54v-2.1c-3.12.68-3.78-1.33-3.78-1.33-.5-1.29-1.25-1.63-1.25-1.63-1.02-.7.08-.69.08-.69 1.13.08 1.72 1.16 1.72 1.16 1 1.72 2.63 1.22 3.27.93.1-.73.39-1.22.71-1.5-2.49-.28-5.11-1.25-5.11-5.54 0-1.22.44-2.22 1.15-3-.12-.28-.5-1.42.11-2.96 0 0 .94-.3 3.08 1.15a10.7 10.7 0 0 1 5.6 0c2.14-1.45 3.08-1.15 3.08-1.15.61 1.54.23 2.68.11 2.96.72.78 1.15 1.78 1.15 3.01 0 4.3-2.63 5.25-5.13 5.53.4.35.76 1.03.76 2.07v3.09c0 .3.2.65.77.54A11.2 11.2 0 0 0 12 .8Z"/></svg></a></div></header>
   <main :class="state ? 'workbench-wrap' : 'wrap'">
     <p id="error" role="alert" :hidden="!error || confirming">{{ error }}</p>
     <input ref="experimentFile" id="open-package" type="file" accept=".nuclemu" hidden @change="loadExperiment">
@@ -157,7 +164,7 @@ async function returnToExperiment() { replacementFile.value = null; await cancel
         :imported="state.imported_items" :act="act"
         @task="report" @notice="message = $event"/>
       <output v-show="message" id="message" role="status">{{ message }}</output>
-      <StudentPage v-show="page === 'materials'" :course="state.definition" :status="(state.running ? '采集中' : '待机') + (state.exposure_s !== null ? ' · 曝光 ' + fmt(state.exposure_s) + ' s' : '')" @back="navigate(previousPage)"/>
+      <StudentPage v-show="page === 'materials'" :active="page === 'materials'" :course="state.definition" :status="readingStatus" @back="navigate(previousPage)"/>
       <MeasurementLoader ref="measurementLoader" :session="state.id" :course="state.definition" :act="act" @task="report" @notice="message = $event"/>
       </div>
     </section>

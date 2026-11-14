@@ -170,13 +170,10 @@ class CatalogRecordsBrowserTests(unittest.TestCase):
 
     def test_guide_and_empty_states_at_desktop_width(self):
         card = self.page.locator("article").filter(has=self.page.locator("[data-experiment='alpha']"))
-        guide = card.get_by_role("button", name="查看资料")
-        guide.focus()
-        guide.press("Enter")
-        expect(self.page.locator("#guide")).to_be_visible()
+        expect(card.get_by_role("button")).to_have_count(1)
+        expect(card.get_by_role("button", name="进入实验", exact=True)).to_be_visible()
+        expect(self.page.locator("#guide")).to_have_count(0)
         self.assertIsNone(self.page.request.get(self.url + "/api/state").json())
-        self.page.keyboard.press("Escape")
-        expect(guide).to_be_focused()
         expect(self.page.locator("#archives, .archive-empty, .archive-table")).to_have_count(0)
         expect(self.page.locator("#catalog-load")).to_be_visible()
         self.page.set_viewport_size({"width": 1366, "height": 844})
