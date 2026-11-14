@@ -1,7 +1,5 @@
 """Instrument saves capture the keypress, and shared pages respect applied presets."""
 
-import json
-import os
 from pathlib import Path
 import unittest
 
