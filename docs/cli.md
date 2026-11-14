@@ -58,7 +58,7 @@ python -m nuclemu run split-signal --path examples/courses --seed 187 --duration
 python -m nuclemu run beta --seed 42 --device counter:counter --enable-output beta_detector --set foil_spec_um=100 --step "1.25,source_present=0" --step "2.5,source_present=1,foil_count=4" --background 1 --output beta.json --output beta.csv
 ```
 
-当前独立重复观测模型和种子下，上述命令的两段计数为 2、128，净率约为 `49.6 +/- 4.66476 1/s`。短曝光用于重现验收，课堂测量建议增加曝光以减小涨落；同一本底用于多个样品时，净率之间存在共享本底引入的相关性。
+当前独立重复观测模型和种子下，上述命令的两段计数为 61、3774，净率约为 `1460.8 +/- 25.3551 1/s`。短曝光用于重现验收；当前课程建议先测 30 s 本底，再对各厚度测 5 s 有源计数。同一本底用于多个样品时，净率之间存在共享本底引入的相关性。历史文件的已有观测保持原数，旧整场继续使用其已识别的响应模型。
 
 ## α 参考谱、加箔谱与刻度
 

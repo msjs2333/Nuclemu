@@ -25,7 +25,7 @@ from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 from .catalog import describe, resolve_saved_experiment
 from .core import SignalBinding
 from .download_names import calibration_label, download_prefix, measurement_label
-from .results import Calibration, configuration_document, round_document, snapshot_product, write_product
+from .results import Calibration, configuration_document, round_document, snapshot_product
 
 if TYPE_CHECKING:
     from .acquisition import Snapshot
@@ -70,7 +70,7 @@ def _measurement_item(item, definition, container):
            if "windows" in product else {})))
 
 
-def capture_session(session, previous=None, *, definition=None, device=None, analysis=None):
+def capture_session(session, previous=None, *, definition=None, device=None, analysis=None, additional_snapshots=()):
     """Refresh metadata and include explicit snapshots; preserve prior item identities.
 
     Pass the previous document again after further sampling or reopening. Import
@@ -100,11 +100,11 @@ def capture_session(session, previous=None, *, definition=None, device=None, ana
     if analysis is not None:
         doc["analysis"] = _copy(analysis)
     known = {item["id"] for item in doc["items"]}
-    for snapshot in session.snapshots:
-        identity = str(uuid5(UUID(doc["id"]), f"snapshot:{snapshot.id}"))
+    for snapshot in (*session.snapshots, *additional_snapshots):
+        identity = native_snapshot_id(doc, snapshot)
         if identity not in known:
             doc["items"].append(dict(id=identity, kind="measurement",
-                title=f"{snapshot.device} · {snapshot.exposure_s:g} s",
+                title=default_record_name(doc["definition"]),
                 source=dict(package=doc["id"], item=identity),
                 document=snapshot_product(session.experiment, snapshot, session.seed)))
             known.add(identity)
@@ -120,7 +120,7 @@ def cache_calibration(doc, calibration, *, title=None):
         raise ValueError("Calibration belongs to an unknown instrument")
     calibration.check(doc["definition"]["id"], d["id"], d["channels"], d.get("calibration_parameters", ()))
     identity = str(uuid4())
-    item = dict(id=identity, kind="calibration", title=title or f"{calibration.device} · calibration",
+    item = dict(id=identity, kind="calibration", title=validate_record_name(title) if title is not None else default_record_name(doc["definition"]),
                 source=dict(package=doc["id"], item=identity), document=calibration.document())
     doc["items"].append(item)
     return identity
@@ -131,6 +131,52 @@ def _item(doc, identity):
     if found is None:
         raise ValueError(f"Unknown saved item: {identity}")
     return found
+
+
+def rename_record(doc, identity, title):
+    """Rename by stable item identity; equal names never redirect references."""
+    title = validate_record_name(title)
+    for item in _record_items(doc, identity):
+        item["title"] = title
+    return identity
+
+
+def default_record_name(definition):
+    return download_prefix(definition)
+
+
+def native_snapshot_id(doc, snapshot):
+    return str(uuid5(UUID(doc["id"]), f"snapshot:{snapshot.id}"))
+
+
+def link_measurements(doc, identities, title=None, *, members=None):
+    """Mark one whole-instrument save on its first existing measurement item."""
+    ids = list(identities)
+    if not ids or len(set(ids)) != len(ids):
+        raise ValueError("Select distinct saved measurements")
+    selected = [_item(doc, key) for key in ids]
+    if any(i["kind"] != "measurement" for i in selected):
+        raise ValueError("Only measurements can be saved together")
+    scope = list(members) if members is not None else [i["document"]["snapshot"]["device"] for i in selected]
+    name = validate_record_name(title if title is not None else default_record_name(doc["definition"]))
+    primary = dict(selected[0], group=dict(items=ids, members=scope), title=name)
+    replacements = {i["id"]: dict(i, title=name) for i in selected}
+    replacements[ids[0]] = primary
+    candidate = dict(doc, items=[replacements.get(i["id"], i) for i in doc["items"]])
+    validate_document(candidate)
+    doc["items"] = candidate["items"]
+    return ids[0]
+
+
+def validate_record_name(title):
+    if not isinstance(title, str) or not title.strip():
+        raise ValueError("A saved record name must not be empty")
+    return title.strip()
+
+
+def _record_items(doc, identity):
+    item = _item(doc, identity)
+    return [_item(doc, key) for key in item["group"]["items"]] if "group" in item else [item]
 
 
 def bind_calibration(doc, measurement_id, calibration_id):
@@ -313,6 +359,26 @@ def validate_document(doc):
                 cal.check(info["id"], cal.device, d["channels"], d.get("calibration_parameters", ()))
             else:
                 raise ValueError("Unknown saved item kind")
+        grouped = set()
+        for item in doc["items"]:
+            if "group" in item:
+                group = item["group"]
+                ids, members = group["items"], group["members"]
+                if (item["kind"] != "measurement" or not isinstance(ids, list) or not ids
+                        or ids[0] != item["id"] or len(set(ids)) != len(ids)
+                        or not isinstance(members, list) or not members
+                        or len(set(members)) != len(members) or not set(members) <= devices.keys()
+                        or grouped.intersection(ids)):
+                    raise ValueError("Invalid saved measurement group")
+                actual = []
+                for identity in ids:
+                    member = _item(doc, identity)
+                    if member["kind"] != "measurement" or (identity != item["id"] and "group" in member):
+                        raise ValueError("Invalid saved measurement group member")
+                    actual.append(member["document"]["snapshot"]["device"])
+                if len(set(actual)) != len(actual) or not set(actual) <= set(members):
+                    raise ValueError("Saved group does not match its instruments")
+                grouped.update(ids)
         for item in doc["items"]:
             if item.get("calibration_id"):
                 _check_calibration(item, _item(doc, item["calibration_id"]))
@@ -468,8 +534,7 @@ class DecodedMeasurement:
     title: str
 
 
-def decode_measurement(source, experiment, device, item_id=None):
-    """Validate a saved measurement for loading, without changing a live session."""
+def _measurement_source(source):
     if not isinstance(source, dict):
         raw = source if isinstance(source, bytes) else Path(source).read_bytes()
         source = load_package(raw) if raw.startswith((b"PK", b"SQLite format 3")) else load_item(raw)
@@ -480,6 +545,15 @@ def decode_measurement(source, experiment, device, item_id=None):
         bundle = load_item((_json(source)+"\n").encode("utf-8"))
     else:
         raise ValueError("Expected a portable experiment or saved item")
+    return bundle
+
+
+def decode_measurement(source, experiment, device, item_id=None):
+    """Validate a saved measurement for loading, without changing a live session."""
+    return _decode_measurement(_measurement_source(source), experiment, device, item_id)
+
+
+def _decode_measurement(bundle, experiment, device, item_id):
     candidates = [i for i in bundle["items"] if i["kind"] == "measurement"]
     if item_id is None:
         if len(candidates) != 1:
@@ -506,6 +580,31 @@ def decode_measurement(source, experiment, device, item_id=None):
     snapshot = replace(_snapshot(product), source=f"{item['source']['package']}:{item['source']['item']}")
     return DecodedMeasurement(snapshot, cal, MappingProxyType(dict(item["source"])),
                               item["id"], item["title"])
+
+
+def decode_measurements(source, experiment, devices, record_id=None):
+    """Decode one saved instrument set; old single items stay single items."""
+    source = _measurement_source(source)
+    if record_id is None:
+        choices = [i for i in list_records(source) if i["kind"] == "measurement"]
+        if len(choices) != 1:
+            raise ValueError("Select one saved measurement explicitly")
+        record_id = choices[0]["id"]
+    primary = _item(source, record_id)
+    if primary["kind"] != "measurement":
+        raise ValueError("Selected record is not a measurement")
+    targets = tuple(devices)
+    if not targets or len(set(targets)) != len(targets):
+        raise ValueError("Select distinct target instruments")
+    if "group" in primary and set(primary["group"]["members"]) != set(targets):
+        raise ValueError("Saved instrument group does not match the target")
+    result = []
+    for item in _record_items(source, record_id):
+        device = item["document"]["snapshot"]["device"]
+        if device not in targets:
+            raise ValueError("Saved measurement does not match the target instruments")
+        result.append(_decode_measurement(source, experiment, device, item["id"]))
+    return tuple(result)
 
 
 def reopen_session(doc, experiment, *, seed=None):
@@ -566,60 +665,107 @@ def list_items(doc):
                  exposure_s=i["document"].get("snapshot", {}).get("exposure_s")) for i in doc["items"]]
 
 
+def list_records(doc):
+    """Project saved items into student rows, keeping the first member's UUID."""
+    by_id = {item["id"]: item for item in doc["items"]}
+    companions = {key for i in doc["items"] for key in i.get("group", {}).get("items", [])[1:]}
+    result = []
+    for item, row in zip(doc["items"], list_items(doc)):
+        if row["id"] in companions:
+            continue
+        if "group" in item:
+            row["group"] = deepcopy(item["group"])
+            row["measurements"] = [dict(id=i["id"], device=i["document"]["snapshot"]["device"],
+                exposure_s=i["document"]["snapshot"]["exposure_s"])
+                for i in (by_id[key] for key in item["group"]["items"])]
+        result.append(row)
+    return result
+
+
 def _bundle(doc, identity):
-    item = _item(doc, identity)
-    items = [item]
-    if item.get("calibration_id"):
-        items.append(_item(doc, item["calibration_id"]))
-    return dict(format=ITEM_FORMAT, package=doc["id"], definition=doc["definition"],
-                items=deepcopy([_measurement_item(i, doc["definition"], doc["id"]) for i in items]),
-                rounds=deepcopy(doc["rounds"]))
+    items = list(_record_items(doc, identity))
+    for item in tuple(items):
+        if item.get("calibration_id") and all(i["id"] != item["calibration_id"] for i in items):
+            items.append(_item(doc, item["calibration_id"]))
+    container = doc.get("id", doc.get("package"))
+    return dict(format=ITEM_FORMAT, package=container, definition=doc["definition"],
+                items=deepcopy([_measurement_item(i, doc["definition"], container) for i in items]),
+                rounds=deepcopy(doc.get("rounds", [])))
 
 
 def export_item(doc, identity, format="json"):
     """JSON includes the selected item and dependencies; CSV has one metadata line."""
-    validate_document(doc)
+    if doc.get("format") == ITEM_FORMAT:
+        doc = load_item((_json(doc)+"\n").encode("utf-8"))
+    else:
+        validate_document(doc)
     bundle = _bundle(doc, identity)
     if format == "json":
         return (_json(bundle) + "\n").encode("utf-8")
     if format != "csv" or bundle["items"][0]["kind"] != "measurement":
         raise ValueError("Measurements support CSV/JSON; calibrations support JSON")
-    product = bundle["items"][0]["document"]
+    return _export_csv(bundle)
+
+
+_WINDOW_COLUMNS = ("experiment", "device", "window", "channel", "counts", "exposure_s", "parts")
+_SEGMENT_COLUMNS = ("experiment", "device", "start_s", "end_s", "exposure_s", "settings",
+                    "channel", "energy_MeV", "counts", "acquisition")
+
+
+def _measurement_rows(product, calibration=None):
     if product.get("windows"):
-        header = deepcopy(bundle)
-        for window in header["items"][0]["document"]["windows"]:
-            del window["counts"], window["parts"]
-        output = StringIO(newline="")
-        output.write("# " + _json(header) + "\n")
-        writer = csv.writer(output)
-        writer.writerow(("experiment", "device", "window", "channel", "counts", "exposure_s", "parts"))
         for window in product["windows"]:
+            parts = _json(window["parts"])
             for channel, count in enumerate(window["counts"]):
-                writer.writerow((product["experiment"], window["device"], window["number"], channel,
-                    count, window["end_exposure_s"]-window["start_exposure_s"],
-                    _json(window["parts"]) if channel == 0 else ""))
-        return output.getvalue().encode("utf-8")
-    header = deepcopy(bundle)
-    del header["items"][0]["document"]["segments"]
-    output = StringIO(newline="")
-    output.write("# " + _json(header) + "\n")
-    calibration = (Calibration.from_document(bundle["items"][1]["document"])
-                   if len(bundle["items"]) == 2 else None)
-    body = StringIO(newline="")
-    write_product(body, "csv", product, calibration=calibration)
-    extra = [key for key in ("origin", "signal") if any(s.get(key) is not None for s in product["segments"])]
-    if extra:
-        rows = csv.DictReader(StringIO(body.getvalue()))
-        writer = csv.DictWriter(output, fieldnames=[*rows.fieldnames, *extra])
-        writer.writeheader()
-        fields_by_segment = [{key: (_json(s[key]) if key == "signal" else s[key]) if s.get(key) is not None else ""
-                              for key in extra} for s in product["segments"]]
-        provenance = (fields for s, fields in zip(product["segments"], fields_by_segment)
-                      for counts in s["readings"].values() for _ in counts)
-        for row, fields in zip(rows, provenance):
-            writer.writerow(dict(row, **fields))
+                yield dict(experiment=product["experiment"], device=window["device"],
+                    window=window["number"], channel=channel, counts=count,
+                    exposure_s=window["end_exposure_s"]-window["start_exposure_s"],
+                    parts=parts if channel == 0 else "")
     else:
-        output.write(body.getvalue())
+        for segment in product["segments"]:
+            settings = json.dumps(segment["settings"], sort_keys=True)
+            apply_energy = calibration is not None and calibration.applies_to(segment["settings"])
+            common = dict(experiment=product["experiment"], start_s=segment["start_s"],
+                end_s=segment["end_s"], exposure_s=segment["end_s"]-segment["start_s"],
+                settings=settings, acquisition=segment["acquisition"])
+            if segment.get("origin") is not None:
+                common["origin"] = segment["origin"]
+            if segment.get("signal") is not None:
+                common["signal"] = _json(segment["signal"])
+            for device, counts in segment["readings"].items():
+                for channel, count in enumerate(counts):
+                    yield dict(common, device=device, channel=channel, counts=count,
+                        energy_MeV=calibration.energy(channel) if apply_energy and device == calibration.device else "")
+
+
+def _export_csv(bundle):
+    measurements = [i for i in bundle["items"] if i["kind"] == "measurement"]
+    grouped = len(measurements) > 1
+    fields = ["item"] if grouped else []
+    headers = []
+    for item in bundle["items"]:
+        product = item["document"]
+        header = dict(item, document=dict(product))
+        if item["kind"] == "measurement":
+            columns = list(_WINDOW_COLUMNS if product.get("windows") else _SEGMENT_COLUMNS)
+            if product.get("windows"):
+                header["document"]["windows"] = [{k: v for k, v in w.items() if k not in ("counts", "parts")}
+                                                   for w in product["windows"]]
+            else:
+                del header["document"]["segments"]
+                columns.extend(key for key in ("origin", "signal") if any(p.get(key) is not None for p in product["segments"]))
+            fields.extend(key for key in columns if key not in fields)
+        headers.append(header)
+    output = StringIO(newline="")
+    output.write("# " + _json(dict(bundle, items=headers)) + "\n")
+    writer = csv.DictWriter(output, fieldnames=fields)
+    writer.writeheader()
+    for item in measurements:
+        calibration = Calibration.from_document(_item(bundle, item["calibration_id"])["document"]) if item.get("calibration_id") else None
+        for row in _measurement_rows(item["document"], calibration):
+            if grouped:
+                row["item"] = item["id"]
+            writer.writerow(row)
     return output.getvalue().encode("utf-8")
 
 
@@ -631,73 +777,91 @@ def load_item(source):
         raise ValueError("Invalid saved item file") from error
 
 
+class _MeasurementCSVReader:
+    """Rebuild one instrument from its dispatched rows, then validate the bundle."""
+
+    def __init__(self, product, windowed):
+        self.product, self.windowed = product, windowed
+        self.seen, self.groups, self.segments = set(), {}, []
+        if windowed:
+            for window in product["windows"]:
+                window["counts"] = [None] * product["devices"][window["device"]]["channels"]
+
+    def read(self, row):
+        product = self.product
+        if row["experiment"] != product["experiment"]:
+            raise ValueError("CSV experiment disagrees with its saved metadata")
+        device, channel = row["device"], int(row["channel"])
+        if self.windowed:
+            number = int(row["window"])
+            if not 1 <= number <= len(product["windows"]):
+                raise ValueError("CSV has an invalid window")
+            window = product["windows"][number-1]
+            if (device != window["device"] or not 0 <= channel < len(window["counts"])
+                    or (number, channel) in self.seen
+                    or not isclose(float(row["exposure_s"]),
+                        window["end_exposure_s"]-window["start_exposure_s"], abs_tol=1e-10)):
+                raise ValueError("CSV window disagrees with its metadata")
+            self.seen.add((number, channel))
+            window["counts"][channel] = int(row["counts"])
+            if channel == 0:
+                window["parts"] = json.loads(row["parts"])
+            elif row["parts"]:
+                raise ValueError("CSV window parts must occur once")
+            return
+        key = (device, float(row["start_s"]), float(row["end_s"]), row["settings"], int(row["acquisition"]),
+               row.get("origin") or None, row.get("signal") or None)
+        counts = self.groups.get(key)
+        if counts is None:
+            counts = [None] * product["devices"][device]["channels"]
+            self.groups[key] = counts
+            segment = dict(start_s=key[1], end_s=key[2], settings=json.loads(key[3]),
+                           acquisition=key[4], readings={device: counts})
+            if key[5] is not None:
+                segment["origin"] = key[5]
+            if key[6] is not None:
+                segment["signal"] = json.loads(key[6])
+            self.segments.append(segment)
+        if not 0 <= channel < len(counts) or (key, channel) in self.seen:
+            raise ValueError("CSV has duplicate or invalid instrument channels")
+        if not isclose(float(row["exposure_s"]), key[2]-key[1], rel_tol=1e-10):
+            raise ValueError("CSV exposure disagrees with its time bounds")
+        self.seen.add((key, channel))
+        counts[channel] = int(row["counts"])
+
+    def finish(self):
+        arrays = ([w["counts"] for w in self.product["windows"]] if self.windowed else self.groups.values())
+        if not self.seen or any(any(c is None for c in counts) for counts in arrays):
+            raise ValueError("CSV does not contain every instrument channel")
+        if not self.windowed:
+            self.product["segments"] = self.segments
+
+
 def _load_item(source):
     raw = source if isinstance(source, bytes) else Path(source).read_bytes()
     text = raw.decode("utf-8-sig")
     if text.startswith("# "):
         metadata, body = text.split("\n", 1)
         bundle = json.loads(metadata[2:])
-        product = bundle["items"][0]["document"]
-        # A long measured window can contain many condition parts in one cell.
-        # The complete input is already in memory; no field can exceed its body.
-        # csv's limit is process-wide, so concurrent Web reads only raise it.
+        # Read each CSV row once, dispatching by existing item UUID when grouped.
         with _csv_field_limit_lock:
             if len(body) > csv.field_size_limit():
                 csv.field_size_limit(len(body))
         reader = csv.DictReader(StringIO(body))
-        if "window" in (reader.fieldnames or ()):
-            seen = set()
-            windows = product["windows"]
-            for window in windows:
-                window["counts"] = [None] * product["devices"][window["device"]]["channels"]
-            for row in reader:
-                number, channel = int(row["window"]), int(row["channel"])
-                if not 1 <= number <= len(windows):
-                    raise ValueError("CSV has an invalid window")
-                window = windows[number-1]
-                if row["experiment"] != product["experiment"]:
-                    raise ValueError("CSV experiment disagrees with its saved metadata")
-                if (row["device"] != window["device"]
-                        or not 0 <= channel < len(window["counts"]) or (number, channel) in seen
-                        or not isclose(float(row["exposure_s"]),
-                            window["end_exposure_s"]-window["start_exposure_s"], abs_tol=1e-10)):
-                    raise ValueError("CSV window disagrees with its metadata")
-                seen.add((number, channel))
-                window["counts"][channel] = int(row["counts"])
-                if channel == 0:
-                    window["parts"] = json.loads(row["parts"])
-                elif row["parts"]:
-                    raise ValueError("CSV window parts must occur once")
-            if any(any(c is None for c in w["counts"]) for w in windows):
-                raise ValueError("CSV does not contain every window channel")
-            return _load_item((_json(bundle)+"\n").encode("utf-8"))
-        segments, seen = [], set()
-        groups = {}
+        grouped = "item" in (reader.fieldnames or ())
+        measurements = [i for i in bundle["items"] if i["kind"] == "measurement"]
+        if not grouped and len(measurements) != 1:
+            raise ValueError("CSV must identify each saved measurement")
+        readers = {i["id"]: _MeasurementCSVReader(i["document"],
+                   bool(i["document"].get("windows")) if grouped else "window" in (reader.fieldnames or ()))
+                   for i in measurements}
         for row in reader:
-            if row["experiment"] != product["experiment"]:
-                raise ValueError("CSV experiment disagrees with its saved metadata")
-            device, channel = row["device"], int(row["channel"])
-            key = (device, float(row["start_s"]), float(row["end_s"]), row["settings"], int(row["acquisition"]),
-                   row.get("origin") or None, row.get("signal") or None)
-            counts = groups.get(key)
-            if counts is None:
-                counts = [None] * product["devices"][device]["channels"]
-                groups[key] = counts
-                segments.append(dict(start_s=key[1], end_s=key[2], settings=json.loads(key[3]),
-                                     acquisition=key[4], readings={device: counts}))
-                if key[5] is not None:
-                    segments[-1]["origin"] = key[5]
-                if key[6] is not None:
-                    segments[-1]["signal"] = json.loads(key[6])
-            if not 0 <= channel < len(counts) or (key, channel) in seen:
-                raise ValueError("CSV has duplicate or invalid instrument channels")
-            if not isclose(float(row["exposure_s"]), key[2] - key[1], rel_tol=1e-10):
-                raise ValueError("CSV exposure disagrees with its time bounds")
-            seen.add((key, channel))
-            counts[channel] = int(row["counts"])
-        if any(any(c is None for c in values) for values in groups.values()):
-            raise ValueError("CSV does not contain every instrument channel")
-        product["segments"] = segments
+            identity = row.get("item") if grouped else measurements[0]["id"]
+            if identity not in readers:
+                raise ValueError("CSV refers to an unknown measurement")
+            readers[identity].read(row)
+        for state in readers.values():
+            state.finish()
     else:
         bundle = json.loads(text)
     if bundle.get("format") != ITEM_FORMAT or not bundle.get("items"):
@@ -714,7 +878,7 @@ def _load_item(source):
 def import_item(target, source, identity):
     """Append an independent copy with new UUIDs. Equal titles never replace data."""
     validate_document(target)
-    bundle = _bundle(source, identity) if source.get("format") == FORMAT else deepcopy(source)
+    bundle = _bundle(source, identity)
     if bundle.get("format") != ITEM_FORMAT:
         raise ValueError("Expected a package or saved item bundle")
     if bundle["definition"]["id"] != target["definition"]["id"]:
@@ -722,12 +886,7 @@ def import_item(target, source, identity):
     chosen = next((i for i in bundle["items"] if i["id"] == identity), None)
     if chosen is None:
         raise ValueError("Selected item is not in the source file")
-    copied = [deepcopy(_measurement_item(chosen, bundle["definition"], bundle["package"]))]
-    if chosen.get("calibration_id"):
-        calibration = next((i for i in bundle["items"] if i["id"] == chosen["calibration_id"]), None)
-        if calibration is None:
-            raise ValueError("Imported measurement is missing its associated calibration")
-        copied.append(deepcopy(calibration))
+    copied = deepcopy(bundle["items"])
     remap = {item["id"]: str(uuid4()) for item in copied}
     devices = {d["id"]: d for d in target["definition"]["devices"]}
     for item in copied:
@@ -740,6 +899,8 @@ def import_item(target, source, identity):
         item.setdefault("source", dict(package=bundle["package"], item=old))
         if item.get("calibration_id"):
             item["calibration_id"] = remap[item["calibration_id"]]
+        if "group" in item:
+            item["group"]["items"] = [remap[key] for key in item["group"]["items"]]
     candidate = dict(target, items=[*target["items"], *copied])
     validate_document(candidate)
     target["items"].extend(copied)
@@ -758,6 +919,9 @@ def batch_download(doc, selections):
         device = item["document"].get("snapshot", {}).get("device", item["document"].get("device", "instrument"))
         label = (calibration_label(doc["definition"], device) if item["kind"] == "calibration"
                  else measurement_label(doc["definition"], device))
+        if len(item.get("group", {}).get("members", ())) > 1:
+            kinds = {d["id"]: d["kind"] for d in doc["definition"]["devices"]}
+            label = "counts" if all(kinds[d] == "counter" for d in item["group"]["members"]) else "measurements"
         files.append((f"{prefix}_{label}.{format}", export_item(doc, identity, format)))
     if len(files) == 1:
         name, data = files[0]

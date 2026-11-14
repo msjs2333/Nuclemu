@@ -93,6 +93,15 @@ def parser():
     merge.add_argument("source")
     merge.add_argument("--item", required=True)
     merge.add_argument("--output", required=True)
+    rename = operations.add_parser("rename", help="rename a saved record by stable UUID")
+    rename.add_argument("source")
+    rename.add_argument("--item", required=True)
+    rename.add_argument("--title", required=True)
+    rename.add_argument("--output", required=True)
+    batch = operations.add_parser("batch-export", help="export selected UUID:FORMAT records")
+    batch.add_argument("source")
+    batch.add_argument("--item", action="append", required=True, metavar="UUID:FORMAT")
+    batch.add_argument("--output", required=True)
     convert = operations.add_parser("convert-archive")
     convert.add_argument("source", help="legacy workbench.sqlite3")
     convert.add_argument("--archive", required=True)
@@ -242,8 +251,16 @@ def _run(args, experiment):
         save_product(path, product, device=selected.id if selected else None, calibration=calibration)
         print(f"saved {path}")
     if args.package:
-        from .exchange import bind_calibration, cache_calibration, capture_session, save_package
+        from .exchange import bind_calibration, cache_calibration, capture_session, link_measurements, save_package
         document = capture_session(session, device=selected.id if selected else None)
+        if selected is None:
+            identities = {item['document']['snapshot']['id']: item['id'] for item in document['items']
+                          if item['kind'] == 'measurement'}
+            for step in saved_steps:
+                for component in experiment.components:
+                    if len(component.devices) > 1 and all(d in step for d in component.devices):
+                        link_measurements(document, [identities[step[d]] for d in component.devices],
+                                          members=component.devices)
         if args.background is not None:
             counter = next(d for d in devices if d.kind == "counter")
             item_ids = {(item["document"]["snapshot"]["device"], item["document"]["snapshot"]["id"]): item["id"]
@@ -270,8 +287,8 @@ def _same_path(left, right):
 
 
 def _files(args):
-    from .exchange import (convert_archive, import_item, list_items, list_legacy_archives, load_item,
-                           load_package, save_item, save_package)
+    from .exchange import (batch_download, convert_archive, import_item, list_items, list_records, list_legacy_archives, load_item,
+                           load_package, rename_record, save_item, save_package, _save_bytes)
     if args.operation == "convert-archive":
         if _same_path(args.source, args.output):
             raise ValueError("Conversion must not overwrite its input archive")
@@ -289,8 +306,26 @@ def _files(args):
         return
     if args.operation == "inspect":
         print(json.dumps(dict(format=document["format"], experiment=document["definition"]["id"],
-                              items=list_items(document), rounds=document.get("rounds", [])),
+                              items=list_items(document), records=list_records(document), rounds=document.get("rounds", [])),
                          ensure_ascii=False, indent=2))
+    elif args.operation == "rename":
+        if document["format"] != "nuclemu.experiment/1":
+            raise ValueError("Rename requires a portable experiment package")
+        rename_record(document, args.item, args.title)
+        save_package(args.output, document)
+        print(f"saved {args.output}")
+    elif args.operation == "batch-export":
+        if _same_path(args.source, args.output):
+            raise ValueError("Export must not overwrite its input package")
+        choices = []
+        for selector in args.item:
+            identity, separator, format = selector.rpartition(":")
+            if not separator or not identity or format not in ("csv", "json"):
+                raise ValueError("Batch selection must be UUID:csv or UUID:json")
+            choices.append(dict(id=identity, format=format))
+        _, _, data = batch_download(document, choices)
+        _save_bytes(args.output, data)
+        print(f"saved {args.output}")
     elif args.operation == "export":
         if _same_path(args.source, args.output):
             raise ValueError("Item export must not overwrite its input package")

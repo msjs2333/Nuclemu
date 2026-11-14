@@ -71,11 +71,11 @@ class WindowExchangeTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr)
                     data = exported.read_bytes()
                     self.assertEqual(load_item(data)["items"][0], item)
-                    decoded = decode_measurement(data, EXPERIMENT, device)
+                    decoded = decode_measurement(data, EXPERIMENT, device, item['id'])
                     self.assertEqual(len(decoded.snapshot.windows), 5 if device == "counter" else 1)
                     if fmt == "csv":
                         rows = list(csv.DictReader(StringIO(data.decode().split("\n", 1)[1])))
-                        self.assertEqual(len(rows), len(decoded.snapshot.windows))
+                        self.assertEqual(sum(row['device'] == device for row in rows), len(decoded.snapshot.windows))
             with self.assertRaisesRegex(ValueError, "explicitly"):
                 decode_measurement(actual, EXPERIMENT, "counter")
             altered = deepcopy(actual)

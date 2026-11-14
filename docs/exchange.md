@@ -12,6 +12,10 @@ SQLite 将末态与目录放在 `manifest` 表，轮次元数据放在 `rounds`�
 
 单项记录使用 UUID，保留包来源与原项目身份；`snapshot.id` 仍保留内核的本机会话编号。仪器与同轮身份、保存时刻和实际截止曝光保存在测量产品的 `snapshot` 中。原生项目和导入参考分别识别，同包导出再回导也不会向内核恢复两个同编号快照。
 
+双窗计数器的一次整机保存沿用这些测量项：仅首项增加 `group={"items": [首项及同次测量项的 UUID], "members": [整机设备 ID]}`。首项 UUID 就是这份读数的选择身份，没有另一套记录实体。两窗各自保留曝光、计数、完整窗与实际部分窗；例如 A 取 1 s、B 取 5 s，3 s 保存时，A 有三行完整窗，B 有一行 3 s 的 `complete=false` 部分窗，不补成 5 s。真正没有曝光的一侧没有测量项，`members` 仍说明这是一次整机保存。没有 `group` 的历史单窗文件按原样读取和导入，不按名字或时刻配对。
+
+`list_items(doc)` 继续提供每个单项；学生记录表使用 `list_records(doc)`，将同次保存投影为首项的一行，带各侧的 `measurements` 摘要。`rename_record(doc, id, title)` 按稳定 UUID 改名，同次成员一起更新；名字相同不影响分析引用、载入或下载。新保存的默认名由 `default_record_name(definition)` 生成实验缩写和实际保存时间，调用方可在保存前用 `validate_record_name()` 核对用户输入。
+
 手动保存刻度使用 `cache_calibration()`。通过 `bind_calibration()` 把测量项目关联到已保存、设备与工况相符的刻度，不将后来未保存的当前刻度自动附给旧谱。分析的 `reference`、`background` 和 `selected` 引用项目 UUID，不能使用实时产品的段下标。
 
 ## 公共 Python 调用
@@ -90,6 +94,17 @@ fresh.advance(1)
 ```
 
 `decode_measurement()` 无现场副作用，返回冻结的 `DecodedMeasurement(snapshot, calibration, source, item_id, title)`，统一检查实验、设备绑定、道数和刻度关联。记录页的 `import_item()` 只追加缓存；仪器载入使用 `Session.load_measurement()`，仅替换目标仪器，保持其他仪器和本场硬件设置。已有曝光即为非空，合法零计数也须确认覆盖。
+
+整机使用 `decode_measurements(source, experiment, devices, record_id=None)`，返回实际保存成员的 `DecodedMeasurement` 元组，再由整机载入接口一次应用。它不修改现场；旧单项仍只返回一份，不猜另一窗。对成组保存的首项调用 `export_item()`、`import_item()` 或 `batch_download()`，会一起处理同次保存的实际成员和必要刻度。JSON、CSV 和实验包均保留首项关联；CSV 的 `item`、`device` 列区分成员，各侧窗口编号分别从 1 开始。导入重分配既有项 UUID 并改写首项关联，原始 `source` 不变。
+
+CLI 的 `files inspect` 同时给出单项 `items` 和学生记录视图 `records`；`files export/import --item UUID` 接受成组首项或历史单项 UUID。`run --package` 在未指定单设备时将同次保存的计数器读数组合在首项。改名与混合格式批量下载可直接执行：
+
+```powershell
+python -m nuclemu files rename experiment.nuclemu --item UUID --title "样品读数" --output renamed.nuclemu
+python -m nuclemu files batch-export experiment.nuclemu --item UUID:csv --item OTHER_UUID:json --output selected.zip
+```
+
+批量只选一项时写该项内容，多项写 ZIP；显式输出路径原样使用。组内成员、同名记录及不同格式的 ZIP 名称用批内序号区分。
 
 载入的已测曝光是固定前缀。旧段与旧窗口保留原始时刻和工况，新窗按本场时钟记录，累计曝光和窗号连续。段的 `origin` 区分来源时间线；缺省表示本场。`snapshot.source` 标识载入记录，轮次 `loaded_exposure_s`/`loaded_source` 记录前缀来源与曝光。源记录在 100–103 s 测得的三窗可在本场 0 s 载入并续采至四窗；本场时间不会跳到 103 s。单项文件和整场重开保留这些扁平来源标识，不嵌套整份原档。
 
