@@ -45,11 +45,28 @@ def _copy(value):
     return json.loads(_json(value))
 
 
+def measurement_response_context(item, definition, container):
+    """Use a saved response contract, or infer it only from native observations."""
+    if 'response_context' in item:
+        return item['response_context']
+    if (item['kind'] != 'measurement' or item['source']['package'] != container
+            or item['source']['item'] != item['id']
+            or any(s.get('origin') is not None for s in item['document']['segments'])):
+        return None
+    device = item['document']['snapshot']['device']
+    signal_input = next((d.get('input') for d in definition['devices'] if d['id'] == device), None)
+    output = next((o for o in definition.get('outputs', ()) if o['id'] == signal_input), None)
+    return dict(input=signal_input, response=output.get('response', '')) if output else None
+
+
 def _measurement_item(item, definition, container):
     """Preserve known contracts; infer only native observations of this container."""
     if (item["kind"] != "measurement" or item["source"]["package"] != container
             or item["source"]["item"] != item["id"]):
         return item
+    context = measurement_response_context(item, definition, container)
+    if context is not None and 'response_context' not in item:
+        item = dict(item, response_context=context)
     if not any(row.get("origin") is None and "signal" not in row for row in item["document"]["segments"]):
         return item
     bindings = {d["id"]: d.get("input") for d in definition["devices"]}
@@ -103,10 +120,10 @@ def capture_session(session, previous=None, *, definition=None, device=None, ana
     for snapshot in (*session.snapshots, *additional_snapshots):
         identity = native_snapshot_id(doc, snapshot)
         if identity not in known:
-            doc["items"].append(dict(id=identity, kind="measurement",
+            doc["items"].append(_measurement_item(dict(id=identity, kind="measurement",
                 title=default_record_name(doc["definition"]),
                 source=dict(package=doc["id"], item=identity),
-                document=snapshot_product(session.experiment, snapshot, session.seed)))
+                document=snapshot_product(session.experiment, snapshot, session.seed)), doc['definition'], doc['id']))
             known.add(identity)
     validate_document(doc)
     return doc
@@ -346,6 +363,12 @@ def validate_document(doc):
             identifiers.add(item["id"])
             if item["kind"] == "measurement":
                 _check_product(item["document"])
+                if 'response_context' in item:
+                    context = item['response_context']
+                    if (not isinstance(context, dict) or set(context) != {'input', 'response'}
+                            or not isinstance(context['input'], str) or not context['input']
+                            or not isinstance(context['response'], str)):
+                        raise ValueError('Invalid measurement response context')
                 if item["document"]["experiment"] != info["id"]:
                     raise ValueError("Saved measurement belongs to a different experiment")
                 for key, d in item["document"]["devices"].items():
@@ -878,6 +901,8 @@ def _load_item(source):
 def import_item(target, source, identity):
     """Append an independent copy with new UUIDs. Equal titles never replace data."""
     validate_document(target)
+    if any(identity in item.get('group', {}).get('items', ())[1:] for item in source['items']):
+        raise ValueError('Select the whole-instrument primary record, not a companion item')
     bundle = _bundle(source, identity)
     if bundle.get("format") != ITEM_FORMAT:
         raise ValueError("Expected a package or saved item bundle")

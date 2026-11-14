@@ -2,9 +2,33 @@
 
 from uuid import uuid4
 
-from .catalog import resolve_saved_experiment
 from .exchange import (decode_measurement, decode_measurements, load_item, load_package,
-                       list_records, capture_session, import_item)
+                       list_records, capture_session, import_item, measurement_response_context)
+
+
+def continuation_notice(source, items_by_id, row, current):
+    """Describe the selected observations, not their receiving container."""
+    identities = set(row.get('group', {}).get('items', [row['id']]))
+    devices = {d.id: d for d in current.devices}
+    outputs = {o.id: o for o in current.outputs}
+    changed, unknown = False, False
+    for identity in identities:
+        item = items_by_id[identity]
+        context = measurement_response_context(item, source['definition'], source.get('id', source.get('package')))
+        target = devices[item['document']['snapshot']['device']]
+        output = outputs.get(target.input)
+        if context is None or not context.get('response'):
+            unknown = True
+        elif output is None or (context['input'], context['response']) != (target.input, output.response):
+            changed = True
+    if not (changed or unknown):
+        return ''
+    reason = ('所选记录的输入或响应版本与当前课程不同。' if changed else '')
+    if unknown:
+        reason += '所选记录的来源响应不详，不能由当前容器推定。'
+    mode = ('独立双窗响应' if current.id == 'beta' and
+            len({d.input for d in current.devices}) == 2 else '输入与响应')
+    return reason + f'原有计数与实际曝光保留；继续测量使用当前课程的{mode}。'
 
 
 def inspect_measurement(lab, device, raw=None, *, component=None):
@@ -34,27 +58,23 @@ def inspect_measurement(lab, device, raw=None, *, component=None):
             choices.append(dict(row, devices=list(scope), historical_single='group' not in row and len(devices) > 1,
                 exposures={m['device']: m['exposure_s'] for m in row.get('measurements', [row])}))
     else:
-        choices = [dict(id=item['id'], title=item['title'], exposure_s=item['document']['snapshot']['exposure_s'])
+        choices = [dict(id=item['id'], title=item['title'], device=device, exposure_s=item['document']['snapshot']['exposure_s'])
                    for item in source['items'] if item['kind'] == 'measurement'
                    and item['document']['snapshot']['device'] == device]
     if not choices:
         raise ValueError('文件中没有适用于所选仪器或窗的测量记录。')
     token = uuid4().hex
     targets = {d: lab.work.session.instrument(d) for d in devices}
+    items_by_id = {item['id']: item for item in source['items']}
     for row in choices:
         row['overwrite_required'] = any(targets[d].exposure_s > 0 or any(targets[d].counts)
                                         for d in row.get('devices', (device,)))
+        row['notice'] = continuation_notice(source, items_by_id, row, lab.work.session.experiment)
     lab._pending_measurement = dict(token=token, devices=devices, source=source, component=component,
         acquisitions={d: target.acquisition for d, target in targets.items()},
         choices={row['id']: tuple(row.get('devices', (device,))) for row in choices})
-    current = lab.work.session.experiment
-    restored = resolve_saved_experiment(current, source['definition'])
-    changed_inputs = ({d.id: d.input for d in restored.devices} !=
-                      {d.id: d.input for d in current.devices})
-    notice = ('原有读数保留；继续采集采用当前课程的测量模式。' + current.description
-              if restored is not current and changed_inputs else '')
     return dict(token=token, device=device, component=component, items=choices,
-                notice=notice,
+                notice=choices[0]['notice'],
                 overwrite_required=any(t.exposure_s > 0 or any(t.counts) for t in targets.values()))
 
 

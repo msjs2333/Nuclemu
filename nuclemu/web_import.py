@@ -1,9 +1,8 @@
 """In-memory inspection and explicit import of portable saved items for Web."""
 
-from copy import deepcopy
 from uuid import uuid4
 
-from .exchange import FORMAT, import_item, list_items, load_item, load_package, validate_document
+from .exchange import import_item, list_records, load_item, load_package, validate_document
 from .web_exchange import WebExchange
 from .web_portable import SavedOverlay
 
@@ -17,10 +16,7 @@ def inspect_import(lab, raw):
     source = load_package(raw) if raw.startswith((b"PK\x03\x04", b"SQLite format 3\0")) else load_item(raw)
     if source["definition"]["id"] != lab.work.session.experiment.id:
         raise ValueError("保存项属于不同课程。")
-    items = list_items(source) if source.get("format") == FORMAT else [
-        dict(id=i["id"], title=i["title"], kind=i["kind"],
-             device=i["document"].get("snapshot", {}).get("device", i["document"].get("device")),
-             exposure_s=i["document"].get("snapshot", {}).get("exposure_s")) for i in source["items"]]
+    items = list_records(source)
     token = uuid4().hex
     lab._pending_import = (token, source)
     return dict(token=token, items=items)
@@ -42,12 +38,13 @@ def apply_import(lab, token, item_id):
                                product=product, analysis=lab.analysis, item_indices=getattr(view, 'item_indices', None),
                                preserved_analysis=getattr(lab, 'portable_preserved_analysis', None), identity_analysis=lab.saved_analysis)
     validate_document(doc)
+    previous_items = len(doc['items'])
     new_id = import_item(doc, source, item_id)
     imported = next(i for i in doc["items"] if i["id"] == new_id)
     if not isinstance(view, SavedOverlay):
         view = SavedOverlay(work.session, [], live=view, package_id=doc['id'])
     old_prefix = len(view.prefix)
-    added = view.append_items([imported])
+    added = view.append_items(doc['items'][previous_items:])
     if added:
         for selection in lab.analysis.values():
             for key in ("selected", "reference", "background"):
