@@ -127,6 +127,50 @@
         "Blank display windows contain no measurements"
       ],
       "review_state": "Independent asset review completed; UI integration pending"
+    },
+    {
+      "id": "cover-beta-absorption",
+      "revision": 1,
+      "path": "nuclemu/static/cover-beta-absorption.webp",
+      "role": "course-cover",
+      "intended_topic": "beta-minus transmission through aluminium absorbers",
+      "size_px": [
+        960,
+        600
+      ],
+      "format": "lossless WebP",
+      "mode": "RGB",
+      "bytes": 444698,
+      "sha256": "f0af671316849722e977cdb08507754ddbe3295857dc296b4d18782881494794",
+      "transparent": false,
+      "exported_utc": "2026-11-14T07:48:27Z",
+      "description": "Single-electron symbols pass through aluminium absorber layers; the forward-going stream becomes sparser. Qualitative cross-scale illustration, not to scale.",
+      "creation_method": "Built-in ImageGen generation using the alpha course cover for visual style; Pillow size export",
+      "visual_inputs": [
+        {
+          "path": "nuclemu/static/cover-alpha-energy-loss.webp",
+          "role": "material, lighting and palette reference only"
+        }
+      ],
+      "sources": [
+        "https://www.nrc.gov/education-regulatory-research/the-student-corner/unit-1-radiation",
+        "https://physics.nist.gov/PhysRefData/Star/Text/ESTAR.html"
+      ],
+      "limitations": [
+        "Foil spacing, thickness and electron sizes are schematic",
+        "Drawn particle counts do not encode transmission probability or measured count rate",
+        "Streaks and curved paths are illustrative, not simulated events or scattering angles",
+        "The cover does not specify an attenuation law, stopping range or electron energy",
+        "Visible gaps and curves do not specify motion or scattering locations in air",
+        "Visible gaps and curves do not specify motion or scattering locations in air"
+      ],
+      "recommended_display": {
+        "aspect_ratio": "16:10",
+        "object_fit": "contain",
+        "crop": "whole image"
+      },
+      "review_state": "Independent asset review completed; UI integration pending"
     }
-  ]
+  ],
+  "updated_utc": "2026-11-14T07:48:27Z"
 }

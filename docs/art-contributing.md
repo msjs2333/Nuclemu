@@ -1,10 +1,12 @@
 # Contributing scientific artwork
 
-Nuclemu uses two distinct image roles: course covers introduce a physical question; equipment cutouts identify the apparatus used to make a measurement. Keep the roles distinct when adding or revising assets. The [asset index](art-assets.md) records the initial pair and their limits.
+Nuclemu uses two distinct image roles: course covers introduce a physical question; equipment cutouts identify the apparatus used to make a measurement. Keep the roles distinct when adding or revising assets. The [asset index](art-assets.md) records the delivered collection and its limits.
 
 ## Course covers
 
 Use one recognisable physical subject and a quiet background. Aim for a landscape 16:10 composition with important features inside an 8% safe region. The initial delivery size is 960 × 600 pixels. Review at 240 × 150 and 320 × 200 CSS pixels before accepting it for a four-column desktop catalog. A twelve-course contact sheet should have consistent visual weight, without relying on twelve different colors to identify the courses.
+
+Display the two initial course covers as complete 16:10 images. Do not stretch them or crop away the alpha cluster, the material boundary, the incoming beta population or the sparse transmitted population. If a new frame ratio is needed, review that crop at its actual card size before accepting it. A transparent instrument cutout is not a substitute for a course's physics cover.
 
 Avoid titles, formulas, scales, simulated measurements and small technical text inside the image. Course names and accessible descriptions belong in the interface. Do not treat a decorative track as a recorded event. When mixing nuclear and atomic scales, explicitly describe the picture as a qualitative, non-scale illustration. Any quantitative crystal plane, angle or geometry requires an independently checkable construction and review.
 

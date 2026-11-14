@@ -1,10 +1,11 @@
 # Scientific artwork assets
 
-This initial pair supplies a physical-theme course cover and a transparent equipment variant. They are review-ready asset candidates. No application binding is included; the existing catalog and apparatus continue to use their existing assets until a separate integration change.
+This collection supplies two physical-theme course covers and a transparent equipment variant. They are review-ready assets. Application bindings are delivered and checked separately from the artwork change.
 
 | File | Role | Dimensions | Transparency |
 |---|---|---|---|
 | [cover-alpha-energy-loss.webp](../nuclemu/static/cover-alpha-energy-loss.webp) | α energy-loss course cover | 960 × 600 | Opaque |
+| [cover-beta-absorption.webp](../nuclemu/static/cover-beta-absorption.webp) | β transmission/absorption course cover | 960 × 600 | Opaque |
 | [rig-counter-dual.webp](../nuclemu/static/rig-counter-dual.webp) | One counter with A/B windows | 426 × 480 | RGBA |
 
 Machine-readable dimensions, body bounds, display regions and hashes are in [art-assets.json](../nuclemu/static/art-assets.json). Follow [the contributor guide](art-contributing.md) when extending the family.
@@ -19,6 +20,14 @@ The particle-to-atom size ratio and four-sphere nuclear arrangement are schemati
 
 Suggested accessible description: “A four-sphere alpha-particle symbol enters a simplified aluminium atomic structure. Qualitative illustration, not to scale.”
 
+## Beta transmission through aluminium
+
+The beta cover uses separate single spheres as electron symbols, rather than the four-sphere alpha symbol. Three separated aluminium sheets and a progressively sparser forward-going stream introduce the absorption experiment. A few curved streaks suggest deflection. Beta-minus particles are electrons, and thin metal layers can reduce their transmission; see the [NRC teaching resource](https://www.nrc.gov/education-regulatory-research/the-student-corner/unit-1-radiation). [NIST ESTAR](https://physics.nist.gov/PhysRefData/Star/Text/ESTAR.html) provides stopping-power and range information for electrons.
+
+The sheets are separated and their apparent thickness exaggerated for readability. Particle sizes, counts, gaps and paths are symbolic. Neither their number nor the spacing of the sheets gives a transmission probability, energy, stopping range, mass thickness or attenuation law. Curved streaks are not sampled scattering angles or locations: the gaps separate the illustration's elements and do not assert specific motion or scattering in air. No measured events, instrument readings or source-energy distribution are encoded in this cover.
+
+Suggested accessible description: “Single-electron symbols pass through aluminium absorber layers; fewer continue forward. Qualitative cross-scale illustration, not to scale.” Keep the complete 16:10 image visible, including both the incoming and transmitted populations. Cropping either side can remove the distinction that explains the experiment.
+
 ## One counter, two windows
 
 The cutout depicts a fictional teaching instrument: one enclosure, one front panel and two equally prominent blank display windows, A at left and B at right. It does not document a commercial model, real-world dimensions, electrical wiring, input topology or implemented control functions. Its unmarked knobs are visual structure. Dynamic readings and operating controls must be supplied by a subsequent interface implementation.
@@ -29,14 +38,14 @@ Suggested accessible description: “A single light-grey teaching counter with b
 
 ## Creation, sources and license scope
 
-Both delivered images were made with OpenAI's built-in ImageGen tool in November 2026 and exported as lossless WebP with Pillow. The alpha cover was generated and revised; the counter was generated and revised using the existing project counter as its visual input. The tool did not supply an exact public model identifier or reproducible seed, so neither is asserted here.
+All three images were made with OpenAI's built-in ImageGen tool in November 2026 and exported as lossless WebP with Pillow. The alpha cover was generated and revised; the beta cover used the alpha cover only as a lighting, material and palette reference. The counter was generated and revised using the existing project counter as its visual input. The tool did not supply an exact public model identifier or reproducible seed, so neither is asserted here.
 
-The scientific webpages above were consulted for facts, not used as image inputs. No image or diagram from those sources is reproduced in this pair. The counter's only visual input was the already tracked project counter image.
+The scientific webpages above were consulted for facts, not used as image inputs. No image or diagram from those sources is reproduced in these assets. The counter's only visual input was the already tracked project counter image.
 
-These additions are supplied under the repository's [GNU GPL version 3 license](../LICENSE). This note does not claim exclusive human authorship or make a determination about the copyright status of AI-generated content. Retain the repository license and this provenance note when redistributing these files. Other repository assets keep their existing notices; this pair does not establish provenance for the entire asset collection.
+These additions are supplied under the repository's [GNU GPL version 3 license](../LICENSE). This note does not claim exclusive human authorship or make a determination about the copyright status of AI-generated content. Retain the repository license and this provenance note when redistributing these files. Other repository assets keep their existing notices; these three files do not establish provenance for the entire asset collection.
 
 ## Checks performed
 
 Decoded exports match the sizes above. The cover is opaque. The counter has alpha values from 0 to 255, all four outer image borders fully transparent, and one connected opaque-body component at alpha greater than 180/255. No EXIF, XMP or ICC profile was found in the counter export. Four-background composites were visually checked for edge halos and background rectangles.
 
-The cover was inspected at 240 × 150, 320 × 200 and 384 × 240; the four-sphere particle remains distinguishable from the material. The counter was inspected at 160 × 180 and 213 × 240; both windows and A/B remain distinguishable. A common-baseline comparison with the existing counter, MCA and detector was inspected for material and camera consistency. These are asset checks, not UI-integration acceptance or an independent scientific approval.
+The alpha cover was inspected at 240 × 150, 320 × 200 and 384 × 240; the four-sphere particle remains distinguishable from the material. The beta cover was inspected at 240 × 150, 306 × 191 and 320 × 200; the aluminium sheets, single-particle symbols and sparser transmitted population remain distinguishable. The counter was inspected at 160 × 180 and 213 × 240; both windows and A/B remain distinguishable. A common-baseline comparison with the existing counter, MCA and detector was inspected for material and camera consistency. These are asset checks, not UI-integration acceptance or an independent scientific approval.
