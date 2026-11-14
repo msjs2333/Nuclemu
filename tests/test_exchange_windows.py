@@ -70,7 +70,7 @@ class WindowExchangeTests(unittest.TestCase):
                         "--item", item["id"], "--output", str(exported)], capture_output=True, text=True)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     data = exported.read_bytes()
-                    self.assertEqual(load_item(data)["items"][0], item)
+                    self.assertEqual(load_item(data)["items"], actual["items"])
                     decoded = decode_measurement(data, EXPERIMENT, device, item['id'])
                     self.assertEqual(len(decoded.snapshot.windows), 5 if device == "counter" else 1)
                     if fmt == "csv":

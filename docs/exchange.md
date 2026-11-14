@@ -8,6 +8,8 @@ SQLite 将末态与目录放在 `manifest` 表，轮次元数据放在 `rounds`�
 
 `capture_session()` 读取 `Session.rounds`、`configuration_history` 和明确保存到 `Session.snapshots` 的快照，不读取未缓存的 `records` 或当前累计道谱。仪器的门状态、模式、目标、窗长和曝光可作为末态元数据保存，当前未缓存计数不随末态落盘。
 
+Web 整场另以 `live_calibrations` 将各谱仪的现场刻度关联到已缓存刻度的 UUID，与历史谱自身的 `calibration_id` 分开恢复；现场刻度未显式缓存时记为 `null`，不因下载而新增刻度记录。旧包缺少该字段时回退到该设备最后一份原生缓存刻度，不把导入顺序当作应用顺序；未记录的历史末态无法据此完整还原。
+
 例如：3 s 时保存一份 60 次的快照，继续采到 5 s，整场文件可以包含轮次曝光 5 s，但这份谱仍是 60 次、3 s，其率为 20 s⁻¹。若 5 s 再主动保存，则有两份各自独立命名的累计快照，两者可重叠，不能作为独立测量相加。另一轮全程没有保存时，仅有工况历史与曝光，没有伪造的零计数记录。
 
 单项记录使用 UUID，保留包来源与原项目身份；`snapshot.id` 仍保留内核的本机会话编号。仪器与同轮身份、保存时刻和实际截止曝光保存在测量产品的 `snapshot` 中。原生项目和导入参考分别识别，同包导出再回导也不会向内核恢复两个同编号快照。
@@ -99,9 +101,9 @@ fresh.advance(1)
 
 `decode_measurement()` 无现场副作用，返回冻结的 `DecodedMeasurement(snapshot, calibration, source, item_id, title)`，统一检查实验、设备绑定、道数和刻度关联。记录页的 `import_item()` 只追加缓存；仪器载入使用 `Session.load_measurement()`，仅替换目标仪器，保持其他仪器和本场硬件设置。已有曝光即为非空，合法零计数也须确认覆盖。
 
-整机使用 `decode_measurements(source, experiment, devices, record_id=None)`，返回实际保存成员的 `DecodedMeasurement` 元组，再由整机载入接口一次应用。它不修改现场；旧单项仍只返回一份，不猜另一窗。对成组保存的首项调用 `export_item()`、`import_item()` 或 `batch_download()`，会一起处理同次保存的实际成员和必要刻度。JSON、CSV 和实验包均保留首项关联；CSV 的 `item`、`device` 列区分成员，各侧窗口编号分别从 1 开始。导入重分配既有项 UUID 并改写首项关联，原始 `source` 不变。
+整机使用 `decode_measurements(source, experiment, devices, record_id=None)`，返回实际保存成员的 `DecodedMeasurement` 元组，再由整机载入接口一次应用。它不修改现场；旧单项仍只返回一份，不猜另一窗。`export_item()`、`save_item()` 和 `batch_download()` 接受整机首项或任一成员 UUID，均按所属首项导出同次保存的全部实际成员和必要刻度；批量下载名称也按整机命名。`import_item()` 仍只接受整机首项，拒绝直接导入组内从项。JSON、CSV 和实验包均保留首项关联；CSV 的 `item`、`device` 列区分成员，各侧窗口编号分别从 1 开始。导入重分配既有项 UUID 并改写首项关联，原始 `source` 不变。
 
-CLI 的 `files inspect` 同时给出单项 `items` 和学生记录视图 `records`；`files export/import --item UUID` 接受成组首项或历史单项 UUID。`run --package` 在未指定单设备时将同次保存的计数器读数组合在首项。改名与混合格式批量下载可直接执行：
+CLI 的 `files inspect` 同时给出单项 `items` 和学生记录视图 `records`；`files export --item UUID` 即使选中组内 B 的 UUID，也导出完整整机。`files import --item UUID` 则须使用 `records` 中的整机首项 UUID；无整机关联的历史单窗继续单独导入、导出。`run --package` 在未指定单设备时将同次保存的计数器读数组合在首项。改名与混合格式批量下载可直接执行：
 
 ```powershell
 python -m nuclemu files rename experiment.nuclemu --item UUID --title "样品读数" --output renamed.nuclemu

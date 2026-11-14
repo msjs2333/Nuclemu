@@ -132,6 +132,8 @@ class WebLab:
                               product=self.work.product(), analysis=analysis,
                               item_indices=getattr(self.work.lab.view, 'item_indices', None),
                               preserved_analysis=getattr(self, 'portable_preserved_analysis', None), identity_analysis=self.saved_analysis)
+        from .web_portable import saved_live_calibration_ids
+        self.exchange.document['live_calibrations'] = saved_live_calibration_ids(self)
         return self.exchange.download_package() if selections is None else self.exchange.download_selected(selections)
 
     def cache_calibration(self, title=None):
@@ -695,9 +697,9 @@ class WebLab:
     def act(self, data):
         """Apply one action, settling its clock only after exit-round validation."""
         self.check_confirmation(data)
-        if data['action'] in ('instrument_config', 'instrument_group_config') and 'expected' in data:
+        if data['action'] in ('instrument_config', 'instrument_group_config', 'start', 'start_group') and 'expected' in data:
             keys = {'duration_s', 'count_limit'}
-            if data['action'] == 'instrument_config':
+            if data['action'] in ('instrument_config', 'start'):
                 self._check_device_target(data)
                 devices = (self.work.device.id,)
                 keys.add('window_s')

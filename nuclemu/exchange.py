@@ -405,6 +405,16 @@ def validate_document(doc):
         for item in doc["items"]:
             if item.get("calibration_id"):
                 _check_calibration(item, _item(doc, item["calibration_id"]))
+        live_calibrations = doc.get('live_calibrations', {})
+        if not isinstance(live_calibrations, dict):
+            raise ValueError('Live calibrations must map spectrum instruments to saved item identities')
+        for device, identity in live_calibrations.items():
+            if device not in devices or devices[device]['kind'] != 'spectrum':
+                raise ValueError('Live calibration belongs to an unknown spectrum instrument')
+            if identity is not None:
+                item = _item(doc, identity)
+                if item['kind'] != 'calibration' or item['document']['device'] != device:
+                    raise ValueError('Live calibration must refer to a saved calibration from this instrument')
         for device, selection in doc.get("analysis", {}).items():
             if device not in devices:
                 raise ValueError("Analysis belongs to an unknown instrument")
@@ -716,13 +726,22 @@ def _bundle(doc, identity):
                 rounds=deepcopy(doc.get("rounds", [])))
 
 
+def _export_record(doc, identity):
+    """Export a saved instrument together even when selected by a member UUID."""
+    selected = _item(doc, identity)
+    if "group" in selected:
+        return selected
+    return next((item for item in doc["items"]
+                 if identity in item.get("group", {}).get("items", ())[1:]), selected)
+
+
 def export_item(doc, identity, format="json"):
     """JSON includes the selected item and dependencies; CSV has one metadata line."""
     if doc.get("format") == ITEM_FORMAT:
         doc = load_item((_json(doc)+"\n").encode("utf-8"))
     else:
         validate_document(doc)
-    bundle = _bundle(doc, identity)
+    bundle = _bundle(doc, _export_record(doc, identity)["id"])
     if format == "json":
         return (_json(bundle) + "\n").encode("utf-8")
     if format != "csv" or bundle["items"][0]["kind"] != "measurement":
@@ -940,14 +959,14 @@ def batch_download(doc, selections):
     files = []
     for choice in selections:
         identity, format = choice["id"], choice["format"]
-        item = _item(doc, identity)
+        item = _export_record(doc, identity)
         device = item["document"].get("snapshot", {}).get("device", item["document"].get("device", "instrument"))
         label = (calibration_label(doc["definition"], device) if item["kind"] == "calibration"
                  else measurement_label(doc["definition"], device))
         if len(item.get("group", {}).get("members", ())) > 1:
             kinds = {d["id"]: d["kind"] for d in doc["definition"]["devices"]}
             label = "counts" if all(kinds[d] == "counter" for d in item["group"]["members"]) else "measurements"
-        files.append((f"{prefix}_{label}.{format}", export_item(doc, identity, format)))
+        files.append((f"{prefix}_{label}.{format}", export_item(doc, item["id"], format)))
     if len(files) == 1:
         name, data = files[0]
         return name, "text/csv; charset=utf-8" if name.endswith(".csv") else "application/json", data

@@ -81,6 +81,25 @@ def _compatible(saved, current):
     return signature(saved) == signature(current)
 
 
+def saved_live_calibration_ids(lab):
+    """Reference only cached calibrations that match each instrument's live state."""
+    doc = lab.exchange.document
+    saved = [item for item in doc['items'] if item['kind'] == 'calibration']
+    previous = doc.get('live_calibrations', {})
+    result = {}
+    for device in lab.work.session.experiment.devices:
+        if device.kind != 'spectrum':
+            continue
+        calibration = (lab._live_calibrations.get(device.id) if device.id in lab._saved_calibration_devices
+                       else lab.work.lab.calibrations.get(device.id))
+        candidates = [item for item in saved if calibration is not None and item['document'] == calibration.document()]
+        by_id = {item['id']: item for item in candidates}
+        preferred = (lab._loaded_calibration_items.get(device.id), previous.get(device.id))
+        result[device.id] = next((identity for identity in preferred if identity in by_id),
+                                candidates[-1]['id'] if candidates else None)
+    return result
+
+
 def open_portable(data, definitions, store, clock):
     """Decode a .nuclemu file and reopen its cached items without sampling."""
     from .web_session import WebLab  # Avoid a WebLab <-> adapter import cycle.
@@ -145,14 +164,20 @@ def open_portable(data, definitions, store, clock):
         if unresolved:
             lab.portable_unresolved[device] = unresolved
 
-    # Only explicitly saved calibration items are restored; a selected item's
-    # binding takes precedence if several calibrations belong to one device.
-    calibrations = {}
+    # Establish the live instrument state before binding any historical view.
+    # Old files lack an explicit live reference: retain their last native saved
+    # calibration, but do not infer application from unrelated imported items.
+    calibrations, native = {}, {}
     for item in doc["items"]:
         if item["kind"] == "calibration":
             calibration = Calibration.from_document(item["document"])
             calibrations[item["id"]] = calibration
-            lab.work.lab.calibrations[calibration.device] = calibration
+            if item['source'] == dict(package=doc['id'], item=item['id']):
+                native[calibration.device] = item['id']
+    for device, identity in doc.get('live_calibrations', native).items():
+        if identity is not None:
+            lab.work.lab.calibrations[device] = calibrations[identity]
+            lab._loaded_calibration_items[device] = identity
     latest = next((item for item in reversed(doc["items"])
                    if item["kind"] == "measurement" and doc["device"] in item["document"]["devices"]), None)
     saved_selected = doc.get('analysis', {}).get(doc['device'], {}).get('selected')
@@ -165,14 +190,6 @@ def open_portable(data, definitions, store, clock):
                 lab.portable_default_selection[doc['device']] = indices[0]
         else:
             lab.analysis[doc["device"]]["selected"] = None
-        calibration = calibrations.get(latest.get("calibration_id"))
-        if calibration:
-            lab.work.lab.calibrations[calibration.device] = calibration
-    elif saved_selected is not None:
-        selected_item = next((item for item in doc['items'] if item['id'] == saved_selected), None)
-        calibration = calibrations.get(selected_item.get('calibration_id')) if selected_item else None
-        if calibration:
-            lab.work.lab.calibrations[calibration.device] = calibration
     lab.bind(doc["device"])
     lab.mark_saved()
     lab.draft_revision = lab.revision()

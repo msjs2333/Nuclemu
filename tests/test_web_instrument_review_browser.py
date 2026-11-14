@@ -1,5 +1,7 @@
 """Instrument saves capture the keypress, and shared pages respect applied presets."""
 
+import json
+import os
 from pathlib import Path
 import unittest
 
@@ -26,7 +28,7 @@ class InstrumentReviewBrowserTests(unittest.TestCase):
         with page.expect_response(lambda r: r.url.endswith('/api/action') and
                                   r.request.post_data_json.get('action') == name) as response:
             click()
-        self.assertEqual(response.value.ok, ok, response.value.text())
+        self.assertEqual(response.value.ok, ok, response.value.text()[:1000])
         return response.value
 
     def instrument(self, experiment):
@@ -313,6 +315,93 @@ class InstrumentReviewBrowserTests(unittest.TestCase):
         self.action('start_group', lambda: self.page.locator('#start').click())
         expect(self.page.locator('#stop')).to_be_enabled()
         self.assertEqual(self.state()['instrument']['duration_s'], 12)
+
+    def interleaved_draft_start(self, experiment, peer_starts):
+        self.instrument(experiment)
+        peer = self.peer()
+        config = 'instrument_group_config' if experiment == 'beta' else 'instrument_config'
+        start = 'start_group' if experiment == 'beta' else 'start'
+        self.page.locator('#mode').select_option('timed')
+        self.page.locator('#duration').fill('20')
+        interleaved = {}
+        def configure_peer_before_delivering_response(route):
+            if route.request.post_data_json.get('action') != config or interleaved:
+                route.continue_()
+                return
+            response = route.fetch()
+            self.assertTrue(response.ok, response.text())
+            interleaved['a_configuration'] = response.json()['instrument']['duration_s']
+            peer.locator('#mode').select_option('timed')
+            peer.locator('#duration').fill('2')
+            applied = self.action(config, lambda: peer.locator('#apply-acquisition').click(), page=peer)
+            interleaved['b_configuration'] = applied.json()['instrument']['duration_s']
+            if peer_starts:
+                self.action(start, lambda: peer.locator('#start').click(), page=peer)
+            interleaved['before_a_start'] = self.state()['instruments']
+            route.fulfill(response=response)
+        self.page.route('**/api/action', configure_peer_before_delivering_response)
+        try:
+            rejected = self.action(start, lambda: self.page.locator('#start').click(), ok=False)
+        finally:
+            self.page.unroute('**/api/action', configure_peer_before_delivering_response)
+        self.assertEqual(interleaved['a_configuration'], 20)
+        self.assertEqual(interleaved['b_configuration'], 2)
+        self.assertEqual(rejected.request.post_data_json['expected']['duration_s'], 20)
+        expect(self.page.locator('#acquisition-error')).to_contain_text('改变')
+        expect(self.page.locator('#duration')).to_have_value('20')
+        current = self.state()
+        self.assertEqual(current['instruments'], interleaved['before_a_start'])
+        self.assertEqual(current['any_running'], peer_starts)
+        self.assertEqual({v['duration_s'] for v in current['instruments'].values()}, {2})
+        after_rejection = current['instruments']
+        self.now = 3
+        current = self.state()
+        self.assertFalse(current['any_running'])
+        self.assertEqual({v['exposure_s'] for v in current['instruments'].values()}, {2 if peer_starts else 0})
+        if experiment == 'alpha':
+            expect(self.page.locator('.target-readout dd')).to_have_text('2 s')
+            expect(self.page.locator('#exposure')).to_have_text('2 s' if peer_starts else '0 s')
+        else:
+            for status in self.page.locator('.counter-window .window-state').all():
+                expect(status).to_have_text('到限暂停' if peer_starts else '等待开始')
+        expect(self.page.locator('#duration')).to_have_value('20')
+        name = experiment + '-interleaved-draft-' + ('peer-running' if peer_starts else 'idle')
+        self.screenshot(name)
+        output = os.environ.get('NUCLEMU_REVIEW_OUTPUT')
+        if output:
+            def readings(instruments):
+                return {device: {key: value[key] for key in ('duration_s', 'running', 'exposure_s', 'acquisition')}
+                        for device, value in instruments.items()}
+            Path(output, name + '.json').write_text(json.dumps({
+                'experiment':experiment, 'peer_starts':peer_starts,
+                'a_applied':interleaved['a_configuration'], 'b_applied':interleaved['b_configuration'],
+                'a_start_expected':rejected.request.post_data_json['expected'], 'a_start_status':rejected.status,
+                'before_a_start':readings(interleaved['before_a_start']),
+                'after_a_rejection':readings(after_rejection), 'at_three_seconds':readings(current['instruments']),
+                'retained_input':self.page.locator('#duration').input_value()}, indent=2), encoding='utf-8')
+
+    def test_alpha_interleaved_draft_start_rejects_changed_target(self):
+        self.interleaved_draft_start('alpha', False)
+
+    def test_beta_interleaved_draft_start_rejects_changed_target(self):
+        self.interleaved_draft_start('beta', False)
+
+    def test_alpha_interleaved_draft_start_preserves_peers_running_target(self):
+        self.interleaved_draft_start('alpha', True)
+
+    def test_beta_interleaved_draft_start_preserves_peers_running_target(self):
+        self.interleaved_draft_start('beta', True)
+
+    def test_single_page_alpha_draft_starts_with_its_requested_target(self):
+        self.instrument('alpha')
+        self.page.locator('#mode').select_option('timed')
+        self.page.locator('#duration').fill('20')
+        started = self.action('start', lambda: self.page.locator('#start').click())
+        self.assertEqual(started.request.post_data_json['expected'],
+                         {'duration_s':20, 'count_limit':None, 'window_s':1})
+        self.now = 3
+        self.assertTrue(self.state()['running'])
+        self.assertEqual(self.state()['instrument']['duration_s'], 20)
 
 
 if __name__ == '__main__':

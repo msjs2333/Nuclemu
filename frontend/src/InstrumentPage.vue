@@ -183,11 +183,20 @@ async function start() {
         return
       }
     }
-    if (component) {
-      await props.act('start_group', {component}, session)
-    } else if (modern) {
-      await props.act('start', {device}, session)
-    } else await props.act('start', {duration: legacyDuration}, session)
+    try {
+      const opening = edited && modern ? {expected: component
+        ? {duration_s: fields.duration_s, count_limit: fields.count_limit} : fields} : {}
+      if (component) {
+        await props.act('start_group', {component, ...opening}, session)
+      } else if (modern) {
+        await props.act('start', {device, ...opening}, session)
+      } else await props.act('start', {duration: legacyDuration}, session)
+    } catch (error) {
+      if (!edited || !modern) throw error
+      acquisitionError.value = errorMessage(error)
+      formConflict.value = true
+      return
+    }
     await nextTick()
     if (props.state.id === session && props.state.device === device) syncForm()
   })

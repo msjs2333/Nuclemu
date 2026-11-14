@@ -113,6 +113,8 @@ python -m nuclemu files convert-archive workbench.sqlite3 --archive ARCHIVE_ID -
 
 将 `ITEM_UUID` 换为 `files inspect` 输出中要选的项目 ID；检查旧 `workbench.sqlite3` 时会列出可供 `ARCHIVE_ID` 使用的档案标识。文件操作不依赖当前课程目录或当前运行的 Web 数据库。导入给新项目分配不同 ID，保留源身份，相同标题不会覆盖；只有显式改动分析选择才更换参考或本底。可重新导入的单项 CSV 带一行快照元数据；现有 `run --output` CSV 的结构保持不变。API、单项批量下载和 3 s/5 s 快照的重开示例见[可携实验文件](exchange.md)。
 
+新版计数器整机记录按整套读数导出：`files export` 或 `files batch-export` 选到 A/B 任一成员 UUID，CSV、JSON 仍包含同次保存的 A/B，批量 ZIP 的成员名按整机生成，显式 `--output` 路径原样生效。读回后用 `files inspect` 的 `records` 首项 UUID 导入；直接传组内从项给 `files import` 仍会报错。没有整机关联的原生单窗文件继续按单窗处理。
+
 `--output` 可重复，扩展名必须为 `.csv` 或 `.json`，目标父目录须已存在。输出不得指向 `--calibration` 的输入文件，包括相对路径和文件链接别名；发现冲突时，在采集、摘要和任何文件写出之前报错。默认导出全部设备；指定 `--device` 后只导出该设备。JSON 保留完整各段设置、整数计数、设备描述、种子和曝光边界；CSV 每段每道一行，包含设置、曝光及计数，载入刻度后另含 `energy_MeV`。摘要中的 ROI 和净率为派生读数，产品仍保存原始累计计数，供后续重新分析。
 
 CLI 与浏览器工作台共用 `discover(paths)`、`catalog.describe(experiment)`、`Experiment.parameters/devices`、`Session` 和 `MeasurementView(session).product()`。装置中看到的参数键对应 CLI 的 `--set` 或 `--step`，部件绑定的仪器实例对应 `--device KIND:ID`。对齐时使用相同实验、种子、设备实例、参数变化顺序及每次开关门时刻；界面刷新可以拆分 `advance()`，不改变采集窗。CLI 每个 step 对应工作台一次定时采集；工作台的刷新、ROI、刻度和导出同样只消费现有产品。以相同产品的整数计数和曝光比较，避免把随机读数与模型期望率直接当作相等性条件。
