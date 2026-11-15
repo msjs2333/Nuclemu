@@ -372,6 +372,12 @@ def plan_start(paths=(), *, port=0, directory=None, registry_directory=None,
         # It also coalesces a GUI that finished startup during HTTP discovery.
         matching = next((r for r in records if r.gui and r.configuration == configuration
                          and r.state != 'choice'), None)
+        # A surviving parallel GUI may use an automatic port while retaining
+        # this requested fixed port. Verify its current occupant before activation.
+        if occupied and not any(r in records and urlsplit(r.url).port == port for r in ready):
+            if matching is not None and matching.state == 'starting':
+                raise OSError('已有工作台正在启动，请稍后重试。')
+            raise OSError(f'端口 {port} 已由其他程序占用，请在设置中更换端口。')
         if matching is not None and not new_instance:
             fd = _open_file(root / (matching.registration_id + '.instance'))
             try:
@@ -381,8 +387,6 @@ def plan_start(paths=(), *, port=0, directory=None, registry_directory=None,
             return LaunchPlan('activated', None, [], port, root)
         if any(r.gui and r.state == 'starting' for r in records):
             raise OSError('已有工作台正在启动，请稍后重试。')
-        if occupied and not any(urlsplit(r.url).port == port for r in ready):
-            raise OSError(f'端口 {port} 已由其他程序占用，请在设置中更换端口。')
         owner._starting = not bool(ready)
         owner._create()
     return LaunchPlan('choose' if ready else 'start', owner, ready, port, root)

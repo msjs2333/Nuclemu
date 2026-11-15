@@ -20,7 +20,7 @@ WORKER = '''
 import json,sys
 from nuclemu.launcher_instance import plan_start
 input()
-plan=plan_start(registry_directory=sys.argv[1])
+plan=plan_start(registry_directory=sys.argv[1],port=int(sys.argv[2]))
 print(json.dumps(plan.kind),flush=True)
 if plan.owner:
     try:
@@ -182,6 +182,53 @@ class LauncherInstanceTests(unittest.TestCase):
                 self.plan(port=port)
             self.assertNotEqual(foreign.fileno(), -1)
 
+    def test_foreign_listener_on_original_fixed_port_blocks_activation_of_parallel_survivor(self):
+        with socket.socket() as available:
+            available.bind(('127.0.0.1', 0))
+            port = available.getsockname()[1]
+        first = self.plan(port=port)
+        original = self.start(first)
+        second = self.plan(port=port, new_instance=True)
+        survivor = self.start(second)
+        self.assertNotEqual(original.status().url, survivor.status().url)
+        self.assertEqual(self.plan(port=port).kind, 'activated')
+        self.assertTrue(first.owner.take_activation())
+        self.assertFalse(second.owner.take_activation())
+        original.stop(force=True)
+        self.assertTrue(original.join(5))
+        with socket.socket() as foreign:
+            foreign.bind(('127.0.0.1', port))
+            foreign.listen()
+            with self.assertRaisesRegex(OSError, str(port)):
+                self.plan(port=port)
+            self.assertFalse(second.owner.take_activation())
+            self.assertEqual(survivor.status().phase, 'ready')
+            self.assertEqual(len(discover_services(self.root)), 1)
+        self.assertEqual(self.plan(port=port).kind, 'activated')
+        self.assertTrue(second.owner.take_activation())
+
+    def test_occupied_fixed_port_without_verified_identity_does_not_activate_ready_gui(self):
+        with socket.socket() as available:
+            available.bind(('127.0.0.1', 0))
+            port = available.getsockname()[1]
+        first = self.plan(port=port)
+        self.start(first)
+        with patch('nuclemu.launcher_instance.service_is_ready', return_value=False):
+            with self.assertRaisesRegex(OSError, str(port)):
+                self.plan(port=port)
+        self.assertFalse(first.owner.take_activation())
+
+    def test_occupied_fixed_port_during_matching_startup_requests_retry_without_activation(self):
+        with socket.socket() as foreign:
+            foreign.bind(('127.0.0.1', 0))
+            port = foreign.getsockname()[1]
+            with patch('nuclemu.launcher_instance._port_occupied', return_value=False):
+                first = self.plan(port=port)
+            foreign.listen()
+            with self.assertRaisesRegex(OSError, '正在启动'):
+                self.plan(port=port)
+            self.assertFalse(first.owner.take_activation())
+
     def test_identity_mismatch_and_malformed_http_are_not_reusable(self):
         class Identity(BaseHTTPRequestHandler):
             body = b'{"product":"Nuclemu","instance_id":"wrong","ready":true}'
@@ -214,9 +261,18 @@ class LauncherInstanceTests(unittest.TestCase):
             thread.join(5)
 
     def test_simultaneous_processes_and_killed_owner_recovery(self):
+        self.concurrent_processes_and_recovery(0)
+
+    def test_simultaneous_fixed_port_processes_and_killed_owner_recovery(self):
+        with socket.socket() as available:
+            available.bind(('127.0.0.1', 0))
+            port = available.getsockname()[1]
+        self.concurrent_processes_and_recovery(port)
+
+    def concurrent_processes_and_recovery(self, port):
         processes = []
         for _ in range(6):
-            process = subprocess.Popen([sys.executable, '-u', '-c', WORKER, str(self.root)],
+            process = subprocess.Popen([sys.executable, '-u', '-c', WORKER, str(self.root), str(port)],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             self.resources.append(process)
             processes.append(process)
@@ -237,7 +293,7 @@ class LauncherInstanceTests(unittest.TestCase):
         owner.wait(5)
         stale = list((self.root / 'services').glob('*.instance'))
         self.assertEqual(len(stale), 1)
-        replacement = plan_start(registry_directory=self.root)
+        replacement = plan_start(registry_directory=self.root, port=port)
         self.resources.append(replacement)
         self.assertEqual(replacement.kind, 'start')
         self.assertFalse(replacement.owner.take_activation())
