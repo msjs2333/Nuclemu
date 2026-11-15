@@ -130,7 +130,8 @@ class WorkbenchService:
             pending = lab.unsaved()
             from .download_names import download_prefix
             return CloseContext(lab.id, lab.confirmation_id, lab.readonly,
-                not lab.readonly and bool(pending['measurements'] or pending['calibrations']),
+                not lab.readonly and bool(lab.work.session.experiment.outputs)
+                and bool(pending['measurements'] or pending['calibrations']),
                 download_prefix(lab.info) + '.nuclemu')
 
     def _close_server(self):
@@ -184,6 +185,18 @@ class WorkbenchService:
         with server.app_lock:
             self._finish_close(server, context)
 
+    @staticmethod
+    def _check_save_target(server, target):
+        database = server.app.store.database_path
+        same = target.resolve() == database.resolve()
+        if not same:
+            try:
+                same = target.samefile(database)
+            except FileNotFoundError:
+                pass
+        if same:
+            raise ValueError('不能覆盖当前工作台工作库，请选择其他实验文件路径。')
+
     def save_close(self, context, path):
         """Save cached measurements atomically, then close the confirmed session.
 
@@ -195,8 +208,10 @@ class WorkbenchService:
         from tempfile import mkstemp
 
         server = self._close_server()
+        target = Path(path).absolute()
         with server.app_lock:
             lab = self._check_close(server, context)
+            self._check_save_target(server, target)
             if lab.readonly or not lab.work.session.experiment.outputs:
                 from .exchange import archive_package, package_bytes
                 content = package_bytes(archive_package(lab.document(finish=True), lab.archive_id,
@@ -204,7 +219,6 @@ class WorkbenchService:
             else:
                 content = lab.portable_download()[2]
             cleanup_draft = not lab.readonly and not lab.work.session.experiment.outputs
-        target = Path(path).absolute()
         fd, temporary = mkstemp(prefix='.' + target.name + '.', suffix='.tmp', dir=target.parent)
         try:
             with os.fdopen(fd, 'wb') as output:
@@ -213,6 +227,7 @@ class WorkbenchService:
                 os.fsync(output.fileno())
             with server.app_lock:
                 self._check_close(server, context)
+                self._check_save_target(server, target)
                 os.replace(temporary, target)
                 self._finish_close(server, context, saved=True)
         finally:

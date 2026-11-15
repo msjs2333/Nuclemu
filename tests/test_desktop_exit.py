@@ -237,6 +237,28 @@ class DesktopExitTkTests(unittest.TestCase):
                     self.assertLessEqual(bottom, dialog.root.winfo_height())
                 self.assertFalse(dialog.message_label.winfo_ismapped())
 
+    def test_legacy_whole_session_exit_has_no_lost_readings_warning(self):
+        from nuclemu.catalog import describe
+        from nuclemu.core import Device, Experiment
+        from nuclemu.web_session import WebLab
+        definition = Experiment('old', 'Old', '', (), (Device('c', 'counter', 'C'),),
+            lambda settings, start, end, rng: {'c': (round(end - start),)})
+        with self.service._server.app_lock:
+            app = self.service._server.app
+            app.lab = WebLab(definition, describe(definition), 0, app.store, lambda: self.now)
+            app.lab.work.session.start(10)
+            self.now += 3
+            app.state()
+        dialog = self.close_dialog()
+        self.assertFalse(self.window.close_context.has_uncached)
+        self.assertEqual(dialog.description['text'], '')
+        self.assertFalse(dialog.description.winfo_ismapped())
+        with patch('tkinter.filedialog.asksaveasfilename', return_value=str(self.target)):
+            dialog.save_button.invoke()
+        self.until(lambda: self.window.closed)
+        segments = load_package(self.target)['legacy']['document']['product']['segments']
+        self.assertEqual(sum(segment['readings']['c'][0] for segment in segments), 3)
+
 
 if __name__ == '__main__':
     unittest.main()

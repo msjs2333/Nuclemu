@@ -305,6 +305,102 @@ class ServiceCloseTests(unittest.TestCase):
         self.assertIsNone(self.app.lab)
         self.assertTrue(self.service.join(3))
 
+    def test_exit_save_rejects_working_database_and_hardlink_without_losing_archives(self):
+        import os
+        from nuclemu.web_session import WebLab
+        self.open_cached()
+        with self.server.app_lock:
+            document = deepcopy(self.app.lab.document())
+            self.app.store.write('first', 'archive', document)
+            self.app.store.write('second', 'archive', document)
+            self.app.lab = WebLab.read('first', self.app.store, lambda: self.now)
+        database = self.app.store.directory / 'workbench.sqlite3'
+        archived = self.app.store.read('first')
+        alias = database.with_name('database-alias.nuclemu')
+        os.link(database, alias)
+        context = self.service.begin_close()
+        original = database.read_bytes()
+        for target in (database, alias):
+            with self.subTest(target=target):
+                with self.assertRaisesRegex(ValueError, '工作库'):
+                    self.service.save_close(context, target)
+                self.assertEqual(database.read_bytes(), original)
+                self.assertEqual(self.app.store.read('first'), archived)
+                self.assertEqual(self.app.store.read('second'), archived)
+                self.assertEqual(self.app.lab.confirmation_id, context.confirmation_id)
+                self.assertEqual(self.service.status().phase, 'ready')
+        self.service.save_close(context, self.target)
+        self.assertTrue(self.service.join(3))
+        self.assertEqual(load_package(self.target)['legacy']['document']['product'], archived['product'])
+
+    def test_exit_save_protects_database_file_symlink_target(self):
+        self.open_cached()
+        self.app.store.list()
+        backing = Path(self.folder.name) / 'actual-database.sqlite3'
+        database = self.app.store.database_path
+        database.rename(backing)
+        try:
+            database.symlink_to(backing)
+        except OSError as error:
+            backing.rename(database)
+            self.skipTest(f'Cannot create database symlink on this filesystem: {error}')
+        context = self.service.begin_close()
+        original = backing.read_bytes()
+        with self.assertRaisesRegex(ValueError, '工作库'):
+            self.service.save_close(context, backing)
+        self.assertEqual(backing.read_bytes(), original)
+        self.service.cancel_close(context)
+        self.assertFalse(self.app.lab.frozen)
+
+    def test_modern_exit_save_does_not_open_or_create_unavailable_working_database(self):
+        self.open_cached()
+        database = self.app.store.database_path
+        database.unlink(missing_ok=True)
+        with patch.object(self.app.store, '_connect', side_effect=OSError('working directory is read-only')) as connect:
+            context = self.service.begin_close()
+            self.service.save_close(context, self.target)
+            connect.assert_not_called()
+        self.assertFalse(database.exists())
+        self.assertEqual(len(load_package(self.target)['items']), 2)
+
+    def test_exit_save_rechecks_database_alias_after_slow_file_write(self):
+        import os
+        self.open_cached()
+        self.app.store.list()
+        context = self.service.begin_close()
+        database = self.app.store.database_path
+        original = database.read_bytes()
+        sync = os.fsync
+        def alias_during_write(fd):
+            os.link(database, self.target)
+            sync(fd)
+        with patch('os.fsync', side_effect=alias_during_write):
+            with self.assertRaisesRegex(ValueError, '工作库'):
+                self.service.save_close(context, self.target)
+        self.assertEqual(database.read_bytes(), original)
+        self.assertEqual(self.target.read_bytes(), original)
+        self.assertFalse(list(self.target.parent.glob('.*.tmp')))
+        self.service.cancel_close(context)
+        self.assertFalse(self.app.lab.frozen)
+
+    def test_legacy_live_exit_prompt_matches_whole_session_save(self):
+        from nuclemu.catalog import describe
+        from nuclemu.core import Device, Experiment
+        from nuclemu.web_session import WebLab
+        definition = Experiment('old', 'Old', '', (), (Device('c', 'counter', 'C'),),
+            lambda settings, start, end, rng: {'c': (round(end - start),)})
+        with self.server.app_lock:
+            self.app.lab = WebLab(definition, describe(definition), 0, self.app.store, lambda: self.now)
+            self.app.lab.work.session.start(10)
+            self.now = 3
+            self.app.state()
+        context = self.service.begin_close()
+        self.assertFalse(context.has_uncached)
+        self.service.save_close(context, self.target)
+        segments = load_package(self.target)['legacy']['document']['product']['segments']
+        self.assertEqual(sum(segment['end_s'] - segment['start_s'] for segment in segments), 3)
+        self.assertEqual(sum(segment['readings']['c'][0] for segment in segments), 3)
+
     def test_readonly_resave_normalizes_calibration_then_keeps_changed_calibration(self):
         from base64 import b64encode
         from nuclemu.catalog import describe
