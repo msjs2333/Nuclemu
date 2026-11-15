@@ -8,7 +8,7 @@ Nuclemu is a local nuclear physics simulator for undergraduate laboratories. The
 
 ## Getting started
 
-Desktop packages for 0.0.1 are under validation. See [installation and startup](docs/installation.md) for candidate package instructions, tested systems, upgrades and removal.
+The Windows, macOS and Linux desktop packages are 0.0.1 prereleases. See [installation and startup](docs/installation.md) for package instructions, tested systems, platform limitations, upgrades and removal.
 
 From the repository directory, use Python 3.11 or later to open the local workbench in your browser:
 
@@ -33,7 +33,7 @@ Most experiment guides and design documents are in Chinese. The artwork contribu
 
 | Document | Contents |
 |---|---|
-| [Installation and startup](docs/installation.md) | Desktop candidates, source startup, saving before closing, upgrades and removal |
+| [Installation and startup](docs/installation.md) | Desktop prereleases, source startup, saving before closing, upgrades and removal |
 | [Workbench](docs/gui.md) · [Command line](docs/cli.md) | Acquisition, calibration, export and optional CLI background subtraction |
 | [Student handbook](docs/student.md) · [Alpha energy loss](docs/alpha.md) · [Beta absorption](docs/beta.md) | Procedures, blank data tables and analysis of the student's own measurements |
 | [Teacher handbook](docs/teacher/README.md) · [Alpha energy loss](docs/teacher/alpha.md) · [Beta absorption](docs/teacher/beta.md) | Lesson preparation, calibration and counting uncertainty |

@@ -2,13 +2,13 @@
 
 [简体中文](installation.zh-CN.md)
 
-Version 0.0.1 desktop packages are being prepared in [draft PR #16](https://github.com/msjs2333/Nuclemu/pull/16). Use the package and validation notes supplied together for your operating system and architecture. This page describes candidate builds; a formal release has not yet been published.
+The Windows, macOS and Linux desktop packages described here are 0.0.1 prereleases. Match the package to your operating system and architecture, and read its validation notes and platform limitations before use.
 
 The desktop package includes the runtime, experiments and workbench resources. You need a desktop browser; Python and Node.js are not required on the target machine. Once installed, the workbench runs locally without an internet connection.
 
 ## Windows
 
-The installer candidate is `Nuclemu-0.0.1-windows-x64-setup.exe`. It has no publisher signature. Run it and choose the installation scope: the current user by default, or all users with administrator permission. Open **Nuclemu** from the Start menu. Its CLI is `nuclemu.exe` in the installation directory.
+The prerelease installer is `Nuclemu-0.0.1-windows-x64-setup.exe`. It has no publisher signature. Run it and choose the installation scope: the current user by default, or all users with administrator permission. Open **Nuclemu** from the Start menu. Its CLI is `nuclemu.exe` in the installation directory.
 
 To upgrade, save your experiment, close the launcher and terminal services, then run the new installer in the existing installation scope. To uninstall, use Nuclemu's entry in Windows' installed-apps settings. If prompted to close Nuclemu, finish saving and close it before retrying; the installer does not stop an active experiment for you.
 
@@ -18,7 +18,7 @@ The same final installer passed Windows 11 Sandbox checks for both current-user 
 
 ## macOS
 
-The candidate filenames are `Nuclemu-0.0.1-macos-x86_64.dmg` for Intel and `Nuclemu-0.0.1-macos-arm64.dmg` for Apple Silicon. Open the matching DMG, drag `Nuclemu.app` to Applications, then start it from Applications. Close the launcher before replacing the app with an upgrade. To uninstall, remove `Nuclemu.app` from Applications; keep your experiment files.
+The prerelease filenames are `Nuclemu-0.0.1-macos-x86_64.dmg` for Intel and `Nuclemu-0.0.1-macos-arm64.dmg` for Apple Silicon. Open the matching DMG, drag `Nuclemu.app` to Applications, then start it from Applications. Close the launcher before replacing the app with an upgrade. To uninstall, remove `Nuclemu.app` from Applications; keep your experiment files.
 
 The app's command-line companion is:
 
@@ -26,11 +26,11 @@ The app's command-line companion is:
 /Applications/Nuclemu.app/Contents/MacOS/nuclemu-cli serve --no-gui
 ```
 
-The Intel candidate passed native runner checks on macOS 15.7.9, and arm64 on macOS 15.8.2: mounting and copying the app, using the CLI and experiment files, replacing an earlier package revision, and removing the app while retaining user data. These are tested environments, not minimum supported versions. The candidates use an ad-hoc signature and have no Developer ID signature or notarization. First launch of a downloaded app (including Gatekeeper), Finder startup and system save dialogs still need desktop verification. The smoke check made no downloads but did not disable the runner's network. See the [delivery record](desktop-release-delivery.md) for the full validation scope.
+The Intel prerelease passed native runner checks on macOS 15.7.9, and arm64 on macOS 15.8.2: mounting and copying the app, using the CLI and experiment files, replacing an earlier package revision, and removing the app while retaining user data. These are tested environments, not minimum supported versions. The prereleases use an ad-hoc signature and have no Developer ID signature or notarization. First launch of a downloaded app (including Gatekeeper), Finder startup and system save dialogs still need desktop verification. The smoke check made no downloads but did not disable the runner's network. See the [delivery record](desktop-release-delivery.md) for the full validation scope.
 
 ## Linux
 
-The candidate targets Debian 12, amd64, with glibc 2.36. Its package names are `nuclemu_0.0.1-1_amd64.deb` and `nuclemu-0.0.1-1-linux-amd64.tar.gz`. The portable CLI passed a non-root check in a minimal, offline container without system Python or Node.js. A separate offline Debian container with a test driver was used to replace Debian package revision 0 with revision 1, start the menu entry under Xvfb, check that removal retained preferences and experiment files, and reopen the Windows sample experiments after relocating the portable directory. These checks cover Debian 12 amd64; other distributions remain unverified. See the [delivery record](desktop-release-delivery.md).
+The prerelease targets Debian 12, amd64, with glibc 2.36. Its package names are `nuclemu_0.0.1-1_amd64.deb` and `nuclemu-0.0.1-1-linux-amd64.tar.gz`. The portable CLI passed a non-root check in a minimal, offline container without system Python or Node.js. A separate offline Debian container with a test driver was used to replace Debian package revision 0 with revision 1, start the menu entry under Xvfb, check that removal retained preferences and experiment files, and reopen the Windows sample experiments after relocating the portable directory. These checks cover Debian 12 amd64; other distributions remain unverified. See the [delivery record](desktop-release-delivery.md).
 
 For the `.deb`, install or upgrade from the directory containing the file:
 
@@ -70,7 +70,7 @@ Before upgrading or uninstalling, save the readings you want, write the whole ex
 
 Keep your `.nuclemu`, CSV and JSON files outside the application directory. Launcher preferences are stored per user in `~/.nuclemu/launcher.json`; on Windows, `~` is your user profile folder. The local workbench storage is under `~/.nuclemu/workbench/`. These internal files do not replace exported experiment files.
 
-Candidate packaging keeps user preferences, local workbench storage and separately saved experiments when the program is removed. Installation, upgrade and removal checks are recorded per platform. For the directory sample, extract an upgrade to a separate folder, start it and reopen a saved experiment before retiring the old directory.
+Prerelease packaging keeps user preferences, local workbench storage and separately saved experiments when the program is removed. Installation, upgrade and removal checks are recorded per platform. For the directory sample, extract an upgrade to a separate folder, start it and reopen a saved experiment before retiring the old directory.
 
 ## Command line and source checkout
 
