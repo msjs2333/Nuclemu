@@ -64,10 +64,10 @@ class LauncherInstanceTests(unittest.TestCase):
         service.wait_ready(5)
         return service
 
-    def test_same_starting_configuration_coalesces_and_browser_preference_is_not_a_service_key(self):
+    def test_same_canonical_starting_configuration_coalesces(self):
         original = self.plan([self.root / 'course', self.root / './course'])
         self.assertEqual(original.kind, 'start')
-        same = self.plan([self.root / 'course'], open_browser=True)
+        same = self.plan([self.root / 'course'])
         self.assertEqual(same.kind, 'activated')
         self.assertTrue(original.owner.take_activation())
         self.assertFalse(original.owner.take_activation())

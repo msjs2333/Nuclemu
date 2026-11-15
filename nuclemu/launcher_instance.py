@@ -355,7 +355,7 @@ class LaunchPlan:
             self.owner.close()
 
 def plan_start(paths=(), *, port=0, directory=None, registry_directory=None,
-               new_instance=False, open_browser=False):
+               new_instance=False):
     """Plan on a worker after the first GUI frame; never open or stop a service."""
     owner = ServiceRegistration(paths, port=port, gui=True, directory=registry_directory,
                                 workbench_directory=directory, preferred=not new_instance, _defer=True)
