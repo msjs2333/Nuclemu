@@ -1,6 +1,6 @@
 # 0.0.1 桌面安装与启动器规划
 
-学生从系统应用菜单启动 Nuclemu，在默认浏览器中完成实验。桌面窗口管理本机服务，浏览器继续承载实验目录、仪器和记录。首版交付 Windows、macOS 和 Linux 桌面安装包。旧 Windows 的期望支持下限是 Windows 7 SP1，验证结果独立登记，三端主线通过验收即可发布。下列组合是计划中的验证环境，最低实测版本在取得安装包后填写。
+学生从系统应用菜单启动 Nuclemu，在默认浏览器中完成实验。桌面窗口管理本机服务，浏览器继续承载实验目录、仪器和记录。首版交付 Windows、macOS 和 Linux 桌面安装包。当前 Windows 安装门槛遵循随包运行时的支持范围；Windows 7 SP1 是未来独立兼容方案的目标，不由当前包放行。三端主线通过验收即可发布，旧机结果独立登记。下列组合是计划中的验证环境，支持门槛与实际验证环境分别记录。
 
 ## 启动器
 
@@ -61,7 +61,7 @@
 
 | 平台 | 候选交付物与首轮验收环境 |
 |---|---|
-| Windows | 带开始菜单入口与卸载项的离线安装程序。主线覆盖 Win10、Win11 x64 代表环境。记录系统版本、运行库和浏览器；普通用户在中文路径中完成安装与启动。Win7 SP1 和 Win8.1 另列旧机验证结果，各架构分别标注。 |
+| Windows | 带开始菜单入口与卸载项的离线安装程序。主线验证 Win10、Win11 x64 代表环境。记录系统版本、运行库和浏览器；普通用户在中文路径中完成安装与启动。Win8.1 是运行时上游门槛，仍需独立实测；Win7 SP1 需另行兼容构建。 |
 | macOS | 含 `.app` 的 DMG。分别在 Intel 与 Apple Silicon 上由 Finder 启动并打开系统默认浏览器。在干净账户验证下载后的首次启动、系统提示和卸载，记录最低实测 macOS 版本及签名、公证状态。 |
 | Linux | 首选带桌面菜单入口的离线 `.deb`，另以同一应用目录的压缩包供其他发行版验证。先测 Ubuntu LTS、Debian 桌面 x86_64，在选定的最低 glibc 基线上构建，记录发行版、桌面环境、图形库及浏览器版本。 |
 
@@ -69,9 +69,11 @@
 
 旧系统适配能让保留 Win7 的课机继续使用本机算力，教师可在新旧课机间分发同一课程和实验文件。收益取决于实际课机的位数、系统补丁和已装浏览器。目前缺少这组清单与安装实测，优先保留一份可重复的试装流程。
 
-[项目元数据](../pyproject.toml) 要求 Python ≥3.11，官方 Python 3.11 的 Windows 下限为 8.1；Win7 对应的 3.8 已结束维护。直接降低整个项目的解释器要求，会把模块加载（如 `Number = int | float`）、静态资源路径（`Path.is_relative_to`）和 [SQLite 文件读写](../nuclemu/exchange.py) 的兼容成本带到日常开发。维护专用旧包能隔离运行时，但每次发布都多一套解释器、Tk、SQLite、打包工具和浏览器组合要复验。回环服务可离线运行，旧组件的上游维护状态仍需写进旧包说明。[Python 的 Windows 支持](https://docs.python.org/3.11/using/windows.html) · [Python 版本生命周期](https://devguide.python.org/versions/) · [SQLite 接口](https://docs.python.org/3.11/library/sqlite3.html#sqlite3.Connection.serialize)
+[项目元数据](../pyproject.toml) 要求 Python ≥3.11，当前 [Windows 构建锁](../.github/workflows/windows-installer.yml) 实际固定 CPython 3.12.13、PyInstaller 6.20.0 和 Inno Setup 6.7.4。Python 3.12 与所用 [Astral Windows 分发](https://docs.astral.sh/python-build-standalone/running/#windows) 的上游门槛为 Windows 8.1；PyInstaller 6.20 要求 Windows 8 起，Inno 6.7 自身可运行在 Windows 7，均不能降低随包 Python 的门槛。因此安装器使用 `MinVersion=6.3`，按 [Inno 版本编码](https://jrsoftware.org/ishelp/topic_winvernotes.htm) 对应 Windows 8.1，旧系统由安装器在安装前提示并退出。这里记录的是上游门槛，不是本项目的最低实测版本；Windows 8.1 尚未实测。
 
-建议主线保留当前 Python 基线，优先把同一 Windows 安装包送到可用的较旧系统试装。有代表性 Win7 SP1 环境时，再用独立构建配置验证一条完整路径。先看启动器、服务和生产浏览器资源能否运行，再验证 α、β 的采集、保存及与现代包双向重开。若唯一差异在文件适配层，可评估用临时 SQLite 文件读写相同库结构。若需要长期维护定制解释器、分叉物理模型或改变存档语义，停止本轮适配，登记具体阻断和最近实测通过的组合。仅通过启动检查的组合标为“试装”，只有整条路径通过的 OS、位数及浏览器组合才列入实测兼容范围。
+Win7 对应的 Python 3.8 已结束维护。直接降低整个项目的解释器要求，会把模块加载（如 `Number = int | float`）、静态资源路径（`Path.is_relative_to`）和 [SQLite 文件读写](../nuclemu/exchange.py) 的兼容成本带到日常开发。维护专用旧包能隔离运行时，但每次发布都多一套解释器、Tk、SQLite、打包工具和浏览器组合要复验。回环服务可离线运行，旧组件的上游维护状态仍需写进旧包说明。[Python 3.12 的 Windows 支持](https://docs.python.org/3.12/using/windows.html) · [PyInstaller 6.20 要求](https://pyinstaller.org/en/v6.20.0/requirements.html) · [Python 版本生命周期](https://devguide.python.org/versions/)
+
+主线保留当前 Python 基线，在 Windows 8.1 或更高版本的可用环境中验证同一安装包。有代表性 Win7 SP1 环境时，再用独立构建配置验证一条完整路径，不能绕过当前包的安装门槛来声明支持。先看启动器、服务和生产浏览器资源能否运行，再验证 α、β 的采集、保存及与现代包双向重开。若唯一差异在文件适配层，可评估用临时 SQLite 文件读写相同库结构。若需要长期维护定制解释器、分叉物理模型或改变存档语义，停止本轮适配，登记具体阻断和最近实测通过的组合。仅通过启动检查的组合标为“试装”，只有整条路径通过的 OS、位数及浏览器组合才列入实测兼容范围。
 
 浏览器是另一项独立验收。Win7 可用 Edge 109 作旧引擎样机，它是微软为该系统提供的最后一个 Edge 大版本。用实际生产资源验证 Vue 页面、谱图、逐窗表格、对话框和文件下载；特别核对 `ResizeObserver`、`Array.at` 和动态视口高度。Vite 的转换目标只覆盖部分语法兼容性。若默认浏览器无法运行工作台，提供可读的兼容说明和可复制地址；启动器仍可设置端口和关闭服务。现代平台再分别用 Edge、Safari、Firefox 或 Chromium 覆盖系统默认浏览器交接。[Edge 生命周期](https://learn.microsoft.com/en-us/lifecycle/products/microsoft-edge) · [Vite 7 构建目标](https://v7.vite.dev/config/build-options)
 

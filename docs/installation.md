@@ -14,7 +14,7 @@ To upgrade, save your experiment, close the launcher and terminal services, then
 
 The Windows x64 directory sample has been tested on Windows 11, including an offline Windows Sandbox. For this sample, extract the entire directory and open `Nuclemu-Desktop.exe`. Keep `nuclemu.exe` and `_internal` beside it. See the [Windows package notes](../packaging/windows/README.md).
 
-The same final installer passed Windows 11 Sandbox checks for both current-user installation under a standard account and all-user installation under an administrator account. Windows 10 and older Windows versions remain unverified; Windows 7 SP1 is a compatibility target, not a verified minimum.
+The Windows installer requires Windows 8.1, following the upstream support range of the bundled Python 3.12; this does not mean Nuclemu has been tested on 8.1. Existing installation checks cover Windows 11 Sandbox under standard and administrator accounts, and a Windows Server 2025 runner. Windows 8.1 and Windows 10 remain unverified. The current installer rejects Windows 7 and Windows 8; Windows 7 SP1 remains a target for a future, separate compatibility build.
 
 ## macOS
 

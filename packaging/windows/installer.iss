@@ -32,7 +32,9 @@ UsePreviousPrivileges=yes
 UsePreviousAppDir=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-MinVersion=6.1sp1
+; CPython 3.12 / managed Windows distribution requires Windows 8.1 (Inno 6.3).
+; This is an upstream runtime gate, not a claim of testing on Windows 8.1.
+MinVersion=6.3
 OutputDir={#ReleaseDir}
 OutputBaseFilename={#OutputName}
 SetupIconFile={#PayloadDir}\_internal\nuclemu\static\nuclemu.ico

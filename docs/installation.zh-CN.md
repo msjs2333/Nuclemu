@@ -14,7 +14,7 @@
 
 Windows x64 目录样包已在 Windows 11 验证，包括断网的 Windows Sandbox。使用目录样包时，完整解压，双击 `Nuclemu-Desktop.exe`，保留同级的 `nuclemu.exe` 和 `_internal`。详见[Windows 包说明](../packaging/windows/README.md)。
 
-同一最终安装包已在 Windows 11 沙箱通过普通账户的当前用户安装和管理员账户的全机安装检查。Windows 10 及更旧系统仍待验，Windows 7 SP1 是兼容目标，尚不能作为已验证的最低版本。
+Windows 安装器的系统门槛为 Windows 8.1，依据随包 Python 3.12 的上游支持范围；这不代表 Nuclemu 已在 8.1 实测通过。现有安装记录覆盖 Windows 11 沙箱的普通账户安装、管理员全机安装，以及 Windows Server 2025 运行器。Windows 8.1 和 Windows 10 仍待验；当前安装器不接受 Windows 7 或 Windows 8。Windows 7 SP1 仅保留为未来独立兼容方案的目标。
 
 ## macOS
 
