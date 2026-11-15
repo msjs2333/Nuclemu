@@ -8,7 +8,7 @@ import socket
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
-from threading import Thread
+from threading import Event, Thread, current_thread
 import unittest
 from unittest.mock import patch
 
@@ -103,6 +103,43 @@ class LauncherInstanceTests(unittest.TestCase):
         self.assertTrue(first.owner.take_activation())
         self.assertEqual(len(list((self.root / 'services').glob('*.instance'))), 1)
 
+    def test_fixed_port_startup_finishing_during_probe_is_resampled_and_activated_directly(self):
+        from nuclemu.launcher_instance import _port_occupied
+        with socket.socket() as available:
+            available.bind(('127.0.0.1', 0))
+            port = available.getsockname()[1]
+        first = self.plan(port=port)
+        probe_entered, proceed = Event(), Event()
+        outcome = Queue()
+        def repeated_launch():
+            try:
+                outcome.put(self.plan(port=port))
+            except BaseException as error:
+                outcome.put(error)
+        worker = Thread(target=repeated_launch)
+        def blocked_probe(selected):
+            if current_thread() is worker and not probe_entered.is_set():
+                probe_entered.set()
+                if not proceed.wait(5):
+                    raise TimeoutError('startup barrier was not released')
+            return _port_occupied(selected)
+        with patch('nuclemu.launcher_instance._port_occupied', side_effect=blocked_probe):
+            worker.start()
+            try:
+                self.assertTrue(probe_entered.wait(5))
+                service = self.start(first)
+            finally:
+                proceed.set()
+                worker.join(5)
+            self.assertFalse(worker.is_alive())
+        result = outcome.get(timeout=1)
+        if isinstance(result, BaseException):
+            raise result
+        self.assertEqual(result.kind, 'activated')
+        self.assertTrue(first.owner.take_activation())
+        self.assertEqual(service.status().phase, 'ready')
+        self.assertEqual(len(discover_services(self.root)), 1)
+
     def test_temporary_health_probe_failure_does_not_duplicate_live_matching_gui(self):
         first = self.plan()
         self.start(first)
@@ -110,6 +147,16 @@ class LauncherInstanceTests(unittest.TestCase):
             repeated = self.plan()
         self.assertEqual(repeated.kind, 'activated')
         self.assertTrue(first.owner.take_activation())
+
+    def test_continuously_changing_registry_requests_retry_without_creating_a_gui(self):
+        def changed_during_probe(port):
+            registration = ServiceRegistration(directory=self.root)
+            self.resources.append(registration)
+            return False
+        with patch('nuclemu.launcher_instance._port_occupied', side_effect=changed_during_probe):
+            with self.assertRaisesRegex(OSError, '状态正在变化.*稍后重试'):
+                self.plan()
+        self.assertEqual(len(list((self.root / 'services').glob('*.instance'))), 3)
 
     def test_headless_or_different_course_offer_explicit_choice_without_changing_old_service(self):
         registration = ServiceRegistration(directory=self.root, workbench_directory=self.store)

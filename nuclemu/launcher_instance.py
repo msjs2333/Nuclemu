@@ -360,33 +360,35 @@ def plan_start(paths=(), *, port=0, directory=None, registry_directory=None,
     owner = ServiceRegistration(paths, port=port, gui=True, directory=registry_directory,
                                 workbench_directory=directory, preferred=not new_instance, _defer=True)
     root, configuration = owner.root, owner.configuration
-    with _registry_lock(root):
-        records = _locked_records(root)
-    ready = [r for r in records if r.url is not None and service_is_ready(r)]
-    occupied = _port_occupied(port)
-    with _registry_lock(root):
-        # Recheck pending owners under the short registry lock so concurrent
-        # first launches cannot both establish the default desktop.
-        records = _locked_records(root)
-        # Activation only signals a live GUI's mailbox, never reuses its URL.
-        # It also coalesces a GUI that finished startup during HTTP discovery.
-        matching = next((r for r in records if r.gui and r.configuration == configuration
-                         and r.state != 'choice'), None)
-        # A surviving parallel GUI may use an automatic port while retaining
-        # this requested fixed port. Verify its current occupant before activation.
-        if occupied and not any(r in records and urlsplit(r.url).port == port for r in ready):
-            if matching is not None and matching.state == 'starting':
+    for _ in range(3):
+        with _registry_lock(root):
+            records = _locked_records(root)
+        ready = [r for r in records if r.url is not None and service_is_ready(r)]
+        occupied = _port_occupied(port)
+        with _registry_lock(root):
+            # Identity and port probes must describe the same registry snapshot
+            # used for the decision. Retry outside the lock after any change,
+            # including a listener becoming ready or a concurrent first owner.
+            if _locked_records(root) != records:
+                continue
+            matching = next((r for r in records if r.gui and r.configuration == configuration
+                             and r.state != 'choice'), None)
+            # Parallel survivors retain the requested fixed port even when
+            # their listener uses an automatic port. Verify its occupant first.
+            if occupied and not any(urlsplit(r.url).port == port for r in ready):
+                if matching is not None and matching.state == 'starting':
+                    raise OSError('已有工作台正在启动，请稍后重试。')
+                raise OSError(f'端口 {port} 已由其他程序占用，请在设置中更换端口。')
+            if matching is not None and not new_instance:
+                fd = _open_file(root / (matching.registration_id + '.instance'))
+                try:
+                    _signal(fd, True)
+                finally:
+                    os.close(fd)
+                return LaunchPlan('activated', None, [], port, root)
+            if any(r.gui and r.state == 'starting' for r in records):
                 raise OSError('已有工作台正在启动，请稍后重试。')
-            raise OSError(f'端口 {port} 已由其他程序占用，请在设置中更换端口。')
-        if matching is not None and not new_instance:
-            fd = _open_file(root / (matching.registration_id + '.instance'))
-            try:
-                _signal(fd, True)
-            finally:
-                os.close(fd)
-            return LaunchPlan('activated', None, [], port, root)
-        if any(r.gui and r.state == 'starting' for r in records):
-            raise OSError('已有工作台正在启动，请稍后重试。')
-        owner._starting = not bool(ready)
-        owner._create()
-    return LaunchPlan('choose' if ready else 'start', owner, ready, port, root)
+            owner._starting = not bool(ready)
+            owner._create()
+            return LaunchPlan('choose' if ready else 'start', owner, ready, port, root)
+    raise OSError('工作台状态正在变化，请稍后重试。')
