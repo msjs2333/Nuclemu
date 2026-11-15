@@ -54,7 +54,9 @@ class DesktopExitTkTests(unittest.TestCase):
             if predicate():
                 return
             time.sleep(.01)
-        self.fail('Tk/service condition did not complete')
+        import faulthandler
+        faulthandler.dump_traceback()
+        self.fail(f'Tk/service condition did not complete: {self.service.status()}')
 
     def post(self, route, **data):
         request = Request(self.window.url + 'api/' + route,
