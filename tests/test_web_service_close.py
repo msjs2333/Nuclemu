@@ -363,6 +363,22 @@ class ServiceCloseTests(unittest.TestCase):
         self.assertFalse(database.exists())
         self.assertEqual(len(load_package(self.target)['items']), 2)
 
+    def test_database_path_matches_sqlite_and_keeps_relative_folder_binding(self):
+        from contextlib import closing
+        import os
+        from nuclemu.web_store import ArchiveStore
+        original = Path.cwd()
+        try:
+            os.chdir(self.folder.name)
+            store = ArchiveStore('relative-workbench')
+        finally:
+            os.chdir(original)
+        expected = Path(self.folder.name) / 'relative-workbench' / 'workbench.sqlite3'
+        self.assertEqual(store.database_path, expected)
+        with closing(store._connect()) as db:
+            actual = next(Path(file) for _, name, file in db.execute('PRAGMA database_list') if name == 'main')
+            self.assertTrue(store.database_path.samefile(actual))
+
     def test_exit_save_rechecks_database_alias_after_slow_file_write(self):
         import os
         self.open_cached()

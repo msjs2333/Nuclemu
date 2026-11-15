@@ -8,6 +8,8 @@ on:
       - 'packaging/linux/**'
       - 'packaging/samples/**'
       - 'nuclemu/**'
+      - 'tests/test_web_service_close.py'
+      - 'tests/test_exchange_archive_resave.py'
       - 'pyproject.toml'
       - 'LICENSE'
 
@@ -22,6 +24,8 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      - name: Verify archive identities and exit saves on the Linux filesystem
+        run: python3 -m unittest -v tests.test_exchange_archive_resave tests.test_web_service_close
       - name: Prepare Debian 12 build and test images
         run: |
           docker build --target builder -t nuclemu-builder -f packaging/linux/Dockerfile packaging/linux
