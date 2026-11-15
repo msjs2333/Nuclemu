@@ -197,6 +197,9 @@ class LauncherInstanceTests(unittest.TestCase):
         original.stop(force=True)
         self.assertTrue(original.join(5))
         with socket.socket() as foreign:
+            if os.name != 'nt':
+                # Rebind the released listener while accepted connections are in TIME_WAIT.
+                foreign.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             foreign.bind(('127.0.0.1', port))
             foreign.listen()
             with self.assertRaisesRegex(OSError, str(port)):
