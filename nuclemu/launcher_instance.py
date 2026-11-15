@@ -18,6 +18,8 @@ def _try_lock(fd):
         if os.name == 'nt':
             import msvcrt
             os.lseek(fd, 0, os.SEEK_SET)
+            # Windows permits locking beyond EOF; do not initialize this byte
+            # with a write that could race another process already holding it.
             msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
         else:
             import fcntl
@@ -64,8 +66,6 @@ def _open_file(path):
             raise OSError('启动器实例文件不是普通文件。')
         if os.name != 'nt' and (info.st_uid != os.getuid() or info.st_mode & 0o077):
             raise OSError('启动器实例文件须仅当前用户可读写。')
-        if info.st_size == 0:
-            os.write(fd, b'\0')
         return fd
     except BaseException:
         os.close(fd)

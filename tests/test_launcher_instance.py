@@ -64,6 +64,57 @@ class LauncherInstanceTests(unittest.TestCase):
         service.wait_ready(5)
         return service
 
+    def worker_line(self, process):
+        output = Queue()
+        Thread(target=lambda: output.put(process.stdout.readline()), daemon=True).start()
+        line = output.get(timeout=10)
+        if not line:
+            _, errors = process.communicate(timeout=5)
+            self.fail(f'Worker exited with {process.returncode} before replying:\n{errors}')
+        return line
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows byte-range lock initialization race')
+    def test_empty_file_observed_before_other_process_locks_byte_zero(self):
+        from nuclemu.launcher_instance import _try_lock, _unlock, _signal
+        script = '''
+import json,os,sys
+from unittest.mock import patch
+from nuclemu import launcher_instance as instance
+original = os.fstat
+def paused_stat(fd):
+    info = original(fd)
+    print(json.dumps(info.st_size),flush=True)
+    input()
+    return info
+with patch.object(instance.os,'fstat',side_effect=paused_stat):
+    fd = instance._open_file(sys.argv[1])
+try:
+    acquired = instance._try_lock(fd)
+    if acquired: instance._unlock(fd)
+    instance._signal(fd,True)
+    print(json.dumps(acquired),flush=True)
+finally:
+    os.close(fd)
+'''
+        path = self.root / '.registry'
+        process = subprocess.Popen([sys.executable, '-u', '-c', script, str(path)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.resources.append(process)
+        self.assertEqual(json.loads(self.worker_line(process)), 0)
+        owner = os.open(path, os.O_RDWR)
+        try:
+            self.assertTrue(_try_lock(owner))
+            self.assertEqual(os.fstat(owner).st_size, 0)
+            process.stdin.write('continue\n')
+            process.stdin.flush()
+            self.assertFalse(json.loads(self.worker_line(process)))
+            self.assertTrue(_signal(owner))
+            process.wait(5)
+            self.assertEqual(process.returncode, 0)
+        finally:
+            _unlock(owner)
+            os.close(owner)
+
     def test_same_canonical_starting_configuration_coalesces(self):
         original = self.plan([self.root / 'course', self.root / './course'])
         self.assertEqual(original.kind, 'start')
@@ -363,10 +414,7 @@ class LauncherInstanceTests(unittest.TestCase):
             process.stdin.flush()
         results = []
         for process in processes:
-            queue = Queue()
-            Thread(target=lambda p=process,q=queue: q.put(p.stdout.readline()), daemon=True).start()
-            line = queue.get(timeout=10)
-            self.assertTrue(line)
+            line = self.worker_line(process)
             results.append(json.loads(line))
         self.assertEqual(results.count('start'), 1)
         self.assertEqual(results.count('activated'), 5)
