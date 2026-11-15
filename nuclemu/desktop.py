@@ -114,6 +114,8 @@ class _Launcher:
         root.bind('<Configure>', self._configured, add='+')
         root.bind('<Destroy>', self._destroyed, add='+')
         root.protocol('WM_DELETE_WINDOW', self.request_close)
+        if root.tk.call('tk', 'windowingsystem') == 'aqua':
+            root.createcommand('::tk::mac::Quit', self.request_close)
         self._later(0, self.start)
         self._later(50, self.poll)
         self._later(250, self._check_dpi)

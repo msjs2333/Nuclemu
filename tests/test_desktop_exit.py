@@ -74,6 +74,36 @@ class DesktopExitTkTests(unittest.TestCase):
         self.until(lambda: self.window.close_window is not None)
         return self.window.close_window
 
+    def test_aqua_quit_callback_cancel_save_and_chooser_reentry(self):
+        if self.root.tk.call('tk', 'windowingsystem') != 'aqua':
+            self.skipTest('Requires native Aqua Tk')
+        command = '::tk::mac::Quit'
+        self.assertTrue(self.root.tk.call('info', 'commands', command))
+        self.root.tk.call(command)
+        self.until(lambda: self.window.close_window is not None)
+        dialog, context = self.window.close_window, self.window.close_context
+        self.root.tk.call(command)
+        self.assertIs(self.window.close_window, dialog)
+        self.assertIs(self.window.close_context, context)
+        dialog.cancel_button.invoke()
+        self.until(lambda: not self.window.checking_close)
+        self.assertFalse(self.state()['frozen'])
+        self.now = 6
+        self.assertEqual(self.state()['instruments']['counter_b']['exposure_s'], 6)
+        self.root.tk.call(command)
+        self.until(lambda: self.window.close_window is not None)
+        dialog, context = self.window.close_window, self.window.close_context
+        def chooser(**kwargs):
+            self.root.tk.call(command)
+            self.assertTrue(self.window._choosing_path)
+            self.assertIs(self.window.close_window, dialog)
+            self.assertIs(self.window.close_context, context)
+            return str(self.target)
+        with patch('tkinter.filedialog.asksaveasfilename', side_effect=chooser):
+            dialog.save_button.invoke()
+        self.until(lambda: self.window.closed)
+        self.assertEqual(len(load_package(self.target)['items']), 2)
+
     def test_cancel_defaults_repeat_activation_and_other_actions_are_gated(self):
         self.window.show_settings()
         settings = self.window.settings_window

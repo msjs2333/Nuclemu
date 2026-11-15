@@ -32,6 +32,12 @@ jobs:
           persist-credentials: false
       - name: Build disk image
         run: bash packaging/macos/build.sh "${{ matrix.arch }}"
+      - name: Exercise Aqua quit callback
+        env:
+          NUCLEMU_TEST_TK: '1'
+        run: |
+          /Library/Frameworks/Python.framework/Versions/3.14/bin/python3.14 \
+            -m unittest discover -s tests -p test_desktop_exit.py -k aqua -v
       - name: Exercise the installed application
         run: |
           /Library/Frameworks/Python.framework/Versions/3.14/bin/python3.14 \
