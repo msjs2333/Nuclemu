@@ -1069,7 +1069,9 @@ def _resave_archive(old, original):
     doc['legacy']['document'] = deepcopy(old)
     doc['device'] = old['device']
     native = [item for item in doc['items'] if item['kind'] == 'measurement'
-              and item.get('source', {}).get('archive') == archive_id]
+              and item.get('source', {}).get('archive') == archive_id
+              and item['source']['package'] == doc['id']
+              and item['source']['item'] == item['id']]
     for device, selection in old.get('analysis', {}).items():
         before = previous.get('analysis', {}).get(device, {})
         target = doc['analysis'].setdefault(device, {})
