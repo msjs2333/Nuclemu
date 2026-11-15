@@ -186,21 +186,28 @@ def _locked_records(root):
     return sorted(records, key=lambda r: (not r.preferred, r.created_ns, r.registration_id))
 
 
-def service_is_ready(record):
-    """Verify only the exact loopback URL of a live registration, never scan."""
+def _probe_service(record):
+    """Return unverified, not-ready or ready from one exact-URL identity request."""
     if record.url is None:
-        return False
+        return 'unverified'
     connection = HTTPConnection('127.0.0.1', urlsplit(record.url).port, timeout=.5)
     try:
         connection.request('GET', '/api/identity')
         response = connection.getresponse()
         identity = json.loads(response.read(4096))
-        return (response.status == 200 and identity.get('product') == 'Nuclemu'
-                and identity.get('instance_id') == record.instance_id and identity.get('ready') is True)
+        if (response.status == 200 and identity.get('product') == 'Nuclemu'
+                and identity.get('instance_id') == record.instance_id
+                and type(identity.get('ready')) is bool):
+            return 'ready' if identity['ready'] else 'not-ready'
+        return 'unverified'
     except (OSError, HTTPException, ValueError, AttributeError):
-        return False
+        return 'unverified'
     finally:
         connection.close()
+
+
+def service_is_ready(record):
+    return _probe_service(record) == 'ready'
 
 
 def discover_services(directory=None):
@@ -342,7 +349,7 @@ class LaunchPlan:
             if any(service_is_ready(r) and urlsplit(r.url).port == self.port for r in self.existing if r.url):
                 selected = 0
             else:
-                raise OSError(f'端口 {self.port} 已由其他程序占用，请在设置中更换端口。')
+                raise OSError(f'端口 {self.port} 已被占用，无法确认可复用的工作台。请更换端口或稍后重试。')
         if self.owner is None:
             raise ValueError('此启动计划已唤回已有工作台。')
         with _registry_lock(self.root):
@@ -363,7 +370,8 @@ def plan_start(paths=(), *, port=0, directory=None, registry_directory=None,
     for _ in range(3):
         with _registry_lock(root):
             records = _locked_records(root)
-        ready = [r for r in records if r.url is not None and service_is_ready(r)]
+        probes = [(r, _probe_service(r)) for r in records if r.url is not None]
+        ready = [r for r, state in probes if state == 'ready']
         occupied = _port_occupied(port)
         with _registry_lock(root):
             # Identity and port probes must describe the same registry snapshot
@@ -375,10 +383,13 @@ def plan_start(paths=(), *, port=0, directory=None, registry_directory=None,
                              and r.state != 'choice'), None)
             # Parallel survivors retain the requested fixed port even when
             # their listener uses an automatic port. Verify its occupant first.
+            if occupied and any(state == 'not-ready' and urlsplit(r.url).port == port
+                                for r, state in probes):
+                raise OSError('工作台尚未就绪，请稍后重试。')
             if occupied and not any(urlsplit(r.url).port == port for r in ready):
                 if matching is not None and matching.state == 'starting':
                     raise OSError('已有工作台正在启动，请稍后重试。')
-                raise OSError(f'端口 {port} 已由其他程序占用，请在设置中更换端口。')
+                raise OSError(f'端口 {port} 已被占用，无法确认可复用的工作台。请更换端口或稍后重试。')
             if matching is not None and not new_instance:
                 fd = _open_file(root / (matching.registration_id + '.instance'))
                 try:

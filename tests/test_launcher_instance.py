@@ -140,10 +140,42 @@ class LauncherInstanceTests(unittest.TestCase):
         self.assertEqual(service.status().phase, 'ready')
         self.assertEqual(len(discover_services(self.root)), 1)
 
+    def test_published_identity_not_ready_on_real_fixed_port_requests_retry(self):
+        from nuclemu.launcher_instance import _probe_service
+        with socket.socket() as available:
+            available.bind(('127.0.0.1', 0))
+            port = available.getsockname()[1]
+        first = self.plan(port=port)
+        published, proceed = Event(), Event()
+        publish = first.owner.publish
+        def blocked_publish(url, identity):
+            publish(url, identity)
+            published.set()
+            if not proceed.wait(5):
+                raise TimeoutError('readiness barrier was not released')
+        service = WorkbenchService(directory=self.store, port=port, registration=first.owner)
+        self.resources.append(service)
+        with patch.object(first.owner, 'publish', side_effect=blocked_publish):
+            service.start()
+            try:
+                self.assertTrue(published.wait(5))
+                self.assertEqual(discover_services(self.root), [])
+                with patch('nuclemu.launcher_instance._probe_service', wraps=_probe_service) as probe:
+                    with self.assertRaisesRegex(OSError, '尚未就绪.*稍后重试'):
+                        self.plan(port=port)
+                    self.assertEqual(probe.call_count, 1)
+                self.assertFalse(first.owner.take_activation())
+                self.assertEqual(len(list((self.root / 'services').glob('*.instance'))), 1)
+            finally:
+                proceed.set()
+            service.wait_ready(5)
+        self.assertEqual(self.plan(port=port).kind, 'activated')
+        self.assertTrue(first.owner.take_activation())
+
     def test_temporary_health_probe_failure_does_not_duplicate_live_matching_gui(self):
         first = self.plan()
         self.start(first)
-        with patch('nuclemu.launcher_instance.service_is_ready', return_value=False):
+        with patch('nuclemu.launcher_instance._probe_service', return_value='unverified'):
             repeated = self.plan()
         self.assertEqual(repeated.kind, 'activated')
         self.assertTrue(first.owner.take_activation())
@@ -263,7 +295,7 @@ class LauncherInstanceTests(unittest.TestCase):
             port = available.getsockname()[1]
         first = self.plan(port=port)
         self.start(first)
-        with patch('nuclemu.launcher_instance.service_is_ready', return_value=False):
+        with patch('nuclemu.launcher_instance._probe_service', return_value='unverified'):
             with self.assertRaisesRegex(OSError, str(port)):
                 self.plan(port=port)
         self.assertFalse(first.owner.take_activation())
