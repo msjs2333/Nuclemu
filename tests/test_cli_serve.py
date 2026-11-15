@@ -33,6 +33,16 @@ class ServeCliTests(unittest.TestCase):
             self.assertEqual(main(['serve', '--gui', '--path', 'course']), 0)
         desktop.launch.assert_called_once_with(paths=['course'])
 
+    def test_explicit_new_instance_is_forwarded_only_to_desktop(self):
+        desktop = types.ModuleType('nuclemu.desktop')
+        desktop.launch = Mock()
+        with patch.dict(sys.modules, {'nuclemu.desktop': desktop}):
+            self.assertEqual(main(['serve', '--gui', '--new-instance', '--path', 'course']), 0)
+        desktop.launch.assert_called_once_with(paths=['course'], new_instance=True)
+        with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as error:
+            main(['serve', '--no-gui', '--new-instance'])
+        self.assertEqual(error.exception.code, 2)
+
     def test_service_interrupt_is_a_clean_exit_and_startup_error_is_nonzero(self):
         for gui in (False, True):
             module = types.ModuleType('nuclemu.desktop' if gui else 'nuclemu.web')

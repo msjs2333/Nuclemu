@@ -60,6 +60,8 @@ def parser():
             mode.add_argument("--gui", action="store_true", help="open the desktop service launcher")
             mode.add_argument("--no-gui", action="store_false", dest="gui",
                               help="serve in this terminal without opening a browser; Ctrl+C stops without saving")
+            command.add_argument("--new-instance", action="store_true",
+                                 help="offer a separate desktop workbench even when a matching one exists")
         if name in ("list", "validate"):
             command.add_argument("experiment", nargs="?")
         if name == "run":
@@ -352,6 +354,8 @@ def main(argv=None):
             stream.reconfigure(encoding="utf-8")
     command_parser = parser()
     args = command_parser.parse_args(argv)
+    if args.command == 'serve' and args.new_instance and not args.gui:
+        command_parser.error('--new-instance requires --gui')
     paths = args.root_paths + getattr(args, "paths", [])
     try:
         if args.command == "files":
@@ -365,7 +369,7 @@ def main(argv=None):
             try:
                 if args.gui:
                     from .desktop import launch
-                    launch(paths=paths)
+                    launch(paths=paths, **({'new_instance': True} if args.new_instance else {}))
                 else:
                     from .web import launch
                     launch(paths=paths, open_browser=False)

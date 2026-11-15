@@ -5,6 +5,7 @@ from http.client import HTTPConnection
 import json
 from threading import Condition, Event, Thread
 from time import monotonic
+from uuid import uuid4
 
 
 @dataclass(frozen=True)
@@ -12,6 +13,7 @@ class ServiceStatus:
     phase: str
     url: str | None = None
     error: Exception | None = None
+    instance_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -34,7 +36,7 @@ class CloseSaveResult:
 
 
 class WorkbenchService:
-    def __init__(self, paths=(), *, port=0, directory=None, clock=monotonic):
+    def __init__(self, paths=(), *, port=0, directory=None, clock=monotonic, registration=None):
         self.paths = tuple(paths)
         self.port, self.directory, self.clock = port, directory, clock
         self._condition = Condition()
@@ -44,10 +46,16 @@ class WorkbenchService:
         self._error = None
         self._server = None
         self._worker = None
+        self._instance_id = uuid4().hex
+        self._registration = registration
+
+    @property
+    def instance_id(self):
+        return self._instance_id
 
     def status(self):
         with self._condition:
-            return ServiceStatus(self._phase, self._url, self._error)
+            return ServiceStatus(self._phase, self._url, self._error, self.instance_id)
 
     def start(self):
         with self._condition:
@@ -61,6 +69,8 @@ class WorkbenchService:
                 self._error, self._phase = error, 'failed'
                 self._worker = None
                 self._condition.notify_all()
+        if self._worker is None:
+            self._close_registration()
         return self
 
     def wait_ready(self, timeout=None):
@@ -84,7 +94,15 @@ class WorkbenchService:
             if self._phase not in ('new', 'starting'):
                 return False
             self._request_stop()
-            return True
+        if self._worker is None:
+            self._close_registration()
+        return True
+
+    def _close_registration(self):
+        with self._condition:
+            registration, self._registration = self._registration, None
+        if registration is not None:
+            registration.close()
 
     def _request_stop(self):
         self._cancel.set()
@@ -116,8 +134,13 @@ class WorkbenchService:
                 return None
             if self._phase != 'ready' or self._server is None:
                 self._request_stop()
-                return None
-            server = self._server
+                server = None
+            else:
+                server = self._server
+        if server is None:
+            if self._worker is None:
+                self._close_registration()
+            return None
         with server.app_lock:
             self._check_close_service(server)
             if server.app.lab is None:
@@ -219,7 +242,7 @@ class WorkbenchService:
             else:
                 content = lab.portable_download()[2]
             cleanup_draft = not lab.readonly and not lab.work.session.experiment.outputs
-        fd, temporary = mkstemp(prefix='.' + target.name + '.', suffix='.tmp', dir=target.parent)
+        fd, temporary = mkstemp(prefix='.nuclemu-', suffix='.tmp', dir=target.parent)
         try:
             with os.fdopen(fd, 'wb') as output:
                 output.write(content)
@@ -257,7 +280,13 @@ class WorkbenchService:
             server = self._server
             if self._phase in ('new', 'starting') or server is None:
                 self._request_stop()
-                return True
+                starting = True
+            else:
+                starting = False
+        if starting:
+            if self._worker is None:
+                self._close_registration()
+            return True
         # Do not hold the status lock while an application request finishes:
         # the window must remain able to poll status while a closer waits.
         with server.app_lock:
@@ -287,11 +316,18 @@ class WorkbenchService:
             document = json.loads(response.read())
             if response.status != 200 or not isinstance(document.get('experiments'), list):
                 raise OSError('The workbench catalog did not become ready')
+            if response.getheader('X-Nuclemu-Instance-ID') != self.instance_id:
+                raise OSError('The workbench response belongs to a different service instance')
             with server.app_lock:
+                if self._cancel.is_set():
+                    return
+                url = f'http://127.0.0.1:{server.server_port}/'
+                if self._registration is not None:
+                    self._registration.publish(url, self.instance_id)
                 with self._condition:
                     if not self._cancel.is_set():
                         server.accepting_requests = True
-                        self._url = f'http://127.0.0.1:{server.server_port}/'
+                        self._url = url
                         self._phase = 'ready'
                         self._condition.notify_all()
         except Exception as error:
@@ -306,7 +342,8 @@ class WorkbenchService:
         server, probe, probe_started = None, None, False
         try:
             from .web import make_server
-            server = make_server(self.paths, port=self.port, directory=self.directory, clock=self.clock)
+            server = make_server(self.paths, port=self.port, directory=self.directory, clock=self.clock,
+                                 instance_id=self.instance_id)
             server.timeout = .05
             server.accepting_requests = False
             with self._condition:
@@ -333,6 +370,11 @@ class WorkbenchService:
                         self._error = self._error or error
             if probe_started:
                 probe.join()
+            try:
+                self._close_registration()
+            except Exception as error:
+                with self._condition:
+                    self._error = self._error or error
             with self._condition:
                 self._server = None
                 self._phase = 'failed' if self._error is not None else 'stopped'

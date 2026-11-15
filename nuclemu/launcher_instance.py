@@ -1,16 +1,16 @@
-"""Per-user desktop ownership and coalesced activation, without a listener.
-
-The caller holds the returned owner until its window and service have closed.
-Only desktop entry points participate; HTTP ports and process IDs play no role.
-Persistent lock files must not be unlinked: another process may hold their inode.
-"""
+"""Private, process-owned service registrations and explicit desktop start plans."""
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 import errno
+from http.client import HTTPConnection, HTTPException
+import json
 import os
 from pathlib import Path
 import stat
-from time import monotonic, sleep
+from time import monotonic, sleep, time_ns
+from urllib.parse import urlsplit
+from uuid import uuid4
 
 
 def _try_lock(fd):
@@ -80,72 +80,309 @@ def _signal(fd, value=None):
     os.write(fd, b'1' if value else b'0')
 
 
-class LauncherInstance:
-    """Owned OS lock. Consume activation from the Tk event loop, then close."""
+def _registry_root(directory):
+    root = (Path.home() / '.nuclemu' if directory is None else Path(directory)) / 'services'
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = root.lstat()
+    if not stat.S_ISDIR(info.st_mode) or (os.name != 'nt' and (info.st_uid != os.getuid() or info.st_mode & 0o077)):
+        raise OSError('服务登记目录须仅当前用户可访问。')
+    return root
 
-    def __init__(self, owner_fd, mailbox_fd):
-        self._owner_fd = owner_fd
-        self._mailbox_fd = mailbox_fd
+
+@contextmanager
+def _registry_lock(root, *, wait=True):
+    fd = _open_file(root / '.registry')
+    try:
+        with _mailbox_lock(fd, wait=wait) as acquired:
+            yield acquired
+    finally:
+        os.close(fd)
+
+
+@dataclass(frozen=True)
+class ServiceConfiguration:
+    paths: tuple[str, ...]
+    port: int
+    workbench_directory: str
+
+
+def _configuration(paths, port, workbench_directory):
+    if type(port) is not int or not 0 <= port <= 65535:
+        raise ValueError('端口须为 0 或 1–65535 的整数。')
+    canonical = lambda path: os.path.normcase(str(Path(path).resolve()))
+    store = workbench_directory if workbench_directory is not None else Path.home() / '.nuclemu/workbench'
+    return ServiceConfiguration(tuple(sorted(set(map(canonical, paths)))), port, canonical(store))
+
+
+@dataclass(frozen=True)
+class RegisteredService:
+    registration_id: str
+    configuration: ServiceConfiguration
+    gui: bool
+    url: str | None
+    instance_id: str | None
+    preferred: bool
+    created_ns: int
+    state: str
+
+    @property
+    def paths(self):
+        return self.configuration.paths
+
+    @property
+    def port(self):
+        return self.configuration.port
+
+
+def _read_record(fd, identity):
+    os.lseek(fd, 2, os.SEEK_SET)
+    try:
+        value = json.loads(os.read(fd, 65537))
+        configuration = value['configuration']
+        if (value['registration_id'] != identity or value['state'] not in ('choice', 'starting', 'ready')
+                or type(value['gui']) is not bool
+                or type(value['preferred']) is not bool or type(value['created_ns']) is not int
+                or not isinstance(configuration['paths'], list)
+                or any(not isinstance(p, str) for p in configuration['paths'])
+                or type(configuration['port']) is not int or not 0 <= configuration['port'] <= 65535
+                or not isinstance(configuration['workbench_directory'], str)):
+            return None
+        checked = ServiceConfiguration(tuple(configuration['paths']), configuration['port'], configuration['workbench_directory'])
+        url, instance = value['url'], value['instance_id']
+        if url is not None:
+            parsed = urlsplit(url)
+            if (parsed.scheme != 'http' or parsed.hostname != '127.0.0.1' or not parsed.port
+                    or parsed.username or parsed.password or parsed.path != '/' or parsed.query or parsed.fragment
+                    or not isinstance(instance, str) or not instance):
+                return None
+        elif instance is not None:
+            return None
+        return RegisteredService(identity, checked, value['gui'], url, instance, value['preferred'], value['created_ns'], value['state'])
+    except (ValueError, TypeError, KeyError, UnicodeError, AttributeError):
+        return None
+
+
+def _locked_records(root):
+    records = []
+    for path in sorted(root.glob('*.instance')):
+        if len(path.stem) != 32 or any(c not in '0123456789abcdef' for c in path.stem):
+            continue
+        fd = _open_file(path)
+        stale = False
+        try:
+            if _try_lock(fd):
+                _unlock(fd)
+                stale = True
+            else:
+                record = _read_record(fd, path.stem)
+                if record is not None:
+                    records.append(record)
+        finally:
+            os.close(fd)
+        if stale:
+            # Callers hold the registry lock, including while a new owner is
+            # created. Close first because Windows cannot unlink an open file.
+            path.unlink(missing_ok=True)
+    return sorted(records, key=lambda r: (not r.preferred, r.created_ns, r.registration_id))
+
+
+def service_is_ready(record):
+    """Verify only the exact loopback URL of a live registration, never scan."""
+    if record.url is None:
+        return False
+    connection = HTTPConnection('127.0.0.1', urlsplit(record.url).port, timeout=.5)
+    try:
+        connection.request('GET', '/api/identity')
+        response = connection.getresponse()
+        identity = json.loads(response.read(4096))
+        return (response.status == 200 and identity.get('product') == 'Nuclemu'
+                and identity.get('instance_id') == record.instance_id and identity.get('ready') is True)
+    except (OSError, HTTPException, ValueError, AttributeError):
+        return False
+    finally:
+        connection.close()
+
+
+def discover_services(directory=None):
+    root = _registry_root(directory)
+    with _registry_lock(root):
+        records = _locked_records(root)
+    return [record for record in records if record.url is not None and service_is_ready(record)]
+
+
+class ServiceRegistration:
+    """One process owns one locked record and an optional GUI activation bit."""
+
+    def __init__(self, paths=(), *, port=0, gui=False, directory=None,
+                 workbench_directory=None, _defer=False, preferred=True):
+        self.root = _registry_root(directory)
+        self.configuration = _configuration(paths, port, workbench_directory)
+        self.registration_id = uuid4().hex
+        self.gui = bool(gui)
+        self.preferred, self.created_ns = preferred, time_ns()
+        self._starting = True
+        self.path = self.root / (self.registration_id + '.instance')
+        self._fd = None
+        if not _defer:
+            with _registry_lock(self.root):
+                self._create()
+
+    def _create(self):
+        fd = _open_file(self.path)
+        try:
+            if not _try_lock(fd):
+                raise OSError('服务登记已被其他进程占用。')
+            self._fd = fd
+            _signal(fd, False)
+            self._publish(None, None)
+        except BaseException:
+            os.close(fd)
+            self._fd = None
+            raise
+
+    def _publish(self, url, instance_id):
+        from dataclasses import asdict
+        value = dict(registration_id=self.registration_id, configuration=asdict(self.configuration),
+                     gui=self.gui, url=url, instance_id=instance_id,
+                     preferred=self.preferred, created_ns=self.created_ns,
+                     state='ready' if url else 'starting' if self._starting else 'choice')
+        os.lseek(self._fd, 2, os.SEEK_SET)
+        data = json.dumps(value, ensure_ascii=False).encode('utf-8')
+        if len(data) > 65536:
+            raise ValueError('服务登记配置过长。')
+        if os.write(self._fd, data) != len(data):
+            raise OSError('无法完整写入服务登记。')
+        os.ftruncate(self._fd, len(data) + 2)
+
+    def publish(self, url, instance_id):
+        with _registry_lock(self.root):
+            if self._fd is None:
+                raise OSError('服务登记已关闭。')
+            self._publish(url, instance_id)
 
     def take_activation(self):
-        """Return and clear a pending activation; never wait for another caller."""
-        if self._owner_fd is None:
+        if self._fd is None:
             return False
-        with _mailbox_lock(self._mailbox_fd, wait=False) as acquired:
-            if not acquired:
+        with _registry_lock(self.root, wait=False) as acquired:
+            if not acquired or self._fd is None:
                 return False
-            pending = _signal(self._mailbox_fd)
+            pending = _signal(self._fd)
             if pending:
-                _signal(self._mailbox_fd, False)
+                _signal(self._fd, False)
             return pending
 
     def close(self):
-        """Release ownership. OS process termination releases it as well."""
-        if self._owner_fd is None:
+        if self._fd is None:
             return
         try:
-            with _mailbox_lock(self._mailbox_fd, wait=True):
-                _signal(self._mailbox_fd, False)
-                _unlock(self._owner_fd)
+            with _registry_lock(self.root):
+                if self._fd is None:
+                    return
+                _unlock(self._fd)
+                os.close(self._fd)
+                self._fd = None
+                self.path.unlink(missing_ok=True)
         finally:
-            os.close(self._owner_fd)
-            os.close(self._mailbox_fd)
-            self._owner_fd = self._mailbox_fd = None
+            if self._fd is not None:
+                os.close(self._fd)
+                self._fd = None
 
 
-def acquire_or_activate(directory=None):
-    """Own the user's desktop, or signal its owner and return None.
+def _port_occupied(port):
+    if not port:
+        return False
+    import socket
+    with socket.socket() as listener:
+        if os.name == 'nt':
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            listener.bind(('127.0.0.1', port))
+            return False
+        except OSError as error:
+            if error.errno not in (errno.EADDRINUSE, errno.EACCES):
+                raise
+            return True
 
-    directory is the per-user settings root, default ~/.nuclemu. Tests may
-    supply a separate root. Errors propagate as OSError; never launch a second
-    desktop merely because its ownership files cannot be accessed.
-    """
-    root = (Path(directory) if directory is not None else Path.home() / '.nuclemu') / 'launcher-instance'
-    root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    info = root.lstat()
-    if not stat.S_ISDIR(info.st_mode):
-        raise OSError('启动器实例目录不是普通目录。')
-    if os.name != 'nt' and (info.st_uid != os.getuid() or info.st_mode & 0o077):
-        raise OSError('启动器实例目录须仅当前用户可访问。')
-    owner_fd = mailbox_fd = None
-    owned = False
-    transferred = False
-    try:
-        mailbox_fd = _open_file(root / 'activation')
-        # This short lock serializes acquire, signal and close. Retest ownership
-        # inside it so a closing owner cannot swallow a new launch request.
-        with _mailbox_lock(mailbox_fd, wait=True):
-            owner_fd = _open_file(root / 'owner')
-            owned = _try_lock(owner_fd)
-            _signal(mailbox_fd, not owned)
-        if owned:
-            instance = LauncherInstance(owner_fd, mailbox_fd)
-            transferred = True
-            return instance
-        return None
-    finally:
-        if not transferred:
-            if owner_fd is not None:
-                os.close(owner_fd)
-            if mailbox_fd is not None:
-                os.close(mailbox_fd)
+
+def _activate(root, record):
+    with _registry_lock(root):
+        fd = _open_file(root / (record.registration_id + '.instance'))
+        try:
+            if _try_lock(fd):
+                _unlock(fd)
+                raise ValueError('已有工作台已退出，请重新启动。')
+            current = _read_record(fd, record.registration_id)
+            if current != record:
+                raise ValueError('已有工作台状态已改变，请重新查看。')
+            if record.gui:
+                _signal(fd, True)
+        finally:
+            os.close(fd)
+
+
+@dataclass
+class LaunchPlan:
+    kind: str
+    owner: ServiceRegistration | None
+    existing: list[RegisteredService]
+    port: int
+    root: Path
+
+    def use_existing(self, record):
+        if record not in self.existing or not service_is_ready(record):
+            raise ValueError('已有工作台已退出或尚未就绪，请重新查看。')
+        _activate(self.root, record)
+        return record.url
+
+    def start_new(self):
+        selected = self.port
+        if self.port and _port_occupied(self.port):
+            if any(service_is_ready(r) and urlsplit(r.url).port == self.port for r in self.existing if r.url):
+                selected = 0
+            else:
+                raise OSError(f'端口 {self.port} 已由其他程序占用，请在设置中更换端口。')
+        if self.owner is None:
+            raise ValueError('此启动计划已唤回已有工作台。')
+        with _registry_lock(self.root):
+            self.owner._starting = True
+            self.owner._publish(None, None)
+        return selected
+
+    def close(self):
+        if self.owner is not None:
+            self.owner.close()
+
+def plan_start(paths=(), *, port=0, directory=None, registry_directory=None,
+               new_instance=False, open_browser=False):
+    """Plan on a worker after the first GUI frame; never open or stop a service."""
+    owner = ServiceRegistration(paths, port=port, gui=True, directory=registry_directory,
+                                workbench_directory=directory, preferred=not new_instance, _defer=True)
+    root, configuration = owner.root, owner.configuration
+    with _registry_lock(root):
+        records = _locked_records(root)
+    ready = [r for r in records if r.url is not None and service_is_ready(r)]
+    occupied = _port_occupied(port)
+    with _registry_lock(root):
+        # Recheck pending owners under the short registry lock so concurrent
+        # first launches cannot both establish the default desktop.
+        records = _locked_records(root)
+        # Activation only signals a live GUI's mailbox, never reuses its URL.
+        # It also coalesces a GUI that finished startup during HTTP discovery.
+        matching = next((r for r in records if r.gui and r.configuration == configuration
+                         and r.state != 'choice'), None)
+        if matching is not None and not new_instance:
+            fd = _open_file(root / (matching.registration_id + '.instance'))
+            try:
+                _signal(fd, True)
+            finally:
+                os.close(fd)
+            return LaunchPlan('activated', None, [], port, root)
+        if any(r.gui and r.state == 'starting' for r in records):
+            raise OSError('已有工作台正在启动，请稍后重试。')
+        if occupied and not any(urlsplit(r.url).port == port for r in ready):
+            raise OSError(f'端口 {port} 已由其他程序占用，请在设置中更换端口。')
+        owner._starting = not bool(ready)
+        owner._create()
+    return LaunchPlan('choose' if ready else 'start', owner, ready, port, root)

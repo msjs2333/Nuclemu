@@ -7,6 +7,7 @@ on:
       - '.github/workflows/macos-installers.yml'
       - 'packaging/macos/**'
       - 'nuclemu/**'
+      - 'tests/test_desktop_exit.py'
       - 'pyproject.toml'
       - 'LICENSE'
 

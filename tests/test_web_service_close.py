@@ -133,6 +133,23 @@ class ServiceCloseTests(unittest.TestCase):
             self.assertEqual(item['document']['snapshot']['exposure_s'], 3)
         self.assertFalse(list(self.target.parent.glob('.*.tmp')))
 
+    def test_save_overwrites_248_character_filename_and_reopens_without_temp_residue(self):
+        from nuclemu.web_portable import open_portable
+        self.open_cached()
+        context = self.service.begin_close()
+        target = self.target.with_name('n' * 240 + '.nuclemu')
+        self.assertEqual(len(target.name), 248)
+        target.write_bytes(b'previous valid filesystem name')
+        before = set(target.parent.iterdir())
+        self.service.save_close(context, target)
+        self.assertTrue(self.service.join(3))
+        self.assertEqual(set(target.parent.iterdir()), before)
+        document = load_package(target)
+        self.assertEqual(len(document['items']), 2)
+        self.assertTrue(all(item['document']['snapshot']['exposure_s'] == 3 for item in document['items']))
+        reopened = open_portable(target.read_bytes(), {'boxes': course()}, self.app.store, lambda: self.now)
+        self.assertEqual(reopened.exchange.document['items'], document['items'])
+
     def test_write_failure_keeps_original_cache_round_and_allows_retry(self):
         self.open_cached()
         context = self.service.begin_close()

@@ -1,7 +1,7 @@
 """Small desktop owner for the local workbench service."""
 
 from queue import Empty, SimpleQueue
-from threading import Thread
+from threading import Event, Thread
 from pathlib import Path
 import sys
 import webbrowser
@@ -15,7 +15,7 @@ ACCENT, HOVER, PLANE, FOCUS = '#2956a1', '#204984', '#f7f9fa', '#376cc2'
 
 class _Launcher:
     def __init__(self, root, service, *, settings=None, settings_path=None,
-                 settings_error=None, service_factory=None, instance=None):
+                 settings_error=None, service_factory=None, instance=None, startup=None):
         import tkinter as tk
         from tkinter import font
         from .launcher_settings import LauncherSettings
@@ -24,6 +24,11 @@ class _Launcher:
         self.settings = settings if settings is not None else LauncherSettings()
         self.settings_path, self.settings_error = settings_path, settings_error
         self.service_factory, self.instance = service_factory, instance
+        self.startup = startup
+        self.start_plan = self.startup_window = None
+        self._planning = self._startup_error = False
+        self._startup_cancel = Event()
+        self._startup_worker = None
         self.settings_window = None
         self.close_window = None
         self.close_context = None
@@ -135,6 +140,20 @@ class _Launcher:
             for job in self._jobs:
                 self.root.after_cancel(job)
             self._jobs.clear()
+
+    def shutdown(self):
+        """Finish only this launch's service and any claim still being prepared."""
+        self._startup_cancel.set()
+        self.service.stop(force=True)
+        self.service.join()
+        if self._startup_worker is not None:
+            self._startup_worker.join()
+        while not self.messages.empty():
+            action, plan, _ = self.messages.get_nowait()
+            if action == 'plan' and plan is not None and plan.owner is not None:
+                plan.owner.close()
+        if self.instance is not None:
+            self.instance.close()
 
     def px(self, value):
         return max(1, round(value * self.scale))
@@ -264,10 +283,104 @@ class _Launcher:
 
     def start(self):
         if not self.closing and not self.checking_close and self.service.status().phase == 'new':
+            if self.startup is None:
+                self.service.start()
+            else:
+                self._prepare_start(self.service.port)
+
+    def _startup_call(self, action, operation):
+        self._planning = True
+        self._enable(self.settings_button, False)
+        self._enable(self.retry_button, False)
+        if self.startup_window is not None:
+            self.startup_window.set_busy(True)
+        def run():
+            try:
+                self.messages.put((action, operation(), None))
+            except Exception as error:
+                self.messages.put((action, None, error))
+        self._startup_worker = Thread(target=run, name=f'nuclemu-desktop-{action}', daemon=True)
+        self._startup_worker.start()
+
+    def _prepare_start(self, port):
+        previous = self.instance
+        self.instance = None
+        self._startup_error = False
+        self._startup_cancel.clear()
+        if self.startup_window is not None:
+            self.startup_window.destroy()
+        self.start_plan = None
+        if self.settings_window is not None:
+            self.settings_window.root.withdraw()
+        def prepare():
+            if previous is not None:
+                previous.close()
+            return self.startup(port)
+        self._startup_call('plan', prepare)
+
+    def choose_start(self, existing=None):
+        if self._planning or self.checking_close or self.closing or self.start_plan is None:
+            return
+        if existing is None:
+            self._startup_call('start-new', self.start_plan.start_new)
+        else:
+            def reuse():
+                url = self.start_plan.use_existing(existing)
+                if self._startup_cancel.is_set():
+                    return None
+                if not webbrowser.open(url):
+                    raise OSError(f'无法打开浏览器。可复制已有工作台地址：{url}')
+                return url
+            self._startup_call('reuse', reuse)
+
+    def _startup_result(self, action, result, error):
+        self._planning = False
+        if action == 'plan' and result is not None:
+            self.start_plan, self.instance = result, result.owner
+        if self._startup_cancel.is_set() or self.closing or self.checking_close:
+            return
+        if error is not None:
+            if action == 'reuse' and self.startup_window is not None:
+                self.startup_window.set_busy(False)
+                self.startup_window.notice(str(error))
+            else:
+                if self.startup_window is not None:
+                    self.startup_window.destroy()
+                self._startup_error = True
+                self.status.set('启动失败')
+                self.status_label.configure(foreground='#9b2c21')
+                self._notice(f'{error} 可在设置中修改后重试。', error=True)
+                self.retry_button.shell.grid()
+                self._enable(self.retry_button, True)
+                self._enable(self.settings_button, True)
+                if self.settings_window is not None:
+                    self.settings_window.root.deiconify()
+            return
+        if action == 'plan':
+            if result.kind == 'activated':
+                self.request_close()
+            elif result.kind == 'choose':
+                from .desktop_startup import StartupWindow
+                self.startup_window = StartupWindow(self, result.existing)
+                self.startup_window.activate()
+            else:
+                self.choose_start()
+        elif action == 'start-new':
+            if self.startup_window is not None:
+                self.startup_window.destroy()
+            self.start_plan = None
+            self.service = self.service_factory(result)
+            self._enable(self.settings_button, True)
+            if self.settings_window is not None:
+                self.settings_window.root.deiconify()
+            self.status.set('正在启动…')
+            self.status_label.configure(foreground=MUTED)
             self.service.start()
+        elif action == 'reuse':
+            self.request_close()
 
     def show_settings(self):
-        if self.closing or self.checking_close:
+        if self.closing or self.checking_close or self._planning or self.startup_window is not None:
             return
         if self.settings_window is None:
             from .desktop_settings import SettingsWindow
@@ -283,9 +396,9 @@ class _Launcher:
 
     def retry(self):
         if (self.closing or self.checking_close or self.service_factory is None
-                or self.service.status().phase != 'failed' or not self.service.join(0)):
+                or self._planning or not (self._startup_error or self.service.status().phase == 'failed')
+                or not self.service.join(0)):
             return
-        self.service = self.service_factory(self.settings.port)
         self.url = None
         self.address.set('')
         self._auto_pending = self.settings.open_browser and not self._automatic_opened
@@ -296,7 +409,11 @@ class _Launcher:
         self.settings_button.configure(text='设置')
         self.ready.grid_remove()
         self.open_button.shell.grid_remove()
-        self.start()
+        if self.startup is not None:
+            self._prepare_start(self.settings.port)
+        else:
+            self.service = self.service_factory(self.settings.port)
+            self.start()
 
     def activate(self):
         if self.closed or self._choosing_path:
@@ -306,6 +423,8 @@ class _Launcher:
         self.root.focus_force()
         if self.close_window is not None:
             self.close_window.activate()
+        elif self.startup_window is not None:
+            self.startup_window.activate()
         elif self.settings_window is not None and not self.checking_close:
             self.settings_window.activate()
 
@@ -338,6 +457,7 @@ class _Launcher:
             self.activate()
             return
         self.checking_close = True
+        self._startup_cancel.set()
         self._auto_pending = False
         self._close_controls(False)
         if self.settings_window is not None:
@@ -417,10 +537,13 @@ class _Launcher:
                 action, result, error = self.messages.get_nowait()
             except Empty:
                 break
-            self._close_result(action, result, error)
+            if action in ('plan', 'start-new', 'reuse'):
+                self._startup_result(action, result, error)
+            else:
+                self._close_result(action, result, error)
         state = self.service.status()
         if self.closing:
-            if state.phase in ('stopped', 'failed') and self.service.join(0):
+            if state.phase in ('stopped', 'failed') and self.service.join(0) and not self._planning:
                 self.closed = True
                 self.root.destroy()
                 return
@@ -433,7 +556,8 @@ class _Launcher:
             self.ready.grid(row=2, sticky='ew')
             self.open_button.shell.grid()
             self._schedule_fit()
-        elif state.phase == 'failed' and self.status.get() != '启动失败':
+        elif (state.phase == 'failed' and self.status.get() != '启动失败'
+              and not self._planning and self.start_plan is None):
             self.status.set('启动失败')
             self.status_label.configure(foreground='#9b2c21')
             self._notice(f'{state.error} 可修改端口后重试，或使用 nuclemu serve --no-gui。', error=True)
@@ -449,19 +573,13 @@ class _Launcher:
         self._later(50, self.poll)
 
 
-def launch(paths=(), *, port=None, directory=None, settings_path=None, instance_directory=None):
+def launch(paths=(), *, port=None, directory=None, settings_path=None, instance_directory=None, new_instance=False):
     """Show the launcher before discovering courses and starting its service."""
-    from .launcher_instance import acquire_or_activate
-    owner = acquire_or_activate(instance_directory)
-    if owner is None:
-        return
-    try:
-        _launch_owned(paths, port=port, directory=directory, settings_path=settings_path, instance=owner)
-    finally:
-        owner.close()
+    _launch_owned(paths, port=port, directory=directory, settings_path=settings_path,
+                  instance_directory=instance_directory, new_instance=new_instance)
 
 
-def _launch_owned(paths, *, port, directory, settings_path, instance):
+def _launch_owned(paths, *, port, directory, settings_path, instance_directory, new_instance):
     enable_windows_dpi_awareness()
     try:
         import tkinter as tk
@@ -478,12 +596,17 @@ def _launch_owned(paths, *, port, directory, settings_path, instance):
         except (OSError, ValueError) as error:
             settings, settings_error = LauncherSettings(), str(error)
         from .web_service import WorkbenchService
+        from .launcher_instance import plan_start
         paths = tuple(paths)
         def factory(selected_port):
-            return WorkbenchService(paths, port=selected_port, directory=directory)
-        window = _Launcher(root, factory(settings.port if port is None else port),
+            return WorkbenchService(paths, port=selected_port, directory=directory, registration=window.instance)
+        def prepare(selected_port):
+            return plan_start(paths, port=selected_port, directory=directory,
+                registry_directory=instance_directory, new_instance=new_instance)
+        initial = WorkbenchService(paths, port=settings.port if port is None else port, directory=directory)
+        window = _Launcher(root, initial,
             settings=settings, settings_path=settings_path, settings_error=settings_error,
-            service_factory=factory, instance=instance)
+            service_factory=factory, startup=prepare)
         root.update_idletasks()
     except Exception:
         root.destroy()
@@ -497,5 +620,4 @@ def _launch_owned(paths, *, port, directory, settings_path, instance):
     finally:
         # Unexpected Tk teardown must not leave a service owned by a released
         # single-instance lock. Normal closing has already joined the worker.
-        window.service.stop(force=True)
-        window.service.join()
+        window.shutdown()

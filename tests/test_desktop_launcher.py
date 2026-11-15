@@ -16,19 +16,20 @@ from nuclemu.launcher_settings import LauncherSettings, load_settings
 
 
 class DesktopOwnershipTests(unittest.TestCase):
-    def test_secondary_invocation_does_not_create_tk_or_load_preferences(self):
-        with patch('nuclemu.launcher_instance.acquire_or_activate', return_value=None), \
-                patch('nuclemu.desktop._launch_owned') as owned:
-            desktop.launch()
-        owned.assert_not_called()
-
-    def test_owner_is_released_if_window_creation_fails(self):
-        owner = Mock()
-        with patch('nuclemu.launcher_instance.acquire_or_activate', return_value=owner), \
-                patch('nuclemu.desktop._launch_owned', side_effect=OSError('no display')):
+    def test_failed_tk_creation_does_not_claim_a_service(self):
+        import tkinter as tk
+        with patch('tkinter.Tk', side_effect=tk.TclError('no display')), \
+                patch('nuclemu.launcher_instance.plan_start') as plan:
             with self.assertRaisesRegex(OSError, 'no display'):
-                desktop.launch(instance_directory='isolated')
-        owner.close.assert_called_once_with()
+                desktop.launch()
+        plan.assert_not_called()
+
+    def test_missing_tk_does_not_claim_a_service(self):
+        with patch.dict(sys.modules, {'tkinter': None}), \
+                patch('nuclemu.launcher_instance.plan_start') as plan:
+            with self.assertRaises(ImportError):
+                desktop.launch()
+        plan.assert_not_called()
 
 
 @unittest.skipUnless(os.environ.get('NUCLEMU_TEST_TK') == '1', 'Set NUCLEMU_TEST_TK=1 with a display')
@@ -45,7 +46,8 @@ class DesktopPreferencesTkTests(unittest.TestCase):
 
     def factory(self, port):
         from nuclemu.web_service import WorkbenchService
-        service = WorkbenchService(port=port, directory=Path(self.folder.name) / 'store')
+        service = WorkbenchService(port=port, directory=Path(self.folder.name) / 'store',
+                                   registration=getattr(self, 'registration', None))
         self.services.append(service)
         return service
 
@@ -231,10 +233,14 @@ class DesktopPreferencesTkTests(unittest.TestCase):
         self.assertTrue(dialog.open_check.bind('<Return>'))
 
     def test_secondary_process_restores_same_window_and_settings_during_startup(self):
-        from nuclemu.launcher_instance import acquire_or_activate
+        from nuclemu.launcher_instance import ServiceRegistration
+        from nuclemu.launcher_settings import save_settings
         from nuclemu.web import make_server
         instance_root = Path(self.folder.name) / 'instance'
-        owner = acquire_or_activate(instance_root)
+        owner = ServiceRegistration(gui=True, directory=instance_root,
+            workbench_directory=Path(self.folder.name) / 'store')
+        self.registration = owner
+        save_settings(LauncherSettings(open_browser=True), self.path)
         self.addCleanup(owner.close)
         entered, release = Event(), Event()
         def delayed(*args, **kwargs):
@@ -243,7 +249,9 @@ class DesktopPreferencesTkTests(unittest.TestCase):
             return make_server(*args, **kwargs)
         def secondary():
             result = subprocess.run([sys.executable, '-c',
-                'from nuclemu.desktop import launch; launch(instance_directory=' + repr(str(instance_root)) + ')'],
+                'from nuclemu.desktop import launch; launch(instance_directory=' + repr(str(instance_root))
+                + ', directory=' + repr(str(Path(self.folder.name) / 'store'))
+                + ', settings_path=' + repr(str(self.path)) + ')'],
                 cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=5)
             self.assertEqual(result.returncode, 0, result.stderr)
         with patch('nuclemu.web.make_server', side_effect=delayed), \

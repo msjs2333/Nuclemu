@@ -52,7 +52,11 @@ Both formats require these system libraries: `libc6 >= 2.36`, `libx11-6`, `libxe
 
 Start Nuclemu from its desktop entry. When the launcher shows “已就绪” (ready), choose “在浏览器中打开” (open in browser). Keep the launcher open while you work. Closing a browser tab leaves the local service and experiment running; use the launcher to return.
 
-The launcher starts with an automatically assigned port and automatic browser opening turned off. In “设置” (settings), you can choose a fixed port or enable automatic browser opening. Saved settings apply on the next start or retry; the current experiment keeps its address. If a port is occupied, choose another port and retry. You can copy the displayed local address into a browser when needed.
+Ordinary repeated desktop starts with the same course directories, requested port and storage configuration recall the existing launcher. An explicit request for another workbench, a different startup configuration, or an existing terminal-only service offers a choice between the existing workbench and a new one. Successfully opening the existing workbench keeps its experiment running and ends the new launch; starting a new workbench creates an independent service and leaves the old one running. Each launcher displays its own service's actual address.
+
+The choices are “打开已有工作台” (open an existing workbench) and “启动并列服务” (start a separate service). With multiple workbenches, select the actual address and check its course directories. A failed attempt to open the old workbench leaves the choice and address available. If a workbench with a different configuration is still starting and has no actual address, retry after it is ready.
+
+The launcher starts with an automatically assigned port and automatic browser opening turned off. In “设置” (settings), you can choose a fixed port or enable automatic browser opening. Saved settings apply on the next start or retry; the current experiment keeps its address. When starting a separate workbench, a port already used by an identified Nuclemu service is replaced with an available port. An unknown program occupying a fixed port produces an error; change the port or resolve the conflict before retrying. You can copy the displayed local address into a browser when needed.
 
 Choose a course in the catalogue, set the source and foil in the apparatus view, switch on the detector output, then open the instrument. Procedures and blank data tables are under “实验资料” (experiment materials). See the [workbench guide](gui.md).
 
@@ -62,7 +66,9 @@ Use the instrument's “保存” (save) button to keep the readings you need in
 
 Closing the launcher with an active experiment offers save and close, discard and close, or cancel. Save and close opens a system file dialog and writes the whole experiment before stopping the service. Cancelling the file dialog or a failed write keeps the experiment available for another attempt.
 
-The whole experiment includes settings, round information and readings you explicitly saved. For example, if you saved readings at 3 s and continued to 5 s, closing with save keeps the 3 s readings. To keep the later readings, cancel closing, save them on the instrument, then close again. Reopen the `.nuclemu` file from the catalogue to check your saved data.
+On macOS, quitting from the application menu, Dock or the normal quit shortcut uses the same save confirmation as closing the window. Repeated quit requests while a confirmation or file dialog is open keep that confirmation in place.
+
+For courses that use instrument snapshots, the whole experiment includes settings, round information and readings you explicitly saved. For example, if you saved readings at 3 s and continued to 5 s, closing with save keeps the 3 s readings. To keep the later readings, cancel closing, save them on the instrument, then close again. Older course formats and read-only archives retain readings through their whole-experiment save path; closing warnings follow the actual save behavior. Reopen the `.nuclemu` file from the catalogue to check your saved data.
 
 ## Upgrade and remove
 
@@ -78,10 +84,13 @@ The package's CLI and desktop launcher share the same experiments and file forma
 
 ```powershell
 .\nuclemu.exe serve --gui
+.\nuclemu.exe serve --gui --new-instance
 .\nuclemu.exe serve --no-gui
 ```
 
-`serve --gui` opens or recalls the desktop launcher. `serve --no-gui` runs a separate foreground service and prints its local URL without opening a browser; Ctrl+C stops it. Download your data first: interrupting the terminal service does not save the experiment for you. Choose exactly one of these two modes.
+`serve --gui` opens or recalls the desktop launcher. `serve --no-gui` runs a separate foreground service and prints its local URL without opening a browser; Ctrl+C stops it. The terminal-only mode stays non-interactive: it does not show the existing/new workbench choice, silently reuse a desktop service or change an occupied fixed port. Download your data first: interrupting the terminal service does not save the experiment for you. Choose exactly one of these two modes.
+
+Use `serve --gui --new-instance` to request the existing/new choice even when a matching workbench exists. It does not bypass the choice and can only be used with `--gui`; combining it with `--no-gui` is a usage error.
 
 For a source checkout, use Python 3.11 or later from the repository root:
 
