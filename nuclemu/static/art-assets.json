@@ -2,8 +2,8 @@
   "schema_version": 1,
   "license": "GPL-3.0",
   "license_file": "LICENSE",
-  "documentation": "docs/art-assets.md",
-  "contributor_guide": "docs/art-contributing.md",
+  "documentation": "docs/art/art-assets.md",
+  "contributor_guide": "docs/art/art-contributing.md",
   "status": "review-ready; no application binding included",
   "exported_utc": "2026-11-12T17:08:17Z",
   "coordinate_system": {

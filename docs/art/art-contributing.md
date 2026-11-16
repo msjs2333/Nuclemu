@@ -18,7 +18,7 @@ Deliver real alpha transparency. Keep the whole enclosure, handles, connectors a
 
 Keep display values blank. Fixed identifying marks such as A and B may be part of an equipment illustration, but operating labels and changing measurements must be drawn by the interface. A two-window housing is one instrument, not two detectors or two input chains. Decorative knobs do not establish supported operations.
 
-The initial dual-window counter is 426 × 480 pixels, matching the existing counter canvas. Its measured body bounds and baseline are in [art-assets.json](../nuclemu/static/art-assets.json). A same-size file is not a drop-in geometric replacement: remeasure all connection and display anchors when integrating it. Do not apply `object-fit: cover` to equipment cutouts or stretch them to fit.
+The initial dual-window counter is 426 × 480 pixels, matching the existing counter canvas. Its measured body bounds and baseline are in [art-assets.json](../../nuclemu/static/art-assets.json). A same-size file is not a drop-in geometric replacement: remeasure all connection and display anchors when integrating it. Do not apply `object-fit: cover` to equipment cutouts or stretch them to fit.
 
 ## Color, scale and layout
 

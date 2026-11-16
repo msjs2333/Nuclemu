@@ -1,6 +1,6 @@
 # β 课程：单台计数器双窗与逐窗文件
 
-本页供课程、GUI、CLI 维护者复核模型和读数；学生与教师正文由相应教材维护。界面交付见[工作台验收](workbench-acceptance.md)，公共边界及文件规则见[测量工作流](measurement-workflow.md)和[可携实验文件](exchange.md)。
+本页供课程、GUI、CLI 维护者复核模型和读数；学生与教师正文由相应教材维护。界面交付见[工作台验收](../release/workbench-acceptance.md)，公共边界及文件规则见[测量工作流](measurement-workflow.md)和[可携实验文件](exchange.md)。
 
 ## 装置、端口与旧记录
 
@@ -116,7 +116,7 @@ GUI/CLI 联调必须使用相同种子、设置、窗配置和生效时刻。以
 python -m nuclemu run beta --seed 42 --set source_present=1 --set foil_count=0 --set foil_spec_um=100 --enable-output beta_detector --window counter=1 --window counter_b=5 --change 2.5,foil_count=4 --duration 5 --package beta-cli.nuclemu
 ```
 
-CLI 的 `--step` 仍表示独立测点，不能拿两个 step 代替一轮热调；`--change` 的时刻相对于本轮开始。单项逐窗文件从包中选择 UUID 后用 `files export` 取得，具体调用见[命令行](cli.md)。GUI 新建默认种子为 0，与 seed=42 的固定示例不同；应按实际种子另跑同一时间线再比对，不能把不同种子的读数差异误报为入口不一致。
+CLI 的 `--step` 仍表示独立测点，不能拿两个 step 代替一轮热调；`--change` 的时刻相对于本轮开始。单项逐窗文件从包中选择 UUID 后用 `files export` 取得，具体调用见[命令行](../guides/cli.md)。GUI 新建默认种子为 0，与 seed=42 的固定示例不同；应按实际种子另跑同一时间线再比对，不能把不同种子的读数差异误报为入口不一致。
 
 ## 本底与专项验证
 

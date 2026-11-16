@@ -29,7 +29,7 @@
 | 主操作 | 蓝色主按钮“在浏览器中打开”。服务就绪后即可手动打开本次监听地址。启动器是否自动打开该地址由桌面设置控制。 |
 | 次操作 | “设置”位于启动器操作区。Windows 使用右上角关闭按钮；关闭快捷键和窗口按钮共用活动实验检查。关闭浏览器标签页后仍可由启动器回到当前实验。 |
 
-采用工作台现有的墨色正文、浅灰工具面、蓝色主操作（`#2956a1`）和键盘焦点。地址与端口便于选取，中文字体沿用工作台的系统回退顺序。只在错误或可能丢弃数据时使用警示色。以桌面系统缩放 100%、150% 和键盘操作验收，核对长地址、中文和系统大字体不截断。[现有工作台样式](../nuclemu/static/style.css)
+采用工作台现有的墨色正文、浅灰工具面、蓝色主操作（`#2956a1`）和键盘焦点。地址与端口便于选取，中文字体沿用工作台的系统回退顺序。只在错误或可能丢弃数据时使用警示色。以桌面系统缩放 100%、150% 和键盘操作验收，核对长地址、中文和系统大字体不截断。[现有工作台样式](../../nuclemu/static/style.css)
 
 两项设置按用户保存，下次启动桌面应用时生效。
 
@@ -56,11 +56,11 @@ macOS 应用菜单、Dock 的“退出”和常规退出快捷键与窗口关闭
 | 已进入实验，包括暂停、采集中或由文件重开的实验 | “关闭前是否保存实验？”提供“保存并关闭”“放弃并关闭”“取消”。有未缓存读数时，沿用工作台的简短提示。 | 以当前会话和退出确认编号冻结待决定的实验。取消恢复原实验和原采集状态。放弃须作用于这次确认的场次。 |
 | 选择保存 | 弹出系统保存文件对话框，采用既有实验短码和时间命名。 | 通过工作台相同的整场序列化路径取文件，写入成功再释放会话并退出。写入失败、磁盘满或取消选址，保留实验与缓存，允许重试或返回。 |
 
-原生窗口可以直接获取写盘结果，即使所有浏览器页都已关闭也可保存。使用相邻临时文件完成写入后替换目标，失败保留旧文件。当前可携实验按既有规则保存已缓存读数、配置与轮次元数据；如已缓存 3 s、现场测到 5 s，保存并关闭后应能重开 3 s 的读数。学生要带走 5 s 的读数时，可取消退出，回仪器手动保存。历史只读档案沿用其已有保存路径。浏览器与启动器同时发起退出时复用同一确认，过时的响应不能关闭新场次。[测量工作流](measurement-workflow.md) · [整场文件](exchange.md)
+原生窗口可以直接获取写盘结果，即使所有浏览器页都已关闭也可保存。使用相邻临时文件完成写入后替换目标，失败保留旧文件。当前可携实验按既有规则保存已缓存读数、配置与轮次元数据；如已缓存 3 s、现场测到 5 s，保存并关闭后应能重开 3 s 的读数。学生要带走 5 s 的读数时，可取消退出，回仪器手动保存。历史只读档案沿用其已有保存路径。浏览器与启动器同时发起退出时复用同一确认，过时的响应不能关闭新场次。[测量工作流](../technical/measurement-workflow.md) · [整场文件](../technical/exchange.md)
 
 ## 实现边界
 
-沿用 [本机 HTTP 服务](../nuclemu/web.py) 的 `make_server()`、回环地址及 [会话管理](../nuclemu/web_session.py)。建议用标准库 Tk/ttk 做独立小窗口，主线程运行窗口事件循环，工作线程运行 HTTP 服务。共享同一个应用实例和锁；关闭检查只需要查询活动会话和保存状态，无须轮询完整谱图。文件选择期间释放应用锁，提交关闭前重新核对会话与确认编号。窗口线程调度服务退出，等待服务线程返回再销毁窗口。保留现有 `nuclemu gui` 和 CLI，发布包提供独立桌面入口。这样可以分别测试端口、关闭流程和窗口。
+沿用 [本机 HTTP 服务](../../nuclemu/web.py) 的 `make_server()`、回环地址及 [会话管理](../../nuclemu/web_session.py)。建议用标准库 Tk/ttk 做独立小窗口，主线程运行窗口事件循环，工作线程运行 HTTP 服务。共享同一个应用实例和锁；关闭检查只需要查询活动会话和保存状态，无须轮询完整谱图。文件选择期间释放应用锁，提交关闭前重新核对会话与确认编号。窗口线程调度服务退出，等待服务线程返回再销毁窗口。保留现有 `nuclemu gui` 和 CLI，发布包提供独立桌面入口。这样可以分别测试端口、关闭流程和窗口。
 
 ## 安装包与兼容性
 
@@ -76,9 +76,9 @@ macOS 应用菜单、Dock 的“退出”和常规退出快捷键与窗口关闭
 
 旧系统适配能让保留 Win7 的课机继续使用本机算力，教师可在新旧课机间分发同一课程和实验文件。收益取决于实际课机的位数、系统补丁和已装浏览器。目前缺少这组清单与安装实测，优先保留一份可重复的试装流程。
 
-[项目元数据](../pyproject.toml) 要求 Python ≥3.11，当前 [Windows 构建锁](../.github/workflows/windows-installer.yml) 实际固定 CPython 3.12.13、PyInstaller 6.20.0 和 Inno Setup 6.7.4。Python 3.12 与所用 [Astral Windows 分发](https://docs.astral.sh/python-build-standalone/running/#windows) 的上游门槛为 Windows 8.1；PyInstaller 6.20 要求 Windows 8 起，Inno 6.7 自身可运行在 Windows 7，均不能降低随包 Python 的门槛。因此安装器使用 `MinVersion=6.3`，按 [Inno 版本编码](https://jrsoftware.org/ishelp/topic_winvernotes.htm) 对应 Windows 8.1，旧系统由安装器在安装前提示并退出。这里记录的是上游门槛，不是本项目的最低实测版本；Windows 8.1 尚未实测。
+[项目元数据](../../pyproject.toml) 要求 Python ≥3.11，当前 [Windows 构建锁](../../.github/workflows/windows-installer.yml) 实际固定 CPython 3.12.13、PyInstaller 6.20.0 和 Inno Setup 6.7.4。Python 3.12 与所用 [Astral Windows 分发](https://docs.astral.sh/python-build-standalone/running/#windows) 的上游门槛为 Windows 8.1；PyInstaller 6.20 要求 Windows 8 起，Inno 6.7 自身可运行在 Windows 7，均不能降低随包 Python 的门槛。因此安装器使用 `MinVersion=6.3`，按 [Inno 版本编码](https://jrsoftware.org/ishelp/topic_winvernotes.htm) 对应 Windows 8.1，旧系统由安装器在安装前提示并退出。这里记录的是上游门槛，不是本项目的最低实测版本；Windows 8.1 尚未实测。
 
-Win7 对应的 Python 3.8 已结束维护。直接降低整个项目的解释器要求，会把模块加载（如 `Number = int | float`）、静态资源路径（`Path.is_relative_to`）和 [SQLite 文件读写](../nuclemu/exchange.py) 的兼容成本带到日常开发。维护专用旧包能隔离运行时，但每次发布都多一套解释器、Tk、SQLite、打包工具和浏览器组合要复验。回环服务可离线运行，旧组件的上游维护状态仍需写进旧包说明。[Python 3.12 的 Windows 支持](https://docs.python.org/3.12/using/windows.html) · [PyInstaller 6.20 要求](https://pyinstaller.org/en/v6.20.0/requirements.html) · [Python 版本生命周期](https://devguide.python.org/versions/)
+Win7 对应的 Python 3.8 已结束维护。直接降低整个项目的解释器要求，会把模块加载（如 `Number = int | float`）、静态资源路径（`Path.is_relative_to`）和 [SQLite 文件读写](../../nuclemu/exchange.py) 的兼容成本带到日常开发。维护专用旧包能隔离运行时，但每次发布都多一套解释器、Tk、SQLite、打包工具和浏览器组合要复验。回环服务可离线运行，旧组件的上游维护状态仍需写进旧包说明。[Python 3.12 的 Windows 支持](https://docs.python.org/3.12/using/windows.html) · [PyInstaller 6.20 要求](https://pyinstaller.org/en/v6.20.0/requirements.html) · [Python 版本生命周期](https://devguide.python.org/versions/)
 
 主线保留当前 Python 基线，在 Windows 8.1 或更高版本的可用环境中验证同一安装包。有代表性 Win7 SP1 环境时，再用独立构建配置验证一条完整路径，不能绕过当前包的安装门槛来声明支持。先看启动器、服务和生产浏览器资源能否运行，再验证 α、β 的采集、保存及与现代包双向重开。若唯一差异在文件适配层，可评估用临时 SQLite 文件读写相同库结构。若需要长期维护定制解释器、分叉物理模型或改变存档语义，停止本轮适配，登记具体阻断和最近实测通过的组合。仅通过启动检查的组合标为“试装”，只有整条路径通过的 OS、位数及浏览器组合才列入实测兼容范围。
 

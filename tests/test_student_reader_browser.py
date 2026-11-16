@@ -39,7 +39,7 @@ class StudentReaderBrowserTests(unittest.TestCase):
 
     def test_catalogue_intro_uses_student_source_and_reader_keeps_unsent_foil_draft(self):
         for experiment in ('alpha', 'beta'):
-            source = Path('docs', experiment + '.md').read_text(encoding='utf-8')
+            source = Path('docs', 'student', experiment + '.md').read_text(encoding='utf-8')
             intro = re.split(r'## (?:实验)?简介与目的', source, maxsplit=1)[1].split('\n## ', 1)[0].strip()
             intro = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', intro).replace('`', '').replace('*', '')
             card = self.page.locator('article').filter(has=self.page.locator(f'[data-experiment={experiment}]'))

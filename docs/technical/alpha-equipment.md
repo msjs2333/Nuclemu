@@ -1,6 +1,6 @@
 # α 器材、接口与联调读数
 
-本页供课程作者、GUI 和 CLI 维护者核对器材与数据。学生步骤见[α 能损](alpha.md)，公开射程依据及模型近似见[模型参考](model-reference.md#alpha)。以下 Python 入口已实现；新的图形操作与缓存文件入口仍按[测量流程](measurement-workflow.md)联调，不把未保存的当前道谱当作已保存快照。
+本页供课程作者、GUI 和 CLI 维护者核对器材与数据。学生步骤见[α 能损](../student/alpha.md)，公开射程依据及模型近似见[模型参考](model-reference.md#alpha)。以下 Python 入口已实现；新的图形操作与缓存文件入口仍按[测量流程](measurement-workflow.md)联调，不把未保存的当前道谱当作已保存快照。
 
 ## 器材与端口
 
@@ -54,7 +54,7 @@ s.set_output("alpha_detector", False)
 
 初始输出与门均关闭；`start` 不开启探测输出。示例最后关闭探测输出后，若所有仪器门也关闭，实验室待机。只开探测器时允许时间推进，MCA 不累计曝光；只开 MCA 门时保留实际曝光和合法零计数。关输出不等于移走源。
 
-[`examples/courses/alpha_fine_foil.py`](../examples/courses/alpha_fine_foil.py)通过 `dataclasses.replace` 复用整套器材、端口和模型，只在这门扩展课增加 0.5 µm/片。运行 `python -m nuclemu gui --path examples/courses` 可发现它。扩展课的 0.5 µm × 6 片与基础课 1 µm × 3 片给出同一物理厚度；没有在前端另写能损公式。同型第二台谱仪只须声明新的 `Device.id` 和组件绑定，并接入同一输出，门与曝光各自独立。
+[`examples/courses/alpha_fine_foil.py`](../../examples/courses/alpha_fine_foil.py)通过 `dataclasses.replace` 复用整套器材、端口和模型，只在这门扩展课增加 0.5 µm/片。运行 `python -m nuclemu gui --path examples/courses` 可发现它。扩展课的 0.5 µm × 6 片与基础课 1 µm × 3 片给出同一物理厚度；没有在前端另写能损公式。同型第二台谱仪只须声明新的 `Device.id` 和组件绑定，并接入同一输出，门与曝光各自独立。
 
 ## 物理参考接口与装置画面
 
@@ -121,7 +121,7 @@ s.set_output("alpha_detector", False)
 
 ## 刻度归属与跨工况复验
 
-运行 [`examples.alpha_review_cases`](../examples/alpha_review_cases.py) 并显式指定生成目录：
+运行 [`examples.alpha_review_cases`](../../examples/alpha_review_cases.py) 并显式指定生成目录：
 
 ```text
 python -m examples.alpha_review_cases OUTPUT_DIRECTORY

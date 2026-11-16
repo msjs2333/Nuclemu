@@ -1,4 +1,4 @@
-import source from '../../docs/apparatus-overview.md?raw'
+import source from '../../docs/student/apparatus-overview.md?raw'
 import type {Course} from './types'
 
 const titles: Readonly<Record<string, string>> = {alpha: 'α 能量损失', beta: 'β 吸收'}
