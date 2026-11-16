@@ -17,18 +17,18 @@ These are the two built-in courses. The [experiment catalogue](docs/design/exper
 
 The workbench interface and most experiment guides are currently in Chinese. This page and the installation guide are also available in English.
 
-## Try the 0.0.1 prerelease
+## Download the 0.0.1 prerelease
 
-There is no formal public release yet. For prerelease testing, use the GitHub Actions builds below. These artifacts come from the final commit of the merged [PR #16](https://github.com/msjs2333/Nuclemu/pull/16).
+See the [v0.0.1-pre.1 release page](https://github.com/msjs2333/Nuclemu/releases/tag/v0.0.1-pre.1) for the prerelease packages and release notes. Choose the package for your system below.
 
-Sign in to GitHub, open the matching build, and download the named ZIP from its **Artifacts** section. Extract the ZIP to find the installer or application image and its checksums. Artifacts have a retention period. See [GitHub's download instructions](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts).
+| Your system | Download |
+|---|---|
+| Windows x64 | [Nuclemu-0.0.1-windows-x64-setup.exe](https://github.com/msjs2333/Nuclemu/releases/download/v0.0.1-pre.1/Nuclemu-0.0.1-windows-x64-setup.exe) |
+| macOS · Intel | [Nuclemu-0.0.1-macos-x86_64.dmg](https://github.com/msjs2333/Nuclemu/releases/download/v0.0.1-pre.1/Nuclemu-0.0.1-macos-x86_64.dmg) |
+| macOS · Apple Silicon | [Nuclemu-0.0.1-macos-arm64.dmg](https://github.com/msjs2333/Nuclemu/releases/download/v0.0.1-pre.1/Nuclemu-0.0.1-macos-arm64.dmg) |
+| Linux · Debian 12 amd64 | [nuclemu_0.0.1-1_amd64.deb](https://github.com/msjs2333/Nuclemu/releases/download/v0.0.1-pre.1/nuclemu_0.0.1-1_amd64.deb) or [nuclemu-0.0.1-1-linux-amd64.tar.gz](https://github.com/msjs2333/Nuclemu/releases/download/v0.0.1-pre.1/nuclemu-0.0.1-1-linux-amd64.tar.gz) |
 
-| Your system | Build and artifact | Package to use |
-|---|---|---|
-| Windows x64 | [Windows build](https://github.com/msjs2333/Nuclemu/actions/runs/43709026349) · `Nuclemu-windows-x64` | `Nuclemu-0.0.1-windows-x64-setup.exe` |
-| macOS · Intel | [macOS build](https://github.com/msjs2333/Nuclemu/actions/runs/43709026362) · `Nuclemu-macos-x86_64` | `Nuclemu-0.0.1-macos-x86_64.dmg` |
-| macOS · Apple Silicon | [macOS build](https://github.com/msjs2333/Nuclemu/actions/runs/43709026362) · `Nuclemu-macos-arm64` | `Nuclemu-0.0.1-macos-arm64.dmg` |
-| Linux · Debian 12 amd64 | [Linux build](https://github.com/msjs2333/Nuclemu/actions/runs/43709026386) · `Nuclemu-linux-amd64` | `nuclemu_0.0.1-1_amd64.deb` or `nuclemu-0.0.1-1-linux-amd64.tar.gz` |
+Use [SHA256SUMS.txt](https://github.com/msjs2333/Nuclemu/releases/download/v0.0.1-pre.1/SHA256SUMS.txt) to verify the downloaded files.
 
 The packages include Python and the workbench resources. Target machines need a suitable browser, and Linux also needs the listed system libraries. Windows packages have no publisher signature. macOS packages use ad-hoc signing without notarization. Read [installation and startup](docs/guides/installation.md) for installation steps, tested systems, remaining platform checks, upgrades and removal.
 
