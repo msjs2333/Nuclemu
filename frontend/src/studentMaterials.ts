@@ -1,5 +1,5 @@
-import alpha from '../../docs/alpha.md?raw'
-import beta from '../../docs/beta.md?raw'
+import alpha from '../../docs/student/alpha.md?raw'
+import beta from '../../docs/student/beta.md?raw'
 import type {Course} from './types'
 
 type StudentCourse = Pick<Course, 'id'> | string

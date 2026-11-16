@@ -14,7 +14,7 @@
 
 ## 时间与数值模型
 
-**理想信号分接的内核测试。** 此处规定已知接线的测试用例。β 教学双窗另采用同工况分别取样的虚拟重复观测，按[课程操作验收](workbench-acceptance.md)逐路核对，不属于此真实共享输入测试。 将一个理想探测器的输出无损分接到两台计数器，使用完全相同的采集窗，且两路均无独立丢失。两台计数器读取同一批脉冲，每个窗的计数应逐次相等。验收时逐窗比较两列整数；分别按同一平均率抽样只能复现各路的统计分布。
+**理想信号分接的内核测试。** 此处规定已知接线的测试用例。β 教学双窗另采用同工况分别取样的虚拟重复观测，按[课程操作验收](../release/workbench-acceptance.md)逐路核对，不属于此真实共享输入测试。 将一个理想探测器的输出无损分接到两台计数器，使用完全相同的采集窗，且两路均无独立丢失。两台计数器读取同一批脉冲，每个窗的计数应逐次相等。验收时逐窗比较两列整数；分别按同一平均率抽样只能复现各路的统计分布。
 
 每场实验有一个实验室坐标时刻 `t_lab`，由会话内核推进。变速改变墙钟等待时间；模型可在同一物理区间内按窗积分、按道抽样或处理有时间关联的事件。世界暂停时状态冻结，关采集门只停止记录，已活化样品仍会衰变。
 
@@ -48,7 +48,7 @@ session.stop(device="mca")
 session.set_output("alpha_detector", False)
 ```
 
-`acquisition` 是设备的测量轮次，`cycle` 区分连续开门周期。同一轮次可包含多个门周期；暂停后继续沿用轮次和已有读数，每次实际重新开门递增 `cycle`，已在采集时重复开始不会另开周期。轮次曝光只累加开门区间，换箔等工况变更在同轮内分段。首次采集、清空后开始或重开文件后从零开始，才建立新轮次；显式载入测量数据的前缀续采规则见[文件交换](exchange.md)。[采集与轮次验收](measurement-workflow.md)
+`acquisition` 是设备的测量轮次，`cycle` 区分连续开门周期。同一轮次可包含多个门周期；暂停后继续沿用轮次和已有读数，每次实际重新开门递增 `cycle`，已在采集时重复开始不会另开周期。轮次曝光只累加开门区间，换箔等工况变更在同轮内分段。首次采集、清空后开始或重开文件后从零开始，才建立新轮次；显式载入测量数据的前缀续采规则见[文件交换](../technical/exchange.md)。[采集与轮次验收](../technical/measurement-workflow.md)
 
 每个测量段保留起止时刻、工况、设备实例 ID 和整数读数。程序可用 `collect` 批量整理记录；持续更新的面板用 `MeasurementView.product()` 读取同样的结构。这个视图仅合并新封闭的测量窗，调用方按只读方式使用。选择仪器、改变横轴和导出都使用已有读数。谱的 `roi_centroid` 按所选道区（含两端）计算计数加权峰心，零计数区没有可报告的峰心。
 
@@ -145,7 +145,7 @@ assert session.instrument("a").exposure_s == 10
 
 清空确认使用 `request = begin_clear(device)`，再调用 `finish_clear(device, request.token, choice, writer=None)`，其中 `choice` 为 `save`、`discard` 或 `cancel`。开始确认时只结清并暂缓目标仪器，返回固定读数和防止旧确认生效的 token，其他仪器和探测输出继续运行。`save` 可先调用 `writer(snapshot)` 写入外部缓存，成功后加入显式快照并清空当前仪器；`discard` 直接清空，均保留已有快照和历史记录。取消或写入异常恢复原轮次、读数和剩余曝光，异常仍报告给调用方。重复提交已结束的 token 报错。程序执行独立重测可直接用 `clear(device=...)`；省略设备表示清全部仪器。
 
-整台仪器的成员操作使用`Session.snapshot_group(devices, *, cache=True, writer=None)`、`load_measurements(devices, snapshots, *, overwrite=False)`、`begin_clear_group(devices)`和`finish_clear_group(devices, tokens, choice, *, writer=None)`。保存与清空的`writer`一次接收实际可读快照的tuple，成功后才提交全部成员；载入先核全组再替换。完整`devices`范围包含缺测侧，缺测侧不造快照，新整机载入按该范围清空缺测侧；历史单项则只按文件所记设备恢复，另一侧保持原值。无需另建仪器或档案层。[β整机可跑例](technical/beta.md#一行填写示例的复验)与[文件字段](exchange.md#保存什么)给出调用和首项关联。
+整台仪器的成员操作使用`Session.snapshot_group(devices, *, cache=True, writer=None)`、`load_measurements(devices, snapshots, *, overwrite=False)`、`begin_clear_group(devices)`和`finish_clear_group(devices, tokens, choice, *, writer=None)`。保存与清空的`writer`一次接收实际可读快照的tuple，成功后才提交全部成员；载入先核全组再替换。完整`devices`范围包含缺测侧，缺测侧不造快照，新整机载入按该范围清空缺测侧；历史单项则只按文件所记设备恢复，另一侧保持原值。无需另建仪器或档案层。[β整机可跑例](../technical/beta.md#一行填写示例的复验)与[文件字段](../technical/exchange.md#保存什么)给出调用和首项关联。
 
 `Session.rounds` 提供轮次元数据，包括初始有效设置、实际曝光、状态和设置变更的位置；其中没有未保存的计数或道谱。设置未变不重复登记。保存于 3 s、继续采到 5 s 时，轮次曝光可以是 5 s，唯一保存的谱仍只有 3 s。文件层应分别使用这些元数据与显式快照，不根据轮次曝光补造读数。
 

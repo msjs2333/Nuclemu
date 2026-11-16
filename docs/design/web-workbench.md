@@ -4,17 +4,17 @@
 
 ## 桌面布局与测量
 
-页面与组件的交付标准见[工作台交付与验收](workbench-acceptance.md)。目录、装置、α 谱图、β 双窗、实验记录和内置教材共用实验导航与字体。顶栏显示实验名，左栏选页面，仪器操作集中在常驻右栏。退出或替换实验保留离场确认。
+页面与组件的交付标准见[工作台交付与验收](../release/workbench-acceptance.md)。目录、装置、α 谱图、β 双窗、实验记录和内置教材共用实验导航与字体。顶栏显示实验名，左栏选页面，仪器操作集中在常驻右栏。退出或替换实验保留离场确认。
 
 α 的工作面优先显示谱图，右侧“采集／谱分析”分别管理开门、目标、ROI 和刻度；两点能量刻度在“谱分析”内展开。当前与参考谱以线型和颜色区分，配上各自的工况与曝光。β 的一台计数器左右并列显示 A、B 两窗，各列大数下设置单次曝光，整机共同开始、继续与暂停；保存、清空和载入一次处理整台计数器，不设选窗步骤。仪器展示原始逐窗读数，学生导出后处理本底。装置的操作面板可直接调参，单击设备可了解原理和本课作用。整机接线从右上打开。
 
 视觉参考包括 [Siemens iX 工作面板](https://ix.siemens.io/docs/components/panes/guide)、[Mantid 的仪器查看器](https://docs.mantidproject.org/v6.2.0/workbench/instrumentviewer.html)与 [InterSpec 谱分析界面](https://sandialabs.github.io/InterSpec/tutorials/intro_course_Sep2020/20200915_InterSpec_intro_part1.pdf)。实际测量时的选峰、刻度、暂停及读数位置见上面的操作验收表。
 
-离线字体 Nuclemu Lab Sans 取自思源黑体简体中文可变字体，保留当前界面所需字形。新增课程文字可回退到本机中文字体。[思源黑体源文件](https://github.com/adobe-fonts/source-han-sans) · [随包字体许可证](../nuclemu/static/lab-sans-LICENSE.txt)
+离线字体 Nuclemu Lab Sans 取自思源黑体简体中文可变字体，保留当前界面所需字形。新增课程文字可回退到本机中文字体。[思源黑体源文件](https://github.com/adobe-fonts/source-han-sans) · [随包字体许可证](../../nuclemu/static/lab-sans-LICENSE.txt)
 
 ## 保存与退出
 
-仪器上的「保存」将当时的可读状态加入本场缓存。学生在记录页勾选并批量下载，或下载包含最终设置、全部轮次与工况变更，以及学生已保存的测量快照的整场实验包。清空当前仪器与退出会话分别处理，详见[采集、缓存与文件](measurement-workflow.md)。
+仪器上的「保存」将当时的可读状态加入本场缓存。学生在记录页勾选并批量下载，或下载包含最终设置、全部轮次与工况变更，以及学生已保存的测量快照的整场实验包。清空当前仪器与退出会话分别处理，详见[采集、缓存与文件](../technical/measurement-workflow.md)。
 
 | 触发 | 界面与会话行为 |
 |---|---|

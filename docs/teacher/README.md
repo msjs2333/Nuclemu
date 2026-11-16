@@ -2,7 +2,7 @@
 
 Nuclemu · **A Virtual Nuclear Physics Lab**
 
-本册面向备课和课堂指导，配合[学生实验手册](../student.md)使用。技术常数和接口由[技术参考](../technical/README.md)维护；教师可以讨论典型结果，但不把它们作为学生应复现的指定随机数。
+本册面向备课和课堂指导，配合[学生实验手册](../student/README.md)使用。技术常数和接口由[技术参考](../technical/README.md)维护；教师可以讨论典型结果，但不把它们作为学生应复现的指定随机数。
 
 ## 目录与备课路径
 

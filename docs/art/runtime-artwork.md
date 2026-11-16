@@ -4,9 +4,9 @@
 
 | 资产 | 用途与显示约定 |
 |---|---|
-| [α 能量损失封面](../nuclemu/static/cover-alpha-energy-loss.webp) | 960×600，不透明，按16:10完整显示；保留四核子符号及材料边界。 |
-| [β 吸收封面](../nuclemu/static/cover-beta-absorption.webp) | 960×600，不透明，按16:10完整显示；同时保留入射较密与透射较稀的单电子符号。 |
-| [双窗计数器](../nuclemu/static/rig-counter-dual.webp) | 426×480透明图，一台机箱内A/B两窗；使用contain，不能裁掉底脚或窗口。机箱边缘的示意接线锚点见同目录`apparatus-assets.json`。 |
+| [α 能量损失封面](../../nuclemu/static/cover-alpha-energy-loss.webp) | 960×600，不透明，按16:10完整显示；保留四核子符号及材料边界。 |
+| [β 吸收封面](../../nuclemu/static/cover-beta-absorption.webp) | 960×600，不透明，按16:10完整显示；同时保留入射较密与透射较稀的单电子符号。 |
+| [双窗计数器](../../nuclemu/static/rig-counter-dual.webp) | 426×480透明图，一台机箱内A/B两窗；使用contain，不能裁掉底脚或窗口。机箱边缘的示意接线锚点见同目录`apparatus-assets.json`。 |
 
 ## 示意边界
 
@@ -22,7 +22,7 @@
 
 三张图使用OpenAI内置ImageGen于2026年11月生成，最终运行时文件以Pillow导出无损WebP。α封面独立生成并修订；β封面只引用本项目α封面作为光照、材质与色彩参考；双窗图以本项目已有`rig-counter.webp`为参考生成并修订。上述科学网页仅用于核对事实，没有复制其图片。
 
-图像沿用仓库的[GNU GPL第3版许可证](../LICENSE)。保留本说明与仓库许可，不主张AI生成内容具有排他的人类作者身份，也不对整个既有资源集合的来源作推断。独立美术维护的完整规范和资产索引见[素材PR #14](https://github.com/msjs2333/Nuclemu/pull/14)；运行时接入由工作台另行验收。
+图像沿用仓库的[GNU GPL第3版许可证](../../LICENSE)。保留本说明与仓库许可，不主张AI生成内容具有排他的人类作者身份，也不对整个既有资源集合的来源作推断。独立美术维护的完整规范和资产索引见[素材PR #14](https://github.com/msjs2333/Nuclemu/pull/14)；运行时接入由工作台另行验收。
 
 | 文件 | SHA-256 |
 |---|---|

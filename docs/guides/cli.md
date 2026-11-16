@@ -112,7 +112,7 @@ if shifted is not None:
 python -m nuclemu run alpha --set source_present=1 --seed 187 --step "2.25,foil_spec_um=1,foil_count=0" --step "1.25,foil_spec_um=1,foil_count=5" --enable-output alpha_detector --device spectrum:mca --roi 845:875 --calibration alpha-calibration.json --output alpha-calibrated.csv
 ```
 
-刻度绑定实验 ID、设备实例和道数，以 MeV 保存。设备不匹配时明确报错。更改箔厚继续使用既有刻度，不能把透射峰重新指定为无箔能量。物理依据、模型范围和推荐选峰方法见 [α 实验](alpha.md)；β 模型及统计说明见 [β 实验](beta.md)。
+刻度绑定实验 ID、设备实例和道数，以 MeV 保存。设备不匹配时明确报错。更改箔厚继续使用既有刻度，不能把透射峰重新指定为无箔能量。物理依据、模型范围和推荐选峰方法见 [α 实验](../student/alpha.md)；β 模型及统计说明见 [β 实验](../student/beta.md)。
 
 旧命令的 α `foil_um=0`、`foil_um=5` 等整数总厚度仍可使用，共用设置入口将其转换为 `foil_spec_um=1` 和对应片数。不能用默认 1 µm 片精确表示的实时输入，例如 `foil_um=2.5`，会报迁移提示并保持原有效状态；同一组 `--set` 或同一个 `--step` 内不能混用 `foil_um` 与 `foil_spec_um`/`foil_count`。不同 step 是不同设置批次。旧档案和刻度中的 `foil_um` 始终表示原始总厚度：2.5 µm 保留 2.5 µm、片数未知，不能经实时设置转换来读回。
 
@@ -129,7 +129,7 @@ python -m nuclemu files inspect workbench.sqlite3
 python -m nuclemu files convert-archive workbench.sqlite3 --archive ARCHIVE_ID --output converted.nuclemu
 ```
 
-将 `ITEM_UUID` 换为 `files inspect` 输出中要选的项目 ID；检查旧 `workbench.sqlite3` 时会列出可供 `ARCHIVE_ID` 使用的档案标识。文件操作不依赖当前课程目录或当前运行的 Web 数据库。导入给新项目分配不同 ID，保留源身份，相同标题不会覆盖；只有显式改动分析选择才更换参考或本底。可重新导入的单项 CSV 带一行快照元数据；现有 `run --output` CSV 的结构保持不变。API、单项批量下载和 3 s/5 s 快照的重开示例见[可携实验文件](exchange.md)。
+将 `ITEM_UUID` 换为 `files inspect` 输出中要选的项目 ID；检查旧 `workbench.sqlite3` 时会列出可供 `ARCHIVE_ID` 使用的档案标识。文件操作不依赖当前课程目录或当前运行的 Web 数据库。导入给新项目分配不同 ID，保留源身份，相同标题不会覆盖；只有显式改动分析选择才更换参考或本底。可重新导入的单项 CSV 带一行快照元数据；现有 `run --output` CSV 的结构保持不变。API、单项批量下载和 3 s/5 s 快照的重开示例见[可携实验文件](../technical/exchange.md)。
 
 新版计数器整机记录按整套读数导出：`files export` 或 `files batch-export` 选到 A/B 任一成员 UUID，CSV、JSON 仍包含同次保存的 A/B，批量 ZIP 的成员名按整机生成，显式 `--output` 路径原样生效。读回后用 `files inspect` 的 `records` 首项 UUID 导入；直接传组内从项给 `files import` 仍会报错。没有整机关联的原生单窗文件继续按单窗处理。
 

@@ -12,7 +12,7 @@ The prerelease installer is `Nuclemu-0.0.1-windows-x64-setup.exe`. It has no pub
 
 To upgrade, save your experiment, close the launcher and terminal services, then run the new installer in the existing installation scope. To uninstall, use Nuclemu's entry in Windows' installed-apps settings. If prompted to close Nuclemu, finish saving and close it before retrying; the installer does not stop an active experiment for you.
 
-The Windows x64 directory sample has been tested on Windows 11, including an offline Windows Sandbox. For this sample, extract the entire directory and open `Nuclemu-Desktop.exe`. Keep `nuclemu.exe` and `_internal` beside it. See the [Windows package notes](../packaging/windows/README.md).
+The Windows x64 directory sample has been tested on Windows 11, including an offline Windows Sandbox. For this sample, extract the entire directory and open `Nuclemu-Desktop.exe`. Keep `nuclemu.exe` and `_internal` beside it. See the [Windows package notes](../../packaging/windows/README.md).
 
 The Windows installer requires Windows 8.1, following the upstream support range of the bundled Python 3.12; this does not mean Nuclemu has been tested on 8.1. Existing installation checks cover Windows 11 Sandbox under standard and administrator accounts, and a Windows Server 2025 runner. Windows 8.1 and Windows 10 remain unverified. The current installer rejects Windows 7 and Windows 8; Windows 7 SP1 remains a target for a future, separate compatibility build.
 
@@ -26,11 +26,11 @@ The app's command-line companion is:
 /Applications/Nuclemu.app/Contents/MacOS/nuclemu-cli serve --no-gui
 ```
 
-The Intel prerelease passed native runner checks on macOS 15.7.9, and arm64 on macOS 15.8.2: mounting and copying the app, using the CLI and experiment files, replacing an earlier package revision, and removing the app while retaining user data. These are tested environments, not minimum supported versions. The prereleases use an ad-hoc signature and have no Developer ID signature or notarization. First launch of a downloaded app (including Gatekeeper), Finder startup and system save dialogs still need desktop verification. The smoke check made no downloads but did not disable the runner's network. See the [delivery record](desktop-release-delivery.md) for the full validation scope.
+The Intel prerelease passed native runner checks on macOS 15.7.9, and arm64 on macOS 15.8.2: mounting and copying the app, using the CLI and experiment files, replacing an earlier package revision, and removing the app while retaining user data. These are tested environments, not minimum supported versions. The prereleases use an ad-hoc signature and have no Developer ID signature or notarization. First launch of a downloaded app (including Gatekeeper), Finder startup and system save dialogs still need desktop verification. The smoke check made no downloads but did not disable the runner's network. See the [delivery record](../release/desktop-release-delivery.md) for the full validation scope.
 
 ## Linux
 
-The prerelease targets Debian 12, amd64, with glibc 2.36. Its package names are `nuclemu_0.0.1-1_amd64.deb` and `nuclemu-0.0.1-1-linux-amd64.tar.gz`. The portable CLI passed a non-root check in a minimal, offline container without system Python or Node.js. A separate offline Debian container with a test driver was used to replace Debian package revision 0 with revision 1, start the menu entry under Xvfb, check that removal retained preferences and experiment files, and reopen the Windows sample experiments after relocating the portable directory. These checks cover Debian 12 amd64; other distributions remain unverified. See the [delivery record](desktop-release-delivery.md).
+The prerelease targets Debian 12, amd64, with glibc 2.36. Its package names are `nuclemu_0.0.1-1_amd64.deb` and `nuclemu-0.0.1-1-linux-amd64.tar.gz`. The portable CLI passed a non-root check in a minimal, offline container without system Python or Node.js. A separate offline Debian container with a test driver was used to replace Debian package revision 0 with revision 1, start the menu entry under Xvfb, check that removal retained preferences and experiment files, and reopen the Windows sample experiments after relocating the portable directory. These checks cover Debian 12 amd64; other distributions remain unverified. See the [delivery record](../release/desktop-release-delivery.md).
 
 For the `.deb`, install or upgrade from the directory containing the file:
 
@@ -46,7 +46,7 @@ sudo dpkg -r nuclemu
 
 For the tar archive, extract the whole archive into a folder you can write to. In its `nuclemu-0.0.1` directory, run `./nuclemu-desktop` or `./nuclemu serve --no-gui`; keep `_internal` alongside these entries. No administrator account is needed for this directory package. To upgrade, extract to a new folder; to remove it, close the services and remove that application folder.
 
-Both formats require these system libraries: `libc6 >= 2.36`, `libx11-6`, `libxext6`, `libxft2`, `libxrender1`, `libfontconfig1`, `libfreetype6`, `libexpat1` and `zlib1g`. Desktop use needs X11 or XWayland, fonts and a browser; `xdg-utils` and Chinese fonts are recommended. For offline deployment, have an administrator prepare these components first. The package includes Python and Tk, but not glibc. See the [Linux package notes](../packaging/linux/README.md).
+Both formats require these system libraries: `libc6 >= 2.36`, `libx11-6`, `libxext6`, `libxft2`, `libxrender1`, `libfontconfig1`, `libfreetype6`, `libexpat1` and `zlib1g`. Desktop use needs X11 or XWayland, fonts and a browser; `xdg-utils` and Chinese fonts are recommended. For offline deployment, have an administrator prepare these components first. The package includes Python and Tk, but not glibc. See the [Linux package notes](../../packaging/linux/README.md).
 
 ## Open the workbench
 
@@ -58,7 +58,7 @@ The choices are “打开已有工作台” (open an existing workbench) and “
 
 The launcher starts with an automatically assigned port and automatic browser opening turned off. In “设置” (settings), you can choose a fixed port or enable automatic browser opening. Saved settings apply on the next start or retry; the current experiment keeps its address. When starting a separate workbench, a port already used by an identified Nuclemu service is replaced with an available port. An unknown program occupying a fixed port produces an error; change the port or resolve the conflict before retrying. You can copy the displayed local address into a browser when needed.
 
-Choose a course in the catalogue, set the source and foil in the apparatus view, switch on the detector output, then open the instrument. Procedures and blank data tables are under “实验资料” (experiment materials). See the [workbench guide](gui.md).
+Choose a course in the catalogue, set the source and foil in the apparatus view, switch on the detector output, then open the instrument. Procedures and blank data tables are under “实验资料” (experiment materials). See the [workbench guide](../student/gui.md).
 
 ## Save your work and close
 

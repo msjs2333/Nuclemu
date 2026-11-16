@@ -4,11 +4,11 @@ This collection supplies two physical-theme course covers and a transparent equi
 
 | File | Role | Dimensions | Transparency |
 |---|---|---|---|
-| [cover-alpha-energy-loss.webp](../nuclemu/static/cover-alpha-energy-loss.webp) | α energy-loss course cover | 960 × 600 | Opaque |
-| [cover-beta-absorption.webp](../nuclemu/static/cover-beta-absorption.webp) | β transmission/absorption course cover | 960 × 600 | Opaque |
-| [rig-counter-dual.webp](../nuclemu/static/rig-counter-dual.webp) | One counter with A/B windows | 426 × 480 | RGBA |
+| [cover-alpha-energy-loss.webp](../../nuclemu/static/cover-alpha-energy-loss.webp) | α energy-loss course cover | 960 × 600 | Opaque |
+| [cover-beta-absorption.webp](../../nuclemu/static/cover-beta-absorption.webp) | β transmission/absorption course cover | 960 × 600 | Opaque |
+| [rig-counter-dual.webp](../../nuclemu/static/rig-counter-dual.webp) | One counter with A/B windows | 426 × 480 | RGBA |
 
-Machine-readable dimensions, body bounds, display regions and hashes are in [art-assets.json](../nuclemu/static/art-assets.json). Follow [the contributor guide](art-contributing.md) when extending the family.
+Machine-readable dimensions, body bounds, display regions and hashes are in [art-assets.json](../../nuclemu/static/art-assets.json). Follow [the contributor guide](art-contributing.md) when extending the family.
 
 ## Alpha entering aluminium
 
@@ -32,7 +32,7 @@ Suggested accessible description: “Single-electron symbols pass through alumin
 
 The cutout depicts a fictional teaching instrument: one enclosure, one front panel and two equally prominent blank display windows, A at left and B at right. It does not document a commercial model, real-world dimensions, electrical wiring, input topology or implemented control functions. Its unmarked knobs are visual structure. Dynamic readings and operating controls must be supplied by a subsequent interface implementation.
 
-The enclosure, material, corner screws, knobs, vents and shallow top/right camera view follow the project's existing [rig-counter.webp](../nuclemu/static/rig-counter.webp). The variant is a generated edit of that project asset. The existing file is retained. Do not reuse old display or connection coordinates without checking the new geometry; display inset polygons in the JSON index are conservative artwork regions, not tested text overlays.
+The enclosure, material, corner screws, knobs, vents and shallow top/right camera view follow the project's existing [rig-counter.webp](../../nuclemu/static/rig-counter.webp). The variant is a generated edit of that project asset. The existing file is retained. Do not reuse old display or connection coordinates without checking the new geometry; display inset polygons in the JSON index are conservative artwork regions, not tested text overlays.
 
 Suggested accessible description: “A single light-grey teaching counter with blank A and B display windows.”
 
@@ -42,7 +42,7 @@ All three images were made with OpenAI's built-in ImageGen tool in November 2026
 
 The scientific webpages above were consulted for facts, not used as image inputs. No image or diagram from those sources is reproduced in these assets. The counter's only visual input was the already tracked project counter image.
 
-These additions are supplied under the repository's [GNU GPL version 3 license](../LICENSE). This note does not claim exclusive human authorship or make a determination about the copyright status of AI-generated content. Retain the repository license and this provenance note when redistributing these files. Other repository assets keep their existing notices; these three files do not establish provenance for the entire asset collection.
+These additions are supplied under the repository's [GNU GPL version 3 license](../../LICENSE). This note does not claim exclusive human authorship or make a determination about the copyright status of AI-generated content. Retain the repository license and this provenance note when redistributing these files. Other repository assets keep their existing notices; these three files do not establish provenance for the entire asset collection.
 
 ## Checks performed
 

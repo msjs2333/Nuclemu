@@ -17,7 +17,7 @@ class ApparatusOverviewBrowserTests(unittest.TestCase):
     screenshot = fixtures.CatalogRecordsBrowserTests.screenshot
 
     def test_builtin_overviews_open_independently_and_return_to_selection(self):
-        source = Path('docs/apparatus-overview.md').read_text(encoding='utf-8')
+        source = Path('docs/student/apparatus-overview.md').read_text(encoding='utf-8')
         for course, title in [('alpha', 'α 能量损失'), ('beta', 'β 吸收')]:
             with self.subTest(course=course):
                 self.enter(course)

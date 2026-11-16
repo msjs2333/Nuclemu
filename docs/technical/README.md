@@ -2,15 +2,15 @@
 
 Nuclemu · **A Virtual Nuclear Physics Lab**
 
-本册连接课程模型、仪器读数和可携带文件，供维护者与课程作者核对。学生步骤见[学生实验手册](../student.md)，教学解释见[教师教学用书](../teacher/README.md)。
+本册连接课程模型、仪器读数和可携带文件，供维护者与课程作者核对。学生步骤见[学生实验手册](../student/README.md)，教学解释见[教师教学用书](../teacher/README.md)。
 
 ## 目录
 
 1. [α 模型与谱数据](alpha.md)：ASTAR、单位、固定响应、刻度与旧厚度兼容。
 2. [β 模型与计数窗](beta.md)：有效吸收曲线、输入与窗关系、逐窗字段和本底分析边界。
-3. [公共架构与课程接口](../architecture.md)。
-4. [采集与保存语义](../measurement-workflow.md)。
-5. [文件交换](../exchange.md)与[CLI](../cli.md)。
+3. [公共架构与课程接口](../design/architecture.md)。
+4. [采集与保存语义](measurement-workflow.md)。
+5. [文件交换](exchange.md)与[CLI](../guides/cli.md)。
 
 ## 阅读与验证顺序
 
@@ -22,4 +22,4 @@ Nuclemu · **A Virtual Nuclear Physics Lab**
 
 课程作者可用 `python -m nuclemu gui --path D:\MyLabs` 加载可信课程模块；Python入口为 `from nuclemu.gui import launch`、`launch(paths=("课程目录",))`。
 
-Vue 3/TypeScript源码位于 `frontend/src/`。修改后在 `frontend/` 使用支持的Node.js版本运行 `npm ci`、`npm run build`，构建会检查类型并写入可离线资源 `nuclemu/static/`；源码和构建产物一起交付。学生机运行时从本机读取资源。学生正文为 `docs/alpha.md`、`docs/beta.md`，由 `frontend/src/studentMaterials.ts` 导入，目录简介读取首节“实验简介与目的”。修改正文后也需重新构建。
+Vue 3/TypeScript源码位于 `frontend/src/`。修改后在 `frontend/` 使用支持的Node.js版本运行 `npm ci`、`npm run build`，构建会检查类型并写入可离线资源 `nuclemu/static/`；源码和构建产物一起交付。学生机运行时从本机读取资源。学生正文为 `docs/student/alpha.md`、`docs/student/beta.md`，由 `frontend/src/studentMaterials.ts` 导入，目录简介读取首节“实验简介与目的”。修改正文后也需重新构建。

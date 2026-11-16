@@ -11,7 +11,7 @@ from nuclemu.physics import AluminumFoil, poisson
 
 # Selected NIST ASTAR SRD 124 aluminium CSDA ranges (MeV, g/cm²).
 # https://physics.nist.gov/PhysRefData/Star/Text/ASTAR-t.html (Aluminum, 013)
-# The zero-energy endpoint is an added boundary; see docs/model-reference.md.
+# The zero-energy endpoint is an added boundary; see docs/technical/model-reference.md.
 RANGE_TABLE = (
     (0.0, 0.0),
     (0.001, 9.964e-6),

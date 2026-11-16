@@ -12,7 +12,7 @@
 
 升级前保存实验，关闭启动器和终端服务，再运行新安装程序，沿用已有安装范围。卸载时从 Windows 的“已安装的应用”中找到 Nuclemu。若提示程序仍在运行，先完成保存并关闭，再重试；安装程序不会替你结束正在进行的实验。
 
-Windows x64 目录样包已在 Windows 11 验证，包括断网的 Windows Sandbox。使用目录样包时，完整解压，双击 `Nuclemu-Desktop.exe`，保留同级的 `nuclemu.exe` 和 `_internal`。详见[Windows 包说明](../packaging/windows/README.md)。
+Windows x64 目录样包已在 Windows 11 验证，包括断网的 Windows Sandbox。使用目录样包时，完整解压，双击 `Nuclemu-Desktop.exe`，保留同级的 `nuclemu.exe` 和 `_internal`。详见[Windows 包说明](../../packaging/windows/README.md)。
 
 Windows 安装器的系统门槛为 Windows 8.1，依据随包 Python 3.12 的上游支持范围；这不代表 Nuclemu 已在 8.1 实测通过。现有安装记录覆盖 Windows 11 沙箱的普通账户安装、管理员全机安装，以及 Windows Server 2025 运行器。Windows 8.1 和 Windows 10 仍待验；当前安装器不接受 Windows 7 或 Windows 8。Windows 7 SP1 仅保留为未来独立兼容方案的目标。
 
@@ -26,11 +26,11 @@ Intel 预发布包名为 `Nuclemu-0.0.1-macos-x86_64.dmg`，Apple Silicon 为 `N
 /Applications/Nuclemu.app/Contents/MacOS/nuclemu-cli serve --no-gui
 ```
 
-Intel 预发布包已在 macOS 15.7.9、arm64 预发布包已在 macOS 15.8.2 原生 runner 通过挂载、复制安装、CLI 与实验文件检查、较早包修订的覆盖替换，以及卸载后保留用户数据检查。这些是已测环境，不代表最低支持版本。预发布应用使用 ad-hoc 签名，尚无 Developer ID 签名和公证。下载应用的首次打开（含 Gatekeeper）、Finder 启动和系统保存窗口仍需桌面实测。smoke 阶段无下载，但未关闭 runner 网络。完整验证范围见[交付记录](desktop-release-delivery.md)。
+Intel 预发布包已在 macOS 15.7.9、arm64 预发布包已在 macOS 15.8.2 原生 runner 通过挂载、复制安装、CLI 与实验文件检查、较早包修订的覆盖替换，以及卸载后保留用户数据检查。这些是已测环境，不代表最低支持版本。预发布应用使用 ad-hoc 签名，尚无 Developer ID 签名和公证。下载应用的首次打开（含 Gatekeeper）、Finder 启动和系统保存窗口仍需桌面实测。smoke 阶段无下载，但未关闭 runner 网络。完整验证范围见[交付记录](../release/desktop-release-delivery.md)。
 
 ## Linux
 
-预发布包以 Debian 12、amd64、glibc 2.36 为基线，文件名为 `nuclemu_0.0.1-1_amd64.deb` 和 `nuclemu-0.0.1-1-linux-amd64.tar.gz`。便携 CLI 已在断网、无系统 Python 或 Node.js 的最小容器中通过非 root 检查。Debian 包修订0→1覆盖、Xvfb 下的菜单入口、卸载后保留偏好与实验文件，以及移动便携目录后重开 Windows 两份实验样本，则在另一带测试驱动的断网 Debian 容器中验证。范围限于 Debian 12 amd64，其他发行版待验，详见[交付记录](desktop-release-delivery.md)。
+预发布包以 Debian 12、amd64、glibc 2.36 为基线，文件名为 `nuclemu_0.0.1-1_amd64.deb` 和 `nuclemu-0.0.1-1-linux-amd64.tar.gz`。便携 CLI 已在断网、无系统 Python 或 Node.js 的最小容器中通过非 root 检查。Debian 包修订0→1覆盖、Xvfb 下的菜单入口、卸载后保留偏好与实验文件，以及移动便携目录后重开 Windows 两份实验样本，则在另一带测试驱动的断网 Debian 容器中验证。范围限于 Debian 12 amd64，其他发行版待验，详见[交付记录](../release/desktop-release-delivery.md)。
 
 在 `.deb` 所在目录执行安装或升级：
 
@@ -46,7 +46,7 @@ sudo dpkg -r nuclemu
 
 压缩包可完整解压到用户可写目录，在其中的 `nuclemu-0.0.1` 目录运行 `./nuclemu-desktop` 或 `./nuclemu serve --no-gui`，保留同级的 `_internal`。目录包无需管理员账户；升级时解压到新目录，卸载时先关闭服务，再移除该程序目录。
 
-两种格式均需系统已有 `libc6 >= 2.36`、`libx11-6`、`libxext6`、`libxft2`、`libxrender1`、`libfontconfig1`、`libfreetype6`、`libexpat1`、`zlib1g`。桌面使用还需 X11 或 XWayland、字体和浏览器，建议准备 `xdg-utils` 及中文字体。断网部署前，由管理员备齐这些组件；包内携带 Python 和 Tk，但不携带 glibc。详见[Linux 包说明](../packaging/linux/README.md)。
+两种格式均需系统已有 `libc6 >= 2.36`、`libx11-6`、`libxext6`、`libxft2`、`libxrender1`、`libfontconfig1`、`libfreetype6`、`libexpat1`、`zlib1g`。桌面使用还需 X11 或 XWayland、字体和浏览器，建议准备 `xdg-utils` 及中文字体。断网部署前，由管理员备齐这些组件；包内携带 Python 和 Tk，但不携带 glibc。详见[Linux 包说明](../../packaging/linux/README.md)。
 
 ## 打开工作台
 
@@ -58,7 +58,7 @@ sudo dpkg -r nuclemu
 
 默认自动分配端口，自动打开浏览器为关闭。在“设置”中可指定固定端口，或开启启动后自动打开浏览器。保存设置后，下次启动或重试时生效，当前实验继续使用原地址。选择另开时，若拟用端口已被可识别的 Nuclemu 服务占用，新服务使用可用端口；未知程序占用固定端口则报错，须修改端口或处理占用后重试。也可复制窗口中的本机链接到浏览器。
 
-从目录进入课程，在装置页设置源和箔片、开启探测输出，再打开仪器。实验步骤和空白记录表在“实验资料”中，操作方法见[工作台说明](gui.md)。
+从目录进入课程，在装置页设置源和箔片、开启探测输出，再打开仪器。实验步骤和空白记录表在“实验资料”中，操作方法见[工作台说明](../student/gui.md)。
 
 ## 保存实验并关闭
 

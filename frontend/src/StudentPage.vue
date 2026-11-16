@@ -2,9 +2,9 @@
 import {computed, nextTick, onBeforeUnmount, onMounted, ref, watch} from 'vue'
 import MarkdownBody from './MarkdownBody.vue'
 import {studentMarkdown} from './studentMaterials'
-import gui from '../../docs/gui.md?raw'
-import alpha from '../../docs/alpha.md?raw'
-import beta from '../../docs/beta.md?raw'
+import gui from '../../docs/student/gui.md?raw'
+import alpha from '../../docs/student/alpha.md?raw'
+import beta from '../../docs/student/beta.md?raw'
 import type {Course} from './types'
 
 const props = defineProps<{course: Course; status?: string; active: boolean}>()
