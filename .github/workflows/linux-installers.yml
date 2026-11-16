@@ -1,0 +1,75 @@
+name: Linux installers
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/linux-installers.yml'
+      - 'packaging/linux/**'
+      - 'packaging/samples/**'
+      - 'nuclemu/**'
+      - 'tests/test_web_service_close.py'
+      - 'tests/test_launcher_instance.py'
+      - 'tests/test_web_service_identity.py'
+      - 'tests/test_exchange_archive_resave.py'
+      - 'pyproject.toml'
+      - 'LICENSE'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Verify service isolation, archive identities and exit saves
+        run: python3 -m unittest -v tests.test_launcher_instance tests.test_web_service_identity tests.test_exchange_archive_resave tests.test_web_service_close
+      - name: Prepare Debian 12 build and test images
+        run: |
+          docker build --target builder -t nuclemu-builder -f packaging/linux/Dockerfile packaging/linux
+          docker build --target runtime -t nuclemu-runtime -f packaging/linux/Dockerfile packaging/linux
+          docker build --target acceptance -t nuclemu-acceptance -f packaging/linux/Dockerfile packaging/linux
+      - name: Build previous and current package revisions
+        run: |
+          mkdir -p build/linux-runtime build/linux-acceptance
+          for revision in 0 1; do
+            docker run --rm --network none -v "$PWD:/src" \
+              -e NUCLEMU_SOURCE_SHA="$(git rev-parse HEAD)" nuclemu-builder \
+              python packaging/linux/build.py --revision "$revision"
+          done
+      - name: Run without system Python, a display or a network
+        run: |
+          docker run --rm --network none \
+            -v "$PWD/dist/release:/artifacts:ro" -v "$PWD/packaging/linux:/recipes:ro" \
+            -v "$PWD/build/linux-runtime:/evidence" \
+            nuclemu-runtime bash /recipes/runtime-smoke.sh /artifacts /evidence
+      - name: Install, upgrade and uninstall without a network
+        run: |
+          docker run --rm --network none \
+            -v "$PWD/dist/release:/artifacts:ro" -v "$PWD/packaging/samples:/samples:ro" \
+            -v "$PWD/packaging/linux:/recipes:ro" -v "$PWD/build/linux-acceptance:/evidence" \
+            nuclemu-acceptance bash /recipes/accept.sh /artifacts /samples /evidence
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: Nuclemu-linux-amd64
+          path: |
+            dist/release/*-1_amd64.deb*
+            dist/release/*-1-linux-amd64.tar.gz*
+          compression-level: 0
+          if-no-files-found: warn
+      - name: Collect files created by the isolated test account
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" build/linux-acceptance build/linux-runtime
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: Linux-acceptance
+          path: |
+            build/linux-acceptance/
+            build/linux-runtime/
+          if-no-files-found: ignore

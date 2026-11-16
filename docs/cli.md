@@ -2,25 +2,43 @@
 
 在仓库根目录执行 `python -m nuclemu`。安装项目后，`nuclemu` console script 调用相同的 `nuclemu.cli:main`。以下命令适用于 PowerShell；时间单位统一为秒，采集按模拟物理时间立即完成，无需等待同样长的墙钟时间。
 
+Windows 目录包的终端命令使用 `nuclemu.exe`，例如 `.\nuclemu.exe serve --no-gui`；双击独立的 `Nuclemu-Desktop.exe` 打开桌面启动器。安装 Python 包后，`nuclemu-desktop` 提供同一桌面入口。两种桌面入口与 `serve --gui` 共用启动器设置。
+
 ```powershell
 python -m nuclemu --help
 python -m nuclemu list
 python -m nuclemu list alpha
 python -m nuclemu validate
 python -m nuclemu gui
+python -m nuclemu serve --gui
+python -m nuclemu serve --gui --new-instance
+python -m nuclemu serve --no-gui
 ```
 
 `list` 给出实验 ID、测量问题、操作指引、参数键、单位、默认值、范围、整数要求及设备 `kind:id` 和道数。装置部件列出用途、所控制的参数和绑定的设备实例；连接区分粒子路径 `particle` 与电信号 `signal`。两课的箔架都用单片规格 `foil_spec_um` 和片数 `foil_count` 设置，总厚度由两者相乘得到；源座与探测输出另行控制。仪器输入绑定探测输出，`--device` 使用读出仪器的实例 ID。`list alpha` 只显示该实验的详情。
 
 `list` 与浏览器目录共用 `catalog.describe(experiment)`，查看资料不建立 Session、不采样。没有显式装置定义的本地模块仍可加载：目录用设备生成仪器部件，并将参数集中列在控制部件中。`validate` 加载并检查实验定义，不运行物理测量。
 
-`gui` 惰性调用 `launch(paths=...)`，默认启动本机 Web 服务并打开默认浏览器中的实验工作台。额外模块目录照常传给工作台；停止服务使用启动命令所在终端的 `Ctrl+C`。`list`、`validate` 和 `run` 不启动 Web 服务或浏览器，不需要图形窗口。
+`gui` 惰性调用 `launch(paths=...)`，默认启动本机 Web 服务并打开默认浏览器中的实验工作台，不读取桌面启动器设置。额外模块目录照常传给工作台；停止服务使用启动命令所在终端的 `Ctrl+C`。`list`、`validate` 和 `run` 不启动 Web 服务或浏览器，不需要图形窗口。
+
+`serve` 必须明确选择 `--gui` 或 `--no-gui`，漏选或同时使用两项会在启动前报用法错误。`serve --gui` 调用桌面服务窗口；窗口不可用时，终端报告原因并提示改用 `serve --no-gui`。`serve --no-gui` 在当前终端前台运行，使用自动端口，就绪后打印实际回环 URL，不初始化 Tk、不自动打开浏览器，也不读取任何桌面启动器设置。复制 URL 到浏览器即可进入工作台。终端 `Ctrl+C` 停止服务并释放端口，**不会代为保存实验**，应先在工作台缓存并下载需要带走的数据。启动失败写标准错误并返回非零状态。
+
+普通 `serve --gui` 在课程目录、拟用端口和工作库存储配置相同时唤回已有桌面窗口，不另起服务或重复自动打开浏览器。`serve --gui --new-instance` 则在已有工作台时仍提供“打开已有工作台”“启动并列服务”选择，不直接绕过确认新开；课程或其他启动配置不同、只有终端服务在运行时，也提供同一选择。成功打开旧服务实际地址后，本次新启动结束，旧实验保留；选择并列则建立独立服务，仅在可识别的旧 Nuclemu 占用拟用端口时改用可用端口。未知程序占用固定端口时明确报错。不同配置遇旧工作台尚在启动、没有实际地址时，提示稍后重试。
+
+`--new-instance` 仅用于 `serve --gui`，与 `--no-gui` 同用会报用法错误。终端前台模式与原有 `gui` 命令保持非交互，不弹旧／新选择或静默复用桌面服务；其中 `gui` 仍按原有行为打开浏览器。启动冲突直接报错，不在终端等候图形选择。
+
+桌面启动器关闭活动实验时提供“保存并关闭”“放弃并关闭”“取消”。保存使用系统文件选择窗口，写盘成功后才关闭服务；取消选址可重试或取消关闭，写盘失败保留原文件和本场实验。按仪器快照保存的课程只带走已缓存测量；例如 3 s 缓存后继续采到 5 s，再保存并关闭，文件中的测量仍为 3 s。需要后两秒读数时，应取消关闭、回仪器缓存后再保存。旧式协议课程和只读档案按各自的整场另存路径保留读数，退出提示随实际保存方式显示；只读档案另存后保持只读。保存文件可用 `nuclemu files inspect FILE.nuclemu` 检查，再从工作台打开；浏览器内的退出确认已改变或换场时，旧的原生确认不能覆盖目标文件或关闭新场次。
+
+macOS 应用菜单、Dock 和常规退出快捷键也进入上述关闭确认；确认或文件选择器已打开时再次退出，沿用本次确认，不直接结束活动实验。
+
+桌面启动器将两项偏好保存在当前用户的 `~/.nuclemu/launcher.json`：`port` 为 `0` 表示自动分配，也可指定 `1–65535` 的整数；`open_browser` 默认 `false`，开启后新启动的桌面服务首次就绪时自动打开浏览器。设置只作用于桌面入口。文件不存在时使用自动端口、关闭自动打开，不创建设置文件；文件无效或无法读取时显示原因，可在设置窗口填写有效值并明确保存以恢复，取消不会改写文件。保存采用相邻临时文件替换，失败保留原文件并报告错误。保存不改变当前服务、实验或实际链接；新端口供下一次启动尝试使用，启动失败后可以修改设置并重试。设置不进入实验文件。
 
 额外实验目录通过重复 `--path DIRECTORY` 指定，可放在子命令前或后。目录内非下划线开头的 `.py` 文件须导出公共 `Experiment` 类型的 `EXPERIMENT`。模块会执行 Python 代码，只加载自己信任的目录。重复实验 ID、无效定义及目录不存在均报错。
 
 ```powershell
 python -m nuclemu list --path D:\MyLabs
 python -m nuclemu gui --path D:\MyLabs
+python -m nuclemu --path D:\MyLabs serve --no-gui --path D:\OtherLabs
 ```
 
 ## 设置和多段采集

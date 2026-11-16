@@ -13,6 +13,9 @@ license = { file = "LICENSE" }
 [project.scripts]
 nuclemu = "nuclemu.cli:main"
 
+[project.gui-scripts]
+nuclemu-desktop = "nuclemu.desktop:launch"
+
 [tool.setuptools.packages.find]
 include = ["nuclemu*"]
 

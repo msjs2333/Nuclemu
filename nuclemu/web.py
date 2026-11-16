@@ -3,11 +3,15 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import mimetypes
+import os
 from pathlib import Path
+import socket
+from socketserver import TCPServer
 import sqlite3
 from threading import RLock
 from time import monotonic
 from urllib.parse import parse_qs, quote, unquote, urlsplit
+from uuid import uuid4
 import webbrowser
 
 from .catalog import discover
@@ -15,6 +19,21 @@ from .web_session import Application
 
 
 STATIC = Path(__file__).with_name("static")
+
+
+class WorkbenchHTTPServer(ThreadingHTTPServer):
+    # Winsock's SO_REUSEADDR can share a live listener. POSIX reuse retains
+    # its usual TIME_WAIT behavior; Windows needs exclusive ownership instead.
+    allow_reuse_address = os.name != 'nt'
+    allow_reuse_port = False
+
+    def server_bind(self):
+        if os.name == 'nt':
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        TCPServer.server_bind(self)
+        # This listener has a numeric loopback address. HTTPServer's getfqdn()
+        # reverse lookup adds no useful identity and can wait on offline DNS.
+        self.server_name, self.server_port = self.server_address
 
 
 class WorkbenchHandler(BaseHTTPRequestHandler):
@@ -30,6 +49,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Frame-Options", "DENY")
+        self.send_header("X-Nuclemu-Instance-ID", self.server.instance_id)
         if filename:
             self.send_header("Content-Disposition", "attachment; filename*=UTF-8''" + quote(filename, safe=""))
         self.end_headers()
@@ -62,6 +82,10 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             self.payload(403, {"error": "仅限本机工作台访问。"})
             return
         if route.startswith("/api/"):
+            if route == '/api/identity':
+                self.payload(200, dict(product='Nuclemu', instance_id=self.server.instance_id,
+                                       ready=self.server.accepting_requests))
+                return
             try:
                 with self.server.app_lock:
                     if route == "/api/catalog":
@@ -109,8 +133,14 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 raise ValueError("请求必须包含 JSON 对象。")
             route = urlsplit(self.path).path
+            if route == '/api/identity':
+                self.payload(405, {'error': '服务身份仅供读取。'})
+                return
             filename = None
             with self.server.app_lock:
+                if not self.server.accepting_requests:
+                    self.payload(503, {"error": "服务正在启动或关闭，请稍后重试。"})
+                    return
                 value = self.server.app.request(route, data)
                 if route == "/api/download":
                     filename, mime, body = value
@@ -127,23 +157,44 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             self.payload(500, {"error": str(error)})
 
 
-def make_server(paths=(), *, port=0, directory=None, clock=monotonic):
+def make_server(paths=(), *, port=0, directory=None, clock=monotonic, instance_id=None):
+    if type(port) is not int or not 0 <= port <= 65535:
+        raise ValueError('Port must be 0 or an integer from 1 to 65535')
     definitions = discover(paths)
     store = Path.home() / ".nuclemu" / "workbench" if directory is None else directory
-    server = ThreadingHTTPServer(("127.0.0.1", port), WorkbenchHandler)
-    server.app = Application(definitions, store, clock)
+    server = WorkbenchHTTPServer(("127.0.0.1", port), WorkbenchHandler)
+    server.instance_id = uuid4().hex if instance_id is None else instance_id
+    try:
+        server.app = Application(definitions, store, clock)
+    except BaseException:
+        server.server_close()
+        raise
     server.app_lock = RLock()
+    server.accepting_requests = True
     return server
 
 
 def launch(paths=(), *, port=0, open_browser=True, directory=None):
     """Open the local workbench and serve it until the user presses Ctrl+C."""
-    with make_server(paths, port=port, directory=directory) as server:
-        url = f"http://127.0.0.1:{server.server_port}/"
+    from .web_service import WorkbenchService
+    from .launcher_instance import ServiceRegistration
+    registration = ServiceRegistration(paths, port=port, gui=False, workbench_directory=directory)
+    service = None
+    try:
+        service = WorkbenchService(paths, port=port, directory=directory, registration=registration)
+        service.start()
+        url = service.wait_ready()
         print(f"Nuclemu · {url}  (Ctrl+C to stop)", flush=True)
         if open_browser:
             webbrowser.open(url)
-        try:
-            server.serve_forever()
-        except KeyboardInterrupt:
+        while not service.join(.1):
             pass
+    except KeyboardInterrupt:
+        pass
+    finally:
+        try:
+            if service is not None:
+                service.stop(force=True)
+                service.join()
+        finally:
+            registration.close()

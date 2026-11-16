@@ -8,11 +8,15 @@ import sqlite3
 
 class ArchiveStore:
     def __init__(self, directory):
-        self.directory = Path(directory)
+        self.directory = Path(directory).absolute()
+
+    @property
+    def database_path(self):
+        return self.directory / 'workbench.sqlite3'
 
     def _connect(self):
         self.directory.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(self.directory / "workbench.sqlite3")
+        db = sqlite3.connect(self.database_path)
         db.execute("""CREATE TABLE IF NOT EXISTS archives (
             id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL,
             time_s REAL NOT NULL, metadata TEXT NOT NULL, updated TEXT NOT NULL)""")

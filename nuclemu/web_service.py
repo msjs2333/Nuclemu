@@ -1,0 +1,381 @@
+"""Own one cancellable loopback service without a desktop dependency."""
+
+from dataclasses import dataclass
+from http.client import HTTPConnection
+import json
+from threading import Condition, Event, Thread
+from time import monotonic
+from uuid import uuid4
+
+
+@dataclass(frozen=True)
+class ServiceStatus:
+    phase: str
+    url: str | None = None
+    error: Exception | None = None
+    instance_id: str | None = None
+
+
+@dataclass(frozen=True)
+class CloseContext:
+    session: str
+    confirmation_id: int
+    readonly: bool
+    has_uncached: bool
+    filename: str
+
+
+class StaleCloseError(ValueError):
+    """The service, session or confirmation no longer belongs to this closer."""
+
+
+@dataclass(frozen=True)
+class CloseSaveResult:
+    path: str
+    warning: str | None = None
+
+
+class WorkbenchService:
+    def __init__(self, paths=(), *, port=0, directory=None, clock=monotonic, registration=None):
+        self.paths = tuple(paths)
+        self.port, self.directory, self.clock = port, directory, clock
+        self._condition = Condition()
+        self._cancel = Event()
+        self._phase = 'new'
+        self._url = None
+        self._error = None
+        self._server = None
+        self._worker = None
+        self._instance_id = uuid4().hex
+        self._registration = registration
+
+    @property
+    def instance_id(self):
+        return self._instance_id
+
+    def status(self):
+        with self._condition:
+            return ServiceStatus(self._phase, self._url, self._error, self.instance_id)
+
+    def start(self):
+        with self._condition:
+            if self._phase != 'new':
+                raise ValueError('Create a new service for each startup attempt')
+            self._phase = 'starting'
+            try:
+                self._worker = Thread(target=self._run, name='Nuclemu-service', daemon=True)
+                self._worker.start()
+            except Exception as error:
+                self._error, self._phase = error, 'failed'
+                self._worker = None
+                self._condition.notify_all()
+        if self._worker is None:
+            self._close_registration()
+        return self
+
+    def wait_ready(self, timeout=None):
+        deadline = None if timeout is None else monotonic() + timeout
+        with self._condition:
+            while self._phase in ('new', 'starting'):
+                remaining = None if deadline is None else deadline - monotonic()
+                if remaining is not None and remaining <= 0:
+                    raise TimeoutError('The workbench service is not ready')
+                self._condition.wait(.1 if remaining is None else min(.1, remaining))
+            if self._phase == 'ready':
+                return self._url
+            if self._error is not None:
+                if isinstance(self._error, (ValueError, OSError, ImportError)):
+                    raise self._error
+                raise OSError(str(self._error)) from self._error
+            raise OSError('Workbench startup was cancelled')
+
+    def cancel_start(self):
+        with self._condition:
+            if self._phase not in ('new', 'starting'):
+                return False
+            self._request_stop()
+        if self._worker is None:
+            self._close_registration()
+        return True
+
+    def _close_registration(self):
+        with self._condition:
+            registration, self._registration = self._registration, None
+        if registration is not None:
+            registration.close()
+
+    def _request_stop(self):
+        self._cancel.set()
+        if self._worker is None:
+            self._phase = 'stopped'
+        else:
+            self._phase = 'stopping'
+        self._condition.notify_all()
+
+    def active_session(self):
+        with self._condition:
+            server = self._server
+        if server is None:
+            return None
+        with server.app_lock:
+            return server.app.lab.id if server.app.lab is not None else None
+
+    def stop_if_idle(self):
+        return self.stop()
+
+    def begin_close(self):
+        """Freeze one exit round, or atomically stop an idle/starting service.
+
+        Run closing methods on a GUI worker, since application requests can be
+        in flight. No full state or spectrum is sent to the window.
+        """
+        with self._condition:
+            if self._phase in ('failed', 'stopped', 'stopping'):
+                return None
+            if self._phase != 'ready' or self._server is None:
+                self._request_stop()
+                server = None
+            else:
+                server = self._server
+        if server is None:
+            if self._worker is None:
+                self._close_registration()
+            return None
+        with server.app_lock:
+            self._check_close_service(server)
+            if server.app.lab is None:
+                with self._condition:
+                    server.accepting_requests = False
+                    self._request_stop()
+                return None
+            lab = server.app.lab
+            lab.act(dict(action='freeze'))
+            pending = lab.unsaved()
+            from .download_names import download_prefix
+            return CloseContext(lab.id, lab.confirmation_id, lab.readonly,
+                not lab.readonly and bool(lab.work.session.experiment.outputs)
+                and bool(pending['measurements'] or pending['calibrations']),
+                download_prefix(lab.info) + '.nuclemu')
+
+    def _close_server(self):
+        with self._condition:
+            if self._phase != 'ready' or self._server is None:
+                raise StaleCloseError('服务已停止，请重新查看工作台。')
+            return self._server
+
+    def _check_close_service(self, server):
+        with self._condition:
+            if self._phase != 'ready' or self._server is not server:
+                raise StaleCloseError('服务已停止，请重新查看工作台。')
+
+    def _check_close(self, server, context):
+        # Caller holds app_lock, then takes the status lock in the same order
+        # as readiness and stopping. Recheck after all lock-free file I/O.
+        self._check_close_service(server)
+        lab = server.app.lab
+        if not isinstance(context, CloseContext) or lab is None or lab.id != context.session:
+            raise StaleCloseError('会话已改变，请重新确认关闭。')
+        try:
+            lab.check_confirmation(dict(action='discard', confirmation_id=context.confirmation_id))
+        except ValueError as error:
+            raise StaleCloseError(str(error)) from error
+        return lab
+
+    def cancel_close(self, context):
+        """Resume only the still-current frozen session and confirmation."""
+        server = self._close_server()
+        with server.app_lock:
+            lab = self._check_close(server, context)
+            lab.act(dict(action='continue', confirmation_id=context.confirmation_id))
+
+    def _finish_close(self, server, context, *, saved=False):
+        lab = server.app.lab if saved else self._check_close(server, context)
+        if saved:
+            # The file commit has succeeded. No more fallible disk operations
+            # may masquerade as a failed save before publishing that result.
+            lab.confirmation_id = None
+        else:
+            lab.act(dict(action='discard', confirmation_id=context.confirmation_id))
+        server.app.lab = None
+        with self._condition:
+            server.accepting_requests = False
+            if self._phase == 'ready':
+                self._request_stop()
+
+    def discard_close(self, context):
+        """Discard this confirmed session and stop accepting mutations atomically."""
+        server = self._close_server()
+        with server.app_lock:
+            self._finish_close(server, context)
+
+    @staticmethod
+    def _check_save_target(server, target):
+        database = server.app.store.database_path
+        same = target.resolve() == database.resolve()
+        if not same:
+            try:
+                same = target.samefile(database)
+            except FileNotFoundError:
+                pass
+        if same:
+            raise ValueError('不能覆盖当前工作台工作库，请选择其他实验文件路径。')
+
+    def save_close(self, context, path):
+        """Save cached measurements atomically, then close the confirmed session.
+
+        Slow writes run outside app_lock. Failed or obsolete attempts leave the
+        destination and session intact and remove their temporary file.
+        """
+        from pathlib import Path
+        import os
+        from tempfile import mkstemp
+
+        server = self._close_server()
+        target = Path(path).absolute()
+        with server.app_lock:
+            lab = self._check_close(server, context)
+            self._check_save_target(server, target)
+            if lab.readonly or not lab.work.session.experiment.outputs:
+                from .exchange import archive_package, package_bytes
+                content = package_bytes(archive_package(lab.document(finish=True), lab.archive_id,
+                    original=getattr(lab, 'portable_archive', None)))
+            else:
+                content = lab.portable_download()[2]
+            cleanup_draft = not lab.readonly and not lab.work.session.experiment.outputs
+        fd, temporary = mkstemp(prefix='.nuclemu-', suffix='.tmp', dir=target.parent)
+        try:
+            with os.fdopen(fd, 'wb') as output:
+                output.write(content)
+                output.flush()
+                os.fsync(output.fileno())
+            with server.app_lock:
+                self._check_close(server, context)
+                self._check_save_target(server, target)
+                os.replace(temporary, target)
+                self._finish_close(server, context, saved=True)
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+        warning = None
+        if cleanup_draft:
+            try:
+                lab.store.remove(lab.draft_id)
+            except Exception as error:
+                warning = f'文件已保存，旧恢复草稿未清理：{error}'
+        return CloseSaveResult(str(target), warning)
+
+    def stop(self, *, force=False):
+        """Check and gate mutations under the same lock as HTTP requests.
+
+        Call this off the window thread: an in-flight application request may
+        still hold the application lock. Startup cancellation needs no such lock.
+        """
+        if type(force) is not bool:
+            raise ValueError('force must be boolean')
+        with self._condition:
+            if self._phase in ('stopped', 'failed', 'stopping'):
+                return True
+            server = self._server
+            if self._phase in ('new', 'starting') or server is None:
+                self._request_stop()
+                starting = True
+            else:
+                starting = False
+        if starting:
+            if self._worker is None:
+                self._close_registration()
+            return True
+        # Do not hold the status lock while an application request finishes:
+        # the window must remain able to poll status while a closer waits.
+        with server.app_lock:
+            with self._condition:
+                if self._phase != 'ready' or self._server is not server:
+                    return True
+                if server.app.lab is not None and not force:
+                    return False
+                server.accepting_requests = False
+                self._request_stop()
+                return True
+
+    def join(self, timeout=None):
+        worker = self._worker
+        if worker is None:
+            return True
+        worker.join(timeout)
+        return not worker.is_alive()
+
+    def _probe(self, server):
+        connection = HTTPConnection(*server.server_address, timeout=2)
+        try:
+            if self._cancel.is_set():
+                return
+            connection.request('GET', '/api/catalog')
+            response = connection.getresponse()
+            document = json.loads(response.read())
+            if response.status != 200 or not isinstance(document.get('experiments'), list):
+                raise OSError('The workbench catalog did not become ready')
+            if response.getheader('X-Nuclemu-Instance-ID') != self.instance_id:
+                raise OSError('The workbench response belongs to a different service instance')
+            with server.app_lock:
+                if self._cancel.is_set():
+                    return
+                url = f'http://127.0.0.1:{server.server_port}/'
+                if self._registration is not None:
+                    self._registration.publish(url, self.instance_id)
+                with self._condition:
+                    if not self._cancel.is_set():
+                        server.accepting_requests = True
+                        self._url = url
+                        self._phase = 'ready'
+                        self._condition.notify_all()
+        except Exception as error:
+            with self._condition:
+                if not self._cancel.is_set():
+                    self._error = error if isinstance(error, OSError) else OSError(str(error))
+                    self._cancel.set()
+        finally:
+            connection.close()
+
+    def _run(self):
+        server, probe, probe_started = None, None, False
+        try:
+            from .web import make_server
+            server = make_server(self.paths, port=self.port, directory=self.directory, clock=self.clock,
+                                 instance_id=self.instance_id)
+            server.timeout = .05
+            server.accepting_requests = False
+            with self._condition:
+                self._server = server
+                if self._cancel.is_set():
+                    return
+            probe = Thread(target=self._probe, args=(server,), name='Nuclemu-ready', daemon=True)
+            probe.start()
+            probe_started = True
+            # handle_request has a bounded wait and no shutdown-before-serve
+            # handshake. The owning worker alone closes this listener.
+            while not self._cancel.is_set():
+                server.handle_request()
+        except BaseException as error:
+            with self._condition:
+                if not self._cancel.is_set():
+                    self._error = error if isinstance(error, Exception) else OSError(str(error))
+        finally:
+            if server is not None:
+                try:
+                    server.server_close()
+                except Exception as error:
+                    with self._condition:
+                        self._error = self._error or error
+            if probe_started:
+                probe.join()
+            try:
+                self._close_registration()
+            except Exception as error:
+                with self._condition:
+                    self._error = self._error or error
+            with self._condition:
+                self._server = None
+                self._phase = 'failed' if self._error is not None else 'stopped'
+                self._condition.notify_all()
