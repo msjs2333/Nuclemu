@@ -15,18 +15,18 @@ Nuclemu 是面向本科实验课的本地核物理仿真软件。学生在浏览
 
 目前内置这两门课。[实验目录规划](docs/design/experiments.md)与[交付规划](docs/design/plan.md)另列后续十门实验。
 
-## 试用 0.0.1 预发布
+## 下载 0.0.1 预发布
 
-目前尚无正式公开发布。试用可使用下列 GitHub Actions 构建产物，均来自已合并 [PR #16](https://github.com/msjs2333/Nuclemu/pull/16) 的最终提交。
+预发布安装包和发布说明见 [v0.0.1-pre.1 发布页面](https://github.com/msjs2333/Nuclemu/releases/tag/v0.0.1-pre.1)。请按系统与架构选择下列文件。
 
-登录 GitHub，打开对应构建，在页面的 **Artifacts** 区域下载指定名称的 ZIP，再解压取得安装程序或应用镜像及校验和。构建产物有保留期限，操作方法见 [GitHub 下载说明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts)。
+| 系统与架构 | 下载 |
+|---|---|
+| Windows x64 | [Nuclemu-0.0.1-windows-x64-setup.exe](https://github.com/msjs2333/Nuclemu/releases/download/v0.0.1-pre.1/Nuclemu-0.0.1-windows-x64-setup.exe) |
+| macOS · Intel | [Nuclemu-0.0.1-macos-x86_64.dmg](https://github.com/msjs2333/Nuclemu/releases/download/v0.0.1-pre.1/Nuclemu-0.0.1-macos-x86_64.dmg) |
+| macOS · Apple Silicon | [Nuclemu-0.0.1-macos-arm64.dmg](https://github.com/msjs2333/Nuclemu/releases/download/v0.0.1-pre.1/Nuclemu-0.0.1-macos-arm64.dmg) |
+| Linux · Debian 12 amd64 | [nuclemu_0.0.1-1_amd64.deb](https://github.com/msjs2333/Nuclemu/releases/download/v0.0.1-pre.1/nuclemu_0.0.1-1_amd64.deb) 或 [nuclemu-0.0.1-1-linux-amd64.tar.gz](https://github.com/msjs2333/Nuclemu/releases/download/v0.0.1-pre.1/nuclemu-0.0.1-1-linux-amd64.tar.gz) |
 
-| 系统与架构 | 构建与产物名 | 使用的安装包 |
-|---|---|---|
-| Windows x64 | [Windows 构建](https://github.com/msjs2333/Nuclemu/actions/runs/43709026349) · `Nuclemu-windows-x64` | `Nuclemu-0.0.1-windows-x64-setup.exe` |
-| macOS · Intel | [macOS 构建](https://github.com/msjs2333/Nuclemu/actions/runs/43709026362) · `Nuclemu-macos-x86_64` | `Nuclemu-0.0.1-macos-x86_64.dmg` |
-| macOS · Apple Silicon | [macOS 构建](https://github.com/msjs2333/Nuclemu/actions/runs/43709026362) · `Nuclemu-macos-arm64` | `Nuclemu-0.0.1-macos-arm64.dmg` |
-| Linux · Debian 12 amd64 | [Linux 构建](https://github.com/msjs2333/Nuclemu/actions/runs/43709026386) · `Nuclemu-linux-amd64` | `nuclemu_0.0.1-1_amd64.deb` 或 `nuclemu-0.0.1-1-linux-amd64.tar.gz` |
+下载后可用 [SHA256SUMS.txt](https://github.com/msjs2333/Nuclemu/releases/download/v0.0.1-pre.1/SHA256SUMS.txt) 核对文件。
 
 包内已有 Python 和工作台资源，课机需有可用浏览器。Linux 还需备齐说明中列出的系统库。Windows 包未作发布者签名，macOS 包使用 ad-hoc 签名且尚未公证。安装步骤、已测系统、平台待验项、升级和卸载见[安装与启动](docs/guides/installation.zh-CN.md)。
 
